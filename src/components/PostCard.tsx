@@ -3,17 +3,19 @@ import { Heart, MessageCircle, Send, MoreHorizontal, Trash } from 'lucide-react'
 import { Post } from '@/src/types';
 import { formatDate, cn } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import CommentsModal from './CommentsModal';
 
 interface PostCardProps {
   post: Post;
   currentUserId: string;
-  onLike?: (id: string) => void;
+  onLike?: (id: string, isLiked: boolean) => void;
   onDelete?: (id: string) => void;
   onUserClick?: (userId: string) => void;
 }
 
 export default function PostCard({ post, currentUserId, onLike, onDelete, onUserClick }: PostCardProps) {
   const [showMenu, setShowMenu] = useState(false);
+  const [showComments, setShowComments] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -123,13 +125,19 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       <div className="px-4 py-3 mt-1">
         <div className="flex items-center space-x-4 mb-2">
           <button 
-            onClick={() => onLike?.(post.id)}
+            onClick={() => onLike?.(post.id, !!post.has_liked)}
             className={cn("transition-colors active:scale-90", post.has_liked ? "text-red-500" : "text-white")}
           >
             <Heart size={24} fill={post.has_liked ? "currentColor" : "none"} />
           </button>
-          <button className="text-white active:scale-90 transition-transform">
+          <button 
+            onClick={() => setShowComments(true)}
+            className="text-white active:scale-90 transition-transform flex items-center space-x-1"
+          >
             <MessageCircle size={24} />
+            {post.comments_count !== undefined && post.comments_count > 0 && (
+              <span className="text-xs font-bold text-white/50">{post.comments_count}</span>
+            )}
           </button>
           <button className="text-white active:scale-90 transition-transform">
             <Send size={24} />
@@ -140,6 +148,16 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
           <p className="text-sm font-bold mt-2">{post.likes_count.toLocaleString()} likes</p>
         )}
       </div>
+
+      <AnimatePresence>
+        {showComments && (
+          <CommentsModal 
+            postId={post.id} 
+            currentUserId={currentUserId} 
+            onClose={() => setShowComments(false)} 
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

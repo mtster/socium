@@ -118,12 +118,47 @@ export default function App() {
   async function fetchUserPosts(userId: string) {
     const { data } = await supabase
       .from('posts')
-      .select('*, profiles(*)')
+      .select('*, profiles(*), likes(user_id), comments(id)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     
-    if (data) setUserPosts(data as any);
+    if (data) {
+      let isViewingSelf = session?.user.id === userId;
+      const processed = data.map((p: any) => ({
+        ...p,
+        likes_count: p.likes?.length || 0,
+        has_liked: p.likes?.some((l: any) => l.user_id === session?.user.id),
+        comments_count: p.comments?.length || 0
+      }));
+      setUserPosts(processed as any);
+    }
   }
+
+  const handleLikeProfilePost = async (postId: string, isLiked: boolean) => {
+    // Optimistic Update
+    setUserPosts(prev => prev.map(p => {
+      if (p.id === postId) {
+        return {
+          ...p,
+          has_liked: !isLiked,
+          likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)
+        };
+      }
+      return p;
+    }));
+
+    try {
+      if (isLiked) {
+        await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', session.user.id);
+      } else {
+        await supabase.from('likes').insert({ post_id: postId, user_id: session.user.id });
+      }
+    } catch (e) {
+      console.error(e);
+      // Revert if error
+      fetchUserPosts(viewingProfileId || session.user.id);
+    }
+  };
 
   if (!session) {
     return <AuthView />;
@@ -170,6 +205,7 @@ export default function App() {
                    currentUserId={session.user.id}
                    onUserClick={handleUserClick}
                    onDeletePost={handleDeletePost}
+                   onLikePost={handleLikeProfilePost}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
@@ -195,7 +231,26 @@ export default function App() {
                    isOwnProfile={false}
                    currentUserId={session.user.id}
                    onUserClick={handleUserClick}
-                   onDeletePost={handleDeletePost} // Technically not needed for not-own, but safe
+                   onDeletePost={handleDeletePost}
+                   onLikePost={async (id, isLiked) => {
+                     // Optimistic Update inside viewingProfileData
+                     setViewingProfileData(prev => {
+                       if (!prev) return prev;
+                       return {
+                         ...prev,
+                         posts: prev.posts.map(p => {
+                           if (p.id === id) {
+                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
+                           }
+                           return p;
+                         })
+                       };
+                     });
+                     try {
+                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                     } catch(e) {}
+                   }}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">

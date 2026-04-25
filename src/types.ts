@@ -16,6 +16,7 @@ export interface Post {
   profiles: Profile;
   likes_count?: number;
   has_liked?: boolean;
+  comments_count?: number;
 }
 
 export interface Comment {

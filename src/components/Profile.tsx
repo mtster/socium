@@ -5,6 +5,7 @@ import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDate } from '@/src/lib/utils';
+import UserSearchModal from './UserSearchModal';
 
 interface ProfileViewProps {
   profile: Profile;
@@ -13,13 +14,22 @@ interface ProfileViewProps {
   currentUserId?: string;
   onUserClick?: (userId: string) => void;
   onDeletePost?: (postId: string) => void;
+  onLikePost?: (postId: string, isLiked: boolean) => void;
 }
 
-export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost }: ProfileViewProps) {
+export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost }: ProfileViewProps) {
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  
+  // Local state for immediate avatar update
+  const [localAvatar, setLocalAvatar] = useState(profile.avatar_url);
+
+  useEffect(() => {
+    setLocalAvatar(profile.avatar_url);
+  }, [profile.avatar_url]);
 
   // Connections Query State
   const [connections, setConnections] = useState<any[]>([]);
@@ -179,10 +189,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       if (error) throw error;
       
       // Update local state (optimistic)
-      profile.avatar_url = imageUrl;
+      setLocalAvatar(imageUrl);
     } catch (error) {
       console.error('Error updating PFP:', error);
-      alert('Failed to update profile picture.');
+      alert('Failed to update profile picture. Check browser console for more details.');
     } finally {
       setIsUploading(false);
     }
@@ -209,11 +219,20 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         {/* Full Name above picture */}
         <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">{profile.full_name || profile.username}</h1>
 
+        {/* Hidden inputs outside AnimatePresence so it doesn't get unmounted */}
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          className="hidden" 
+          accept="image/*" 
+          onChange={handleFileChange} 
+        />
+
         {/* Profile Picture Section */}
         <div className="relative mb-8 flex justify-center">
           <div className="w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden">
-            {profile.avatar_url ? (
-              <img src={profile.avatar_url} alt={profile.username} className="w-full h-full object-cover" />
+            {localAvatar ? (
+              <img src={localAvatar} alt={profile.username} className="w-full h-full object-cover" />
             ) : (
               <UserIcon size={56} className="text-white/20" />
             )}
@@ -243,18 +262,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     className="absolute top-12 left-0 min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <input 
-                      type="file" 
-                      ref={fileInputRef} 
-                      className="hidden" 
-                      accept="image/*" 
-                      onChange={handleFileChange} 
-                    />
                     
                     <button 
                       onClick={() => {
                         setShowPfpMenu(false);
-                        if (profile.avatar_url) setViewingImage(profile.avatar_url);
+                        if (localAvatar) setViewingImage(localAvatar);
                       }}
                       className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors"
                     >
@@ -385,13 +397,15 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       {/* Posts */}
       <div className="w-full">
         {posts.map((post) => (
-          <PostCard 
-            key={post.id} 
-            post={post} 
-            currentUserId={currentUserId}
-            onUserClick={onUserClick}
-            onDelete={onDeletePost}
-          />
+          <div key={post.id}>
+            <PostCard 
+              post={post} 
+              currentUserId={currentUserId as string}
+              onUserClick={onUserClick}
+              onDelete={onDeletePost}
+              onLike={onLikePost}
+            />
+          </div>
         ))}
         {posts.length === 0 && (
           <div className="py-20 flex flex-col items-center justify-center text-white/20">
@@ -408,6 +422,18 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           <span className="text-white/40">{formatDate(profile.updated_at).split(',')[0]}</span>
         </p>
       </div>
+
+      <AnimatePresence>
+        {showSearchModal && (
+          <UserSearchModal 
+            onClose={() => setShowSearchModal(false)} 
+            onUserClick={(id) => {
+              setShowSearchModal(false);
+              if (onUserClick) onUserClick(id);
+            }} 
+          />
+        )}
+      </AnimatePresence>
 
     </div>
   );

@@ -71,15 +71,17 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
 
       // 2. Save to Supabase
       try {
-        const { error: supabaseError } = await supabase.from('posts').insert({
+        const payload = {
           user_id: userId,
-          image_url: imageUrl,
-          caption: caption,
-        });
+          image_url: imageUrl || '', // Send empty string instead of null to bypass schema missing alters safely
+          caption: caption.trim() || null,
+        };
+
+        const { error: supabaseError } = await supabase.from('posts').insert(payload);
 
         if (supabaseError) throw new Error(supabaseError.message);
       } catch (dbError: any) {
-        throw new Error(`Supabase Error: ${dbError.message}`);
+        throw new Error(`Supabase Error: ${dbError.message}\nMake sure to run the updated SCHEMA.sql`);
       }
 
       onSuccess();

@@ -24,18 +24,54 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
         .from('posts')
         .select(`
           *,
-          profiles:user_id (*)
+          profiles:user_id (*),
+          likes(user_id),
+          comments(id)
         `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setPosts(data as any || []);
+      
+      const processed = (data || []).map((p: any) => ({
+        ...p,
+        likes_count: p.likes?.length || 0,
+        has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
+        comments_count: p.comments?.length || 0
+      }));
+      setPosts(processed as any);
     } catch (error) {
       console.error('Error fetching posts:', error);
     } finally {
       setLoading(false);
     }
   }
+
+  const handleLikePost = async (postId: string, isLiked: boolean) => {
+    // Optimistic UI update
+    setPosts(prev => prev.map(p => {
+      if (p.id === postId) {
+        return {
+          ...p,
+          has_liked: !isLiked,
+          likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)
+        };
+      }
+      return p;
+    }));
+
+    try {
+      if (isLiked) {
+        const { error } = await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', currentUserId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: currentUserId });
+        if (error) throw error;
+      }
+    } catch (error) {
+      // Revert on error
+      fetchPosts();
+    }
+  };
 
   const handleDeletePost = async (postId: string) => {
     if (!confirm('Are you sure you want to delete this post?')) return;
@@ -68,6 +104,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
               currentUserId={currentUserId}
               onUserClick={onUserClick}
               onDelete={handleDeletePost}
+              onLike={handleLikePost}
             />
           </div>
         ))
