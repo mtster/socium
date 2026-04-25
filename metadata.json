@@ -1,0 +1,9 @@
+{
+  "name": "Socium",
+  "description": "A sleek, dark-themed social network for sharing moments and building connections.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}

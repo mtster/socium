@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #000000;
+  --color-foreground: #ffffff;
+  --color-card: #111111;
+  --color-muted: #888888;
+  --color-accent: #333333;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-white antialiased overflow-x-hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Custom Scrollbar for Sleek Look */
+  ::-webkit-scrollbar {
+    width: 0px;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-black/80 backdrop-blur-xl border-t border-white/10;
+  }
+
+  .ios-active {
+    @apply scale-95 opacity-70 transition-all duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-white text-black font-semibold rounded-full px-6 py-2 active:scale-95 transition-transform;
+  }
+}
+
+/* Animations for route changes */
+.page-transition {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
