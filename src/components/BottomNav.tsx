@@ -10,7 +10,6 @@ interface BottomNavProps {
 export default function BottomNav({ activeTab, setActiveTab }: BottomNavProps) {
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
-    { id: 'search', icon: Search, label: 'Explore' },
     { id: 'create', icon: PlusSquare, label: 'Post' },
     { id: 'messages', icon: MessageCircle, label: 'Chat' },
     { id: 'profile', icon: User, label: 'Profile' },

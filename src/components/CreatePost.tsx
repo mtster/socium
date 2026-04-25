@@ -34,11 +34,21 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
       setUploading(true);
 
       // 1. Upload to Cloudinary (using unsigned preset)
+      // @ts-ignore
+      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
+      // @ts-ignore
+      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
+
+      if (!uploadPreset || !cloudName) {
+        alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
+        setUploading(false);
+        return;
+      }
+
       const formData = new FormData();
       formData.append('file', image);
-      formData.append('upload_preset', import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'socium_default');
+      formData.append('upload_preset', uploadPreset);
       
-      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
       const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
         method: 'POST',
         body: formData,
