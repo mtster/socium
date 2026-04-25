@@ -19,10 +19,25 @@ export default function AuthView() {
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
+      
+      // Determine the redirect URL based on environment
+      let siteUrl = '';
+      // @ts-ignore
+      if (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_SITE_URL) {
+        // @ts-ignore
+        siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+      } else if (import.meta.env.VITE_SITE_URL) {
+        siteUrl = import.meta.env.VITE_SITE_URL;
+      } else if (typeof window !== 'undefined') {
+        siteUrl = window.location.origin;
+      }
+
+      const redirectTo = `${siteUrl.replace(/\/$/, '')}/auth/callback`;
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin
+          redirectTo
         }
       });
       if (error) throw error;

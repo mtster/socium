@@ -16,6 +16,11 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
+    // If returning from OAuth provider, clean up the URL to prevent showing the callback path
+    if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
+      window.history.replaceState({}, document.title, '/');
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) fetchProfile(session.user.id);
