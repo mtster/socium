@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Heart, MessageCircle, Send, MoreHorizontal, Trash } from 'lucide-react';
+import { Heart, MessageCircle, Send, MoreHorizontal, Trash, Edit2 } from 'lucide-react';
 import { Post } from '@/src/types';
 import { formatDate, cn } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import CommentsModal from './CommentsModal';
+import EditPostModal from './EditPostModal';
 
 interface PostCardProps {
   post: Post;
@@ -11,11 +12,13 @@ interface PostCardProps {
   onLike?: (id: string, isLiked: boolean) => void;
   onDelete?: (id: string) => void;
   onUserClick?: (userId: string) => void;
+  onRefetch?: () => void;
 }
 
-export default function PostCard({ post, currentUserId, onLike, onDelete, onUserClick }: PostCardProps) {
+export default function PostCard({ post, currentUserId, onLike, onDelete, onUserClick, onRefetch }: PostCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,16 +79,28 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                 className="absolute right-0 top-10 w-40 bg-[#1c1c1c] rounded-xl border border-white/10 shadow-2xl z-20 overflow-hidden"
               >
                 {isOwner ? (
-                  <button 
-                    onClick={() => {
-                      setShowMenu(false);
-                      onDelete?.(post.id);
-                    }}
-                    className="w-full flex items-center px-4 py-3 text-sm text-red-500 hover:bg-white/5 active:bg-white/10 transition-colors font-medium"
-                  >
-                    <Trash size={16} className="mr-2" />
-                    Delete Post
-                  </button>
+                  <>
+                    <button 
+                      onClick={() => {
+                        setShowMenu(false);
+                        setShowEdit(true);
+                      }}
+                      className="w-full flex items-center px-4 py-3 text-sm text-white/90 hover:bg-white/5 active:bg-white/10 transition-colors font-medium border-b border-white/5"
+                    >
+                      <Edit2 size={16} className="mr-2 text-white/50" />
+                      Edit Post
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setShowMenu(false);
+                        onDelete?.(post.id);
+                      }}
+                      className="w-full flex items-center px-4 py-3 text-sm text-red-500 hover:bg-white/5 active:bg-white/10 transition-colors font-medium"
+                    >
+                      <Trash size={16} className="mr-2" />
+                      Delete Post
+                    </button>
+                  </>
                 ) : (
                   <button 
                     onClick={() => setShowMenu(false)}
@@ -123,38 +138,49 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
 
       {/* Interactions */}
       <div className="px-4 py-3 mt-1">
-        <div className="flex items-center space-x-4 mb-2">
+        <div className="flex items-center space-x-2.5 mb-3">
           <button 
             onClick={() => onLike?.(post.id, !!post.has_liked)}
-            className={cn("transition-colors active:scale-90", post.has_liked ? "text-red-500" : "text-white")}
+            className={cn("flex items-center justify-center space-x-2 px-4 py-2 rounded-full border active:scale-95 transition-all text-sm font-medium", post.has_liked ? "bg-red-500/10 border-red-500/20 text-red-500" : "bg-white/5 border-white/10 hover:bg-white/10 text-white/90")}
           >
-            <Heart size={24} fill={post.has_liked ? "currentColor" : "none"} />
+            <Heart size={18} fill={post.has_liked ? "currentColor" : "none"} />
+            <span>{post.likes_count || 0}</span>
           </button>
+          
           <button 
             onClick={() => setShowComments(true)}
-            className="text-white active:scale-90 transition-transform flex items-center space-x-1"
+            className="flex items-center justify-center space-x-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition-all text-sm font-medium text-white/90"
           >
-            <MessageCircle size={24} />
-            {post.comments_count !== undefined && post.comments_count > 0 && (
-              <span className="text-xs font-bold text-white/50">{post.comments_count}</span>
-            )}
+            <MessageCircle size={18} />
+            <span>{post.comments_count || 0}</span>
           </button>
-          <button className="text-white active:scale-90 transition-transform">
-            <Send size={24} />
+          
+          <button className="flex items-center justify-center px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition-all text-white/90 ml-auto">
+            <Send size={18} />
           </button>
         </div>
-        
-        {post.likes_count !== undefined && post.likes_count > 0 && (
-          <p className="text-sm font-bold mt-2">{post.likes_count.toLocaleString()} likes</p>
-        )}
       </div>
 
       <AnimatePresence>
         {showComments && (
           <CommentsModal 
-            postId={post.id} 
+            post={post} 
             currentUserId={currentUserId} 
             onClose={() => setShowComments(false)} 
+            onCommentAdded={onRefetch}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showEdit && (
+          <EditPostModal
+            post={post}
+            onClose={() => setShowEdit(false)}
+            onSuccess={() => {
+              setShowEdit(false);
+              onRefetch?.();
+            }}
           />
         )}
       </AnimatePresence>

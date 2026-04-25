@@ -105,6 +105,7 @@ export default function App() {
         username,
         full_name: user?.user_metadata?.full_name || username,
         avatar_url: user?.user_metadata?.avatar_url || null,
+        email: user?.email || null,
         updated_at: new Date().toISOString(),
       })
       .select()
@@ -114,6 +115,13 @@ export default function App() {
       setProfile(newProfile);
     }
   }
+
+  // Reload posts when switching back to profile tab
+  useEffect(() => {
+    if (session?.user?.id && activeTab === 'profile') {
+      fetchUserPosts(session.user.id);
+    }
+  }, [activeTab, session?.user?.id]);
 
   async function fetchUserPosts(userId: string) {
     const { data } = await supabase
@@ -206,6 +214,7 @@ export default function App() {
                    onUserClick={handleUserClick}
                    onDeletePost={handleDeletePost}
                    onLikePost={handleLikeProfilePost}
+                   onRefetch={() => { fetchUserPosts(session.user.id); }}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
@@ -251,6 +260,7 @@ export default function App() {
                         else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
                      } catch(e) {}
                    }}
+                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">

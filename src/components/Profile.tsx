@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Settings, Plus, Camera, Eye, User as UserIcon } from 'lucide-react';
+import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
@@ -15,9 +15,10 @@ interface ProfileViewProps {
   onUserClick?: (userId: string) => void;
   onDeletePost?: (postId: string) => void;
   onLikePost?: (postId: string, isLiked: boolean) => void;
+  onRefetch?: () => void;
 }
 
-export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost }: ProfileViewProps) {
+export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -198,6 +199,24 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     }
   };
 
+  const handleRemovePfp = async () => {
+    try {
+      setIsUploading(true);
+      const { error } = await supabase
+        .from('profiles')
+        .update({ avatar_url: null })
+        .eq('id', profile.id);
+
+      if (error) throw error;
+      setLocalAvatar(null);
+    } catch (e: any) {
+      alert(`Failed to remove profile picture: ${e.message}`);
+    } finally {
+      setIsUploading(false);
+      setShowPfpMenu(false);
+    }
+  };
+
   return (
     <div className="pb-20 relative">
       {/* Full Screen Image Viewer */}
@@ -284,6 +303,16 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                       <Camera size={18} className="mr-3 text-white/70" />
                       Change picture
                     </button>
+
+                    {localAvatar && (
+                      <button 
+                        onClick={handleRemovePfp}
+                        className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors mt-1 text-red-500 font-medium"
+                      >
+                        <Trash size={18} className="mr-3" />
+                        Remove picture
+                      </button>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -356,8 +385,16 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         {/* Connections */}
         <div className="w-full mb-12">
           <div className="flex items-center justify-between mb-4 px-2">
-            <h3 className="text-sm font-bold uppercase tracking-widest text-white/70">Connections</h3>
-            <span className="text-xs font-bold text-white/30">{connections.length}</span>
+            <h3 className="text-sm font-bold uppercase tracking-widest text-white/70">Connections <span className="text-white/30 ml-2">{connections.length}</span></h3>
+            {isOwnProfile && (
+              <button 
+                onClick={() => setShowSearchModal(true)}
+                className="flex items-center space-x-1 px-3 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-full active:scale-95 transition-all"
+              >
+                <Plus size={14} className="text-white/70" />
+                <span className="text-xs font-bold text-white/70">Find</span>
+              </button>
+            )}
           </div>
           
           {connections.length > 0 ? (
@@ -397,13 +434,14 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       {/* Posts */}
       <div className="w-full">
         {posts.map((post) => (
-          <div key={post.id}>
+          <div key={post.id} className="min-h-[250px]">
             <PostCard 
               post={post} 
               currentUserId={currentUserId as string}
               onUserClick={onUserClick}
               onDelete={onDeletePost}
               onLike={onLikePost}
+              onRefetch={onRefetch}
             />
           </div>
         ))}

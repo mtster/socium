@@ -28,7 +28,8 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
           likes(user_id),
           comments(id)
         `)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(20);
 
       if (error) throw error;
       
@@ -105,6 +106,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
               onUserClick={onUserClick}
               onDelete={handleDeletePost}
               onLike={handleLikePost}
+              onRefetch={fetchPosts}
             />
           </div>
         ))

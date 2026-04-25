@@ -26,7 +26,7 @@ export default function UserSearchModal({ onClose, onUserClick }: UserSearchModa
         const { data, error } = await supabase
           .from('profiles')
           .select('*')
-          .or(`username.ilike.%${query}%,full_name.ilike.%${query}%`)
+          .or(`username.ilike.%${query}%,full_name.ilike.%${query}%,email.ilike.%${query}%`)
           .limit(10);
 
         if (error) throw error;

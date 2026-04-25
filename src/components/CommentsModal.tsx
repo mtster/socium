@@ -3,16 +3,16 @@ import { X, Send, User } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
 import { formatDate } from '@/src/lib/utils';
-import { Profile } from '@/src/types';
+import { Profile, Post } from '@/src/types';
 
 interface CommentsModalProps {
-  postId: string;
+  post: Post;
   currentUserId: string;
   onClose: () => void;
   onCommentAdded?: () => void;
 }
 
-export default function CommentsModal({ postId, currentUserId, onClose, onCommentAdded }: CommentsModalProps) {
+export default function CommentsModal({ post, currentUserId, onClose, onCommentAdded }: CommentsModalProps) {
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
@@ -20,14 +20,14 @@ export default function CommentsModal({ postId, currentUserId, onClose, onCommen
 
   useEffect(() => {
     fetchComments();
-  }, [postId]);
+  }, [post.id]);
 
   const fetchComments = async () => {
     try {
       const { data, error } = await supabase
         .from('comments')
         .select('*, profiles(*)')
-        .eq('post_id', postId)
+        .eq('post_id', post.id)
         .order('created_at', { ascending: true });
 
       if (error) throw error;
@@ -48,7 +48,7 @@ export default function CommentsModal({ postId, currentUserId, onClose, onCommen
       const { data, error } = await supabase
         .from('comments')
         .insert({
-          post_id: postId,
+          post_id: post.id,
           user_id: currentUserId,
           content: text.trim()
         })
@@ -60,6 +60,9 @@ export default function CommentsModal({ postId, currentUserId, onClose, onCommen
       setComments([...comments, data]);
       setText('');
       if (onCommentAdded) onCommentAdded();
+      
+      // Auto close according to UX instruction
+      setTimeout(onClose, 800);
     } catch (err: any) {
       alert(`Failed to add comment: ${err.message}`);
     } finally {
@@ -86,13 +89,37 @@ export default function CommentsModal({ postId, currentUserId, onClose, onCommen
       className="fixed inset-0 z-50 bg-black flex flex-col"
     >
       <div className="flex items-center justify-between px-4 h-16 border-b border-white/10 shrink-0">
-        <h2 className="text-sm font-bold uppercase tracking-widest">Comments</h2>
+        <h2 className="text-sm font-bold uppercase tracking-widest text-white/50">Viewing Post</h2>
         <button onClick={onClose} className="text-white/60 p-2 active:bg-white/10 rounded-full transition-colors">
           <X size={20} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="flex-1 overflow-y-auto">
+        {/* Post Context */}
+        <div className="border-b border-white/5 pb-6 mb-2">
+          <div className="p-4 flex items-start space-x-3">
+             <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
+                {post.profiles?.avatar_url ? (
+                  <img src={post.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <User size={20} className="text-white/40 m-2" />
+                )}
+             </div>
+             <div className="flex-1">
+                <p className="font-bold text-sm text-white/90">{post.profiles?.full_name || post.profiles?.username}</p>
+                {post.caption && <p className="text-sm text-white/80 mt-1 leading-relaxed">{post.caption}</p>}
+                {post.image_url && (
+                  <div className="mt-3 rounded-2xl overflow-hidden bg-white/5 border border-white/10 w-full max-w-xs">
+                     <img src={post.image_url} alt="Post content" className="w-full h-auto object-cover max-h-48" />
+                  </div>
+                )}
+             </div>
+          </div>
+        </div>
+
+        {/* Comments Section */}
+        <div className="px-4 pb-4 space-y-6">
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -131,6 +158,7 @@ export default function CommentsModal({ postId, currentUserId, onClose, onCommen
             </div>
           ))
         )}
+        </div>
       </div>
 
       <div className="p-4 bg-black border-t border-white/10 pb-safe">
