@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '@/src/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/src/lib/supabase';
 import { Mail } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -17,6 +17,11 @@ export default function AuthView() {
   const [loading, setLoading] = useState(false);
 
   const handleGoogleLogin = async () => {
+    if (!isSupabaseConfigured) {
+      alert('Error: Supabase environment variables are missing! Your Vercel deployment variables are either missing or the project must be rebuilt.');
+      return;
+    }
+
     try {
       setLoading(true);
       

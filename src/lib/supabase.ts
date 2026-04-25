@@ -8,9 +8,11 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || (typeof proces
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('CRITICAL ERROR: Supabase credentials missing! No API key found in request. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY) in your Vercel project environment variables.');
-  
-  // Throw a hard error so it fails explicitly instead of redirecting to a fake 'placeholder' domain
-  throw new Error('Supabase credentials missing! Please configure and RE-DEPLOY in Vercel.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const isSupabaseConfigured = !!supabaseUrl && !!supabaseAnonKey;
+
+export const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder'
+);
