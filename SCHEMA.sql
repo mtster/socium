@@ -119,13 +119,35 @@ DROP POLICY IF EXISTS "Users can update connection status" ON connections;
 CREATE POLICY "Users can update connection status" ON connections FOR UPDATE USING (auth.uid() = receiver_id);
 
 -- ==========================================
--- MANUAL SETUP REQUIRED FOR SUPABASE STORAGE
+-- SUPABASE STORAGE SETUP
 -- ==========================================
--- 1. Go to Supabase Dashboard -> Storage
--- 2. Create a new bucket named: avatars
--- 3. Make sure the bucket is PUBLIC
--- 4. In Storage Policies for "avatars", add the following policies:
---    - "Avatar images are publicly accessible" (SELECT for all)
---    - "Users can upload their own avatars" (INSERT for authenticated users)
---    - "Users can update their own avatars" (UPDATE for authenticated users)
+-- 1. Create the 'avatars' bucket if it doesn't exist
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('avatars', 'avatars', true) 
+ON CONFLICT (id) DO NOTHING;
+
+-- 2. Storage Policies
+DROP POLICY IF EXISTS "Avatar images are publicly accessible" ON storage.objects;
+CREATE POLICY "Avatar images are publicly accessible"
+ON storage.objects FOR SELECT
+USING ( bucket_id = 'avatars' );
+
+DROP POLICY IF EXISTS "Users can upload their own avatars" ON storage.objects;
+CREATE POLICY "Users can upload their own avatars"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'avatars' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+DROP POLICY IF EXISTS "Users can update their own avatars" ON storage.objects;
+CREATE POLICY "Users can update their own avatars"
+ON storage.objects FOR UPDATE
+TO authenticated
+USING (
+  bucket_id = 'avatars' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
 
