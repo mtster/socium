@@ -13,7 +13,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('feed');
   const [profile, setProfile] = useState<Profile | null>(null);
   const [userPosts, setUserPosts] = useState<Post[]>([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+  const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
 
   useEffect(() => {
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
@@ -35,6 +36,38 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const handleUserClick = async (userId: string) => {
+    if (!session) return;
+    if (userId === session.user.id) {
+      setViewingProfileId(null);
+      setActiveTab('profile');
+      return;
+    }
+
+    setViewingProfileId(userId);
+    setActiveTab('other_profile');
+    
+    // Fetch other user's profile
+    const { data: pData } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    const { data: postsData } = await supabase.from('posts').select('*, profiles(*)').eq('user_id', userId).order('created_at', { ascending: false });
+    
+    if (pData) {
+      setViewingProfileData({ profile: pData, posts: postsData as any || [] });
+    }
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    if (!confirm('Are you sure you want to delete this post?')) return;
+    
+    try {
+      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      if (error) throw error;
+      setUserPosts(userPosts.filter(p => p.id !== postId));
+    } catch (error: any) {
+      alert(`Failed to delete: ${error.message}`);
+    }
+  };
 
   async function fetchProfile(userId: string) {
     try {
@@ -117,7 +150,7 @@ export default function App() {
                exit={{ opacity: 0, x: 20 }}
                className="page-transition"
              >
-               <Feed />
+               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
              </motion.div>
            )}
            
@@ -133,12 +166,41 @@ export default function App() {
                  <ProfileView 
                    profile={profile} 
                    posts={userPosts} 
-                   isOwnProfile={true} 
+                   isOwnProfile={true}
+                   currentUserId={session.user.id}
+                   onUserClick={handleUserClick}
+                   onDeletePost={handleDeletePost}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
                     <p className="text-white/50 text-sm">Building profile...</p>
+                 </div>
+               )}
+             </motion.div>
+           )}
+
+           {activeTab === 'other_profile' && (
+             <motion.div 
+               key="other_profile" 
+               initial={{ opacity: 0, x: 20 }} 
+               animate={{ opacity: 1, x: 0 }} 
+               exit={{ opacity: 0, x: -20 }}
+               className="page-transition min-h-screen"
+             >
+               {viewingProfileData ? (
+                 <ProfileView 
+                   profile={viewingProfileData.profile} 
+                   posts={viewingProfileData.posts} 
+                   isOwnProfile={false}
+                   currentUserId={session.user.id}
+                   onUserClick={handleUserClick}
+                   onDeletePost={handleDeletePost} // Technically not needed for not-own, but safe
+                 />
+               ) : (
+                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
+                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                    <p className="text-white/50 text-sm">Loading profile...</p>
                  </div>
                )}
              </motion.div>

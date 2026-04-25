@@ -21,11 +21,14 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZON
 CREATE TABLE IF NOT EXISTS posts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
-  image_url TEXT NOT NULL,
+  image_url TEXT, -- Made optional for text-only posts
   caption TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Safely alter image_url if table already exists
+ALTER TABLE posts ALTER COLUMN image_url DROP NOT NULL;
 
 -- Likes table
 CREATE TABLE IF NOT EXISTS likes (
@@ -114,4 +117,15 @@ CREATE POLICY "Users can request connection" ON connections FOR INSERT WITH CHEC
 
 DROP POLICY IF EXISTS "Users can update connection status" ON connections;
 CREATE POLICY "Users can update connection status" ON connections FOR UPDATE USING (auth.uid() = receiver_id);
+
+-- ==========================================
+-- MANUAL SETUP REQUIRED FOR SUPABASE STORAGE
+-- ==========================================
+-- 1. Go to Supabase Dashboard -> Storage
+-- 2. Create a new bucket named: avatars
+-- 3. Make sure the bucket is PUBLIC
+-- 4. In Storage Policies for "avatars", add the following policies:
+--    - "Avatar images are publicly accessible" (SELECT for all)
+--    - "Users can upload their own avatars" (INSERT for authenticated users)
+--    - "Users can update their own avatars" (UPDATE for authenticated users)
 

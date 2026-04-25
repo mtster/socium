@@ -28,42 +28,45 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
   };
 
   const handleSubmit = async () => {
-    if (!image) return;
+    if (!image && !caption.trim()) return;
 
     try {
       setUploading(true);
 
-      // @ts-ignore
-      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
-      // @ts-ignore
-      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
-
-      if (!uploadPreset || !cloudName) {
-        alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
-        setUploading(false);
-        return;
-      }
-
-      // 1. Upload to Cloudinary
-      const formData = new FormData();
-      formData.append('file', image);
-      formData.append('upload_preset', uploadPreset);
+      let imageUrl = null;
       
-      let imageUrl = '';
-      try {
-        const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-          method: 'POST',
-          body: formData,
-        });
+      // 1. Upload to Cloudinary (ONLY if image exists)
+      if (image) {
+        // @ts-ignore
+        const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
+        // @ts-ignore
+        const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
 
-        if (!cloudRes.ok) {
-          const errData = await cloudRes.json();
-          throw new Error(errData.error?.message || 'Cloudinary upload failed');
+        if (!uploadPreset || !cloudName) {
+          alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
+          setUploading(false);
+          return;
         }
-        const cloudData = await cloudRes.json();
-        imageUrl = cloudData.secure_url;
-      } catch (cloudinaryError: any) {
-        throw new Error(`Cloudinary Error: ${cloudinaryError.message}`);
+
+        const formData = new FormData();
+        formData.append('file', image);
+        formData.append('upload_preset', uploadPreset);
+        
+        try {
+          const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!cloudRes.ok) {
+            const errData = await cloudRes.json();
+            throw new Error(errData.error?.message || 'Cloudinary upload failed');
+          }
+          const cloudData = await cloudRes.json();
+          imageUrl = cloudData.secure_url;
+        } catch (cloudinaryError: any) {
+          throw new Error(`Cloudinary Error: ${cloudinaryError.message}`);
+        }
       }
 
       // 2. Save to Supabase
@@ -104,7 +107,7 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
         <h2 className="text-sm font-bold uppercase tracking-widest">New Moment</h2>
         <button 
           onClick={handleSubmit} 
-          disabled={uploading || !image}
+          disabled={uploading || (!image && !caption.trim())}
           className="text-white font-bold disabled:opacity-30 flex items-center space-x-1"
         >
           {uploading ? (

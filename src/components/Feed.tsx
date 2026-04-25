@@ -4,7 +4,12 @@ import { Post } from '@/src/types';
 import PostCard from './PostCard';
 import { motion } from 'motion/react';
 
-export default function Feed() {
+interface FeedProps {
+  currentUserId: string;
+  onUserClick: (userId: string) => void;
+}
+
+export default function Feed({ currentUserId, onUserClick }: FeedProps) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,6 +37,18 @@ export default function Feed() {
     }
   }
 
+  const handleDeletePost = async (postId: string) => {
+    if (!confirm('Are you sure you want to delete this post?')) return;
+    
+    try {
+      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      if (error) throw error;
+      setPosts(posts.filter(p => p.id !== postId));
+    } catch (error: any) {
+      alert(`Failed to delete: ${error.message}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-4">
@@ -46,7 +63,12 @@ export default function Feed() {
       {posts.length > 0 ? (
         posts.map((post: Post) => (
           <div key={post.id}>
-            <PostCard post={post} />
+            <PostCard 
+              post={post} 
+              currentUserId={currentUserId}
+              onUserClick={onUserClick}
+              onDelete={handleDeletePost}
+            />
           </div>
         ))
       ) : (
