@@ -45,9 +45,13 @@ export default function App() {
         .single();
 
       if (error) {
-        // Handle case where profile doesn't exist yet (first login)
-        console.warn('Profile not found, creating one...');
-        await createInitialProfile(userId);
+        console.warn('Profile not found or error fetching:', error.message);
+        if (error.code === '42P01') {
+           // PostgreSQL relation does not exist
+           alert('DATABASE ERROR: The "profiles" table does not exist in your Supabase database!\n\nPlease go to Supabase -> SQL Editor and paste the contents of SCHEMA.sql to create the tables.');
+        } else {
+           await createInitialProfile(userId);
+        }
       } else {
         setProfile(data);
         fetchUserPosts(userId);
@@ -117,19 +121,26 @@ export default function App() {
              </motion.div>
            )}
            
-           {activeTab === 'profile' && profile && (
+           {activeTab === 'profile' && (
              <motion.div 
                key="profile" 
                initial={{ opacity: 0, scale: 0.95 }} 
                animate={{ opacity: 1, scale: 1 }} 
                exit={{ opacity: 0, scale: 1.05 }}
-               className="page-transition"
+               className="page-transition min-h-screen"
              >
-               <ProfileView 
-                 profile={profile} 
-                 posts={userPosts} 
-                 isOwnProfile={true} 
-               />
+               {profile ? (
+                 <ProfileView 
+                   profile={profile} 
+                   posts={userPosts} 
+                   isOwnProfile={true} 
+                 />
+               ) : (
+                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
+                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                    <p className="text-white/50 text-sm">Building profile...</p>
+                 </div>
+               )}
              </motion.div>
            )}
 

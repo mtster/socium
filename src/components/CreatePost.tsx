@@ -33,7 +33,6 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
     try {
       setUploading(true);
 
-      // 1. Upload to Cloudinary (using unsigned preset)
       // @ts-ignore
       const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
       // @ts-ignore
@@ -45,31 +44,45 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
         return;
       }
 
+      // 1. Upload to Cloudinary
       const formData = new FormData();
       formData.append('file', image);
       formData.append('upload_preset', uploadPreset);
       
-      const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-        method: 'POST',
-        body: formData,
-      });
+      let imageUrl = '';
+      try {
+        const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+          method: 'POST',
+          body: formData,
+        });
 
-      if (!cloudRes.ok) throw new Error('Cloudinary upload failed');
-      const cloudData = await cloudRes.json();
-      const imageUrl = cloudData.secure_url;
+        if (!cloudRes.ok) {
+          const errData = await cloudRes.json();
+          throw new Error(errData.error?.message || 'Cloudinary upload failed');
+        }
+        const cloudData = await cloudRes.json();
+        imageUrl = cloudData.secure_url;
+      } catch (cloudinaryError: any) {
+        throw new Error(`Cloudinary Error: ${cloudinaryError.message}`);
+      }
 
       // 2. Save to Supabase
-      const { error } = await supabase.from('posts').insert({
-        user_id: userId,
-        image_url: imageUrl,
-        caption: caption,
-      });
+      try {
+        const { error: supabaseError } = await supabase.from('posts').insert({
+          user_id: userId,
+          image_url: imageUrl,
+          caption: caption,
+        });
 
-      if (error) throw error;
+        if (supabaseError) throw new Error(supabaseError.message);
+      } catch (dbError: any) {
+        throw new Error(`Supabase Error: ${dbError.message}`);
+      }
+
       onSuccess();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating post:', error);
-      alert('Failed to upload. Ensure Cloudinary is configured.');
+      alert(`Upload Failed:\n${error.message}\n\nCheck browser console for more details.`);
     } finally {
       setUploading(false);
     }
