@@ -1,17 +1,24 @@
--- Socium Database Schema
+-- Socium Database Schema (Safe Version)
 
--- Profiles table (linked to Supabase Auth)
-CREATE TABLE profiles (
+-- Profiles table (Creates only if missing)
+CREATE TABLE IF NOT EXISTS profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
-  username TEXT UNIQUE NOT NULL,
+  username TEXT UNIQUE,
   full_name TEXT,
   avatar_url TEXT,
   bio TEXT,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Safely add columns in case the 'profiles' table already existed but was missing them
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS bio TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 -- Posts table
-CREATE TABLE posts (
+CREATE TABLE IF NOT EXISTS posts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   image_url TEXT NOT NULL,
@@ -21,7 +28,7 @@ CREATE TABLE posts (
 );
 
 -- Likes table
-CREATE TABLE likes (
+CREATE TABLE IF NOT EXISTS likes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   post_id UUID REFERENCES posts(id) ON DELETE CASCADE NOT NULL,
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
@@ -30,7 +37,7 @@ CREATE TABLE likes (
 );
 
 -- Comments table
-CREATE TABLE comments (
+CREATE TABLE IF NOT EXISTS comments (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   post_id UUID REFERENCES posts(id) ON DELETE CASCADE NOT NULL,
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
@@ -39,7 +46,7 @@ CREATE TABLE comments (
 );
 
 -- Connections (Friends/Followers)
-CREATE TABLE connections (
+CREATE TABLE IF NOT EXISTS connections (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   requester_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   receiver_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
@@ -48,34 +55,63 @@ CREATE TABLE connections (
   UNIQUE(requester_id, receiver_id)
 );
 
--- RLS Policies
+-- RLS Policies Setup
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE likes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connections ENABLE ROW LEVEL SECURITY;
 
--- Profiles: Anyone can read, only owner can update
+-- Profiles Policies
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON profiles;
 CREATE POLICY "Public profiles are viewable by everyone" ON profiles FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
+CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
 
--- Posts: Anyone can read, only owner can write/delete
+-- Posts Policies
+DROP POLICY IF EXISTS "Posts are viewable by everyone" ON posts;
 CREATE POLICY "Posts are viewable by everyone" ON posts FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Users can insert own posts" ON posts;
 CREATE POLICY "Users can insert own posts" ON posts FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own posts" ON posts;
 CREATE POLICY "Users can update own posts" ON posts FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own posts" ON posts;
 CREATE POLICY "Users can delete own posts" ON posts FOR DELETE USING (auth.uid() = user_id);
 
--- Likes: Anyone can read, signed in can insert, owner can delete
+-- Likes Policies
+DROP POLICY IF EXISTS "Likes are viewable by everyone" ON likes;
 CREATE POLICY "Likes are viewable by everyone" ON likes FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Users can insert own likes" ON likes;
 CREATE POLICY "Users can insert own likes" ON likes FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own likes" ON likes;
 CREATE POLICY "Users can delete own likes" ON likes FOR DELETE USING (auth.uid() = user_id);
 
--- Comments: Anyone can read, signed in can insert, owner can delete
+-- Comments Policies
+DROP POLICY IF EXISTS "Comments are viewable by everyone" ON comments;
 CREATE POLICY "Comments are viewable by everyone" ON comments FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Users can insert own comments" ON comments;
 CREATE POLICY "Users can insert own comments" ON comments FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own comments" ON comments;
 CREATE POLICY "Users can delete own comments" ON comments FOR DELETE USING (auth.uid() = user_id);
 
--- Connections: Involved parties can read/write
+-- Connections Policies
+DROP POLICY IF EXISTS "Connections viewable by parties" ON connections;
 CREATE POLICY "Connections viewable by parties" ON connections FOR SELECT USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+
+DROP POLICY IF EXISTS "Users can request connection" ON connections;
 CREATE POLICY "Users can request connection" ON connections FOR INSERT WITH CHECK (auth.uid() = requester_id);
+
+DROP POLICY IF EXISTS "Users can update connection status" ON connections;
 CREATE POLICY "Users can update connection status" ON connections FOR UPDATE USING (auth.uid() = receiver_id);
+
