@@ -140,7 +140,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       if (error) throw error;
       setConnectionStatus('none');
       setConnectionId(null);
-      if (isOwnProfile) fetchConnections();
+      fetchConnections();
     } catch (e: any) {
       alert(e.message);
     }
@@ -234,7 +234,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   };
 
   return (
-    <div className="pb-20 relative">
+    <div className="pb-6 relative">
       {/* Full Screen Image Viewer */}
       <AnimatePresence>
         {viewingImage && (

@@ -101,7 +101,7 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
 
       <div className="flex-1 overflow-y-auto p-4">
         <textarea
-          className="w-full bg-transparent text-[15px] leading-relaxed font-medium outline-none resize-none placeholder:text-white/20 mb-6 min-h-[150px]"
+          className="w-full bg-transparent text-sm leading-relaxed outline-none resize-none placeholder:text-white/20 text-white/90 mb-6 min-h-[150px]"
           placeholder="What's going on?"
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
@@ -118,13 +118,13 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
             </button>
           </div>
         ) : (
-          <div className="w-full">
+          <div className="w-full flex justify-center mb-6">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="w-full flex flex-col items-center justify-center space-y-3 h-32 bg-white/[0.02] hover:bg-white/[0.05] border border-dashed border-white/10 rounded-2xl active:scale-95 transition-all text-sm font-bold text-white/40"
+              className="w-full aspect-square max-h-[80vh] flex flex-col items-center justify-center space-y-3 bg-white/[0.02] hover:bg-white/[0.05] border border-dashed border-white/10 rounded-2xl active:scale-95 transition-all text-sm font-bold text-white/40"
             >
-              <ImageIcon size={24} />
-              <span>Add Image</span>
+              <ImageIcon size={32} />
+              <span className="uppercase tracking-widest text-[10px]">Add Image</span>
             </button>
           </div>
         )}

@@ -113,7 +113,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
   }
 
   return (
-    <div className="pb-20">
+    <div className="pb-6">
       {posts.length > 0 ? (
         posts.map((post: Post, i) => (
           <div key={post.id}>
@@ -126,7 +126,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
               onRefetch={fetchPosts}
             />
             {i < posts.length - 1 && (
-              <div className="mx-6 my-4 border-t border-white/[0.05]" />
+              <div className="mx-0 mb-4 border-t border-white/10" />
             )}
           </div>
         ))

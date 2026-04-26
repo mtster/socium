@@ -97,7 +97,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
 
       <div className="flex-1 overflow-y-auto">
         {/* Post Context */}
-        <div className="border-b border-white/5 pb-6 mb-2">
+        <div className="border-b border-white/5 pb-4 mb-4">
           <div className="p-4 flex items-start space-x-3">
              <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
                 {post.profiles?.avatar_url ? (
@@ -116,6 +116,24 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
                 )}
              </div>
           </div>
+
+          <form onSubmit={handlePostComment} className="flex items-center ml-16 mr-4 mt-2 relative">
+            <input
+              autoFocus
+              type="text"
+              value={text}
+              onChange={e => setText(e.target.value)}
+              placeholder="Type a comment..."
+              className="flex-1 bg-transparent border-0 h-10 pl-0 pr-12 text-sm focus:outline-none transition-all font-medium placeholder:text-white/30"
+            />
+            <button 
+              type="submit" 
+              disabled={posting || !text.trim()}
+              className="absolute right-0 flex items-center justify-center text-white font-bold disabled:opacity-30 active:scale-95 transition-transform text-sm"
+            >
+              Post
+            </button>
+          </form>
         </div>
 
         {/* Comments Section */}
@@ -127,10 +145,6 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
         ) : (
           comments.map(comment => (
             <div key={comment.id} className="flex space-x-3 ml-6 mb-4 relative">
-              {/* Thread line */}
-              <div className="absolute -left-6 top-6 bottom-0 w-px bg-white/10" />
-              <div className="absolute -left-6 top-4 w-6 h-px bg-white/10" />
-              
               <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 z-10">
                 {comment.profiles?.avatar_url ? (
                   <img src={comment.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
@@ -139,11 +153,11 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
                 )}
               </div>
               <div className="flex-1">
-                <div className="bg-white/5 rounded-2xl rounded-tl-none p-3 border border-white/5">
-                  <p className="text-[11px] font-bold mb-0.5 text-white/50 uppercase tracking-wider">{comment.profiles?.full_name || comment.profiles?.username}</p>
+                <div className="bg-transparent border-0 rounded-none p-0">
+                  <p className="text-[12px] font-bold mb-1 text-white/60">{comment.profiles?.full_name || comment.profiles?.username}</p>
                   <p className="text-sm text-white/90 leading-relaxed">{comment.content}</p>
                 </div>
-                <div className="flex items-center mt-1 px-1 space-x-4">
+                <div className="flex items-center mt-2 space-x-4">
                   <span className="text-[10px] text-white/40">{formatDate(comment.created_at)}</span>
                   {comment.user_id === currentUserId && (
                     <button 
@@ -159,27 +173,6 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
           ))
         )}
         </div>
-      </div>
-
-      <div className="p-4 bg-black border-t border-white/10 pb-safe">
-        <form onSubmit={handlePostComment} className="flex items-center ml-10 space-x-3 relative">
-          <div className="absolute -left-12 top-1/2 w-8 h-px bg-white/10" />
-          <div className="absolute -left-12 bottom-1/2 -top-6 w-px bg-white/10" />
-          <input
-            type="text"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            placeholder="Add a reply..."
-            className="flex-1 bg-white/5 border border-white/10 rounded-full h-10 pl-4 pr-12 text-sm focus:outline-none focus:border-white/30 transition-all font-medium placeholder:text-white/30"
-          />
-          <button 
-            type="submit" 
-            disabled={posting || !text.trim()}
-            className="absolute right-1.5 w-7 h-7 flex items-center justify-center bg-white text-black rounded-full disabled:opacity-30 active:scale-90 transition-transform"
-          >
-            <Send size={12} className="ml-[-1px]" />
-          </button>
-        </form>
       </div>
     </motion.div>
   );

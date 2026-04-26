@@ -173,7 +173,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen bg-black text-white font-sans max-w-lg mx-auto border-x border-white/5 relative flex flex-col overflow-hidden">
+    <div className="fixed inset-0 bg-black text-white font-sans max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full"></div>
       
       {/* Header */}

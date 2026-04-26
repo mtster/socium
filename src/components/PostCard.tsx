@@ -38,7 +38,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
     if (url.includes('cloudinary.com/') && url.includes('/upload/')) {
       // Don't add if already there
       if (url.includes('/q_auto')) return url;
-      return url.replace('/upload/', '/upload/q_auto,f_auto,w_1000,c_limit/');
+      return url.replace('/upload/', '/upload/q_auto:eco,f_auto,w_800,c_limit/');
     }
     return url;
   };
@@ -47,7 +47,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mb-6 bg-black border-b border-white/5 pb-4 relative"
+      className="mb-6 bg-black pb-4 relative"
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
