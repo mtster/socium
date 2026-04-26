@@ -124,14 +124,14 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
           <div className="flex justify-center py-10">
             <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
-        ) : comments.length === 0 ? (
-          <div className="text-center text-white/40 text-sm py-10 uppercase tracking-widest font-medium text-[10px]">
-             No comments yet. Start the conversation.
-          </div>
         ) : (
           comments.map(comment => (
-            <div key={comment.id} className="flex space-x-3">
-              <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
+            <div key={comment.id} className="flex space-x-3 ml-6 mb-4 relative">
+              {/* Thread line */}
+              <div className="absolute -left-6 top-6 bottom-0 w-px bg-white/10" />
+              <div className="absolute -left-6 top-4 w-6 h-px bg-white/10" />
+              
+              <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 z-10">
                 {comment.profiles?.avatar_url ? (
                   <img src={comment.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
                 ) : (
@@ -140,7 +140,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
               </div>
               <div className="flex-1">
                 <div className="bg-white/5 rounded-2xl rounded-tl-none p-3 border border-white/5">
-                  <p className="text-xs font-bold mb-1 text-white/80">{comment.profiles?.full_name || comment.profiles?.username}</p>
+                  <p className="text-[11px] font-bold mb-0.5 text-white/50 uppercase tracking-wider">{comment.profiles?.full_name || comment.profiles?.username}</p>
                   <p className="text-sm text-white/90 leading-relaxed">{comment.content}</p>
                 </div>
                 <div className="flex items-center mt-1 px-1 space-x-4">
@@ -162,20 +162,23 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
       </div>
 
       <div className="p-4 bg-black border-t border-white/10 pb-safe">
-        <form onSubmit={handlePostComment} className="flex items-center space-x-3 relative">
+        <form onSubmit={handlePostComment} className="flex items-center ml-10 space-x-3 relative">
+          <div className="absolute -left-12 top-1/2 w-8 h-px bg-white/10" />
+          <div className="absolute -left-12 bottom-1/2 -top-6 w-px bg-white/10" />
           <input
+            autoFocus
             type="text"
             value={text}
             onChange={e => setText(e.target.value)}
-            placeholder="Add a comment..."
-            className="flex-1 bg-white/5 border border-white/10 rounded-full h-12 pl-5 pr-12 text-sm focus:outline-none focus:ring-1 focus:ring-white/20 transition-all font-medium"
+            placeholder="Add a reply..."
+            className="flex-1 bg-white/5 border border-white/10 rounded-full h-10 pl-4 pr-12 text-sm focus:outline-none focus:border-white/30 transition-all font-medium placeholder:text-white/30"
           />
           <button 
             type="submit" 
             disabled={posting || !text.trim()}
-            className="absolute right-2 w-8 h-8 flex items-center justify-center bg-white text-black rounded-full disabled:opacity-30 active:scale-90 transition-transform"
+            className="absolute right-1.5 w-7 h-7 flex items-center justify-center bg-white text-black rounded-full disabled:opacity-30 active:scale-90 transition-transform"
           >
-            <Send size={14} className="ml-[-1px] mt-[1px]" />
+            <Send size={12} className="ml-[-1px]" />
           </button>
         </form>
       </div>

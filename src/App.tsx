@@ -174,8 +174,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-white font-sans max-w-lg mx-auto border-x border-white/5 relative">
+      <div className="bg-black fixed top-0 left-0 right-0 h-[env(safe-area-inset-top)] z-50"></div>
+      
       {/* Header */}
-      <header className="sticky top-0 z-40 h-14 flex items-center justify-between px-4 glass border-b border-white/10">
+      <header className="sticky top-[env(safe-area-inset-top)] z-40 h-14 flex items-center justify-between px-4 glass border-b border-white/10 mt-safe">
         <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
         <div className="flex space-x-4 opacity-60">
           {/* Action icons could go here */}

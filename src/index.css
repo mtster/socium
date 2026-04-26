@@ -16,9 +16,11 @@
   }
 
   /* Custom Scrollbar for Sleek Look */
-  ::-webkit-scrollbar {
-    width: 0px;
-    height: 0px;
+  * {
+    scrollbar-width: none; /* Firefox */
+  }
+  *::-webkit-scrollbar {
+    display: none;
   }
   
   .no-scrollbar::-webkit-scrollbar {
@@ -27,6 +29,17 @@
   .no-scrollbar {
     -ms-overflow-style: none;  /* IE and Edge */
     scrollbar-width: none;  /* Firefox */
+  }
+
+  /* Safe Area Utilities */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 20px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 20px);
+  }
+  .mt-safe {
+    margin-top: env(safe-area-inset-top, 20px);
   }
 }
 

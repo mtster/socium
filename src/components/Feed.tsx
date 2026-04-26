@@ -20,6 +20,22 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
   async function fetchPosts() {
     try {
       setLoading(true);
+      
+      // Get connections
+      const { data: connectionsData } = await supabase
+        .from('connections')
+        .select(`requester_id, target_id`)
+        .eq('status', 'accepted')
+        .or(`requester_id.eq.${currentUserId},target_id.eq.${currentUserId}`);
+        
+      const connectionIds = [currentUserId];
+      if (connectionsData) {
+        connectionsData.forEach(c => {
+          if (c.requester_id !== currentUserId) connectionIds.push(c.requester_id);
+          if (c.target_id !== currentUserId) connectionIds.push(c.target_id);
+        });
+      }
+
       const { data, error } = await supabase
         .from('posts')
         .select(`
@@ -28,6 +44,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
           likes(user_id),
           comments(id)
         `)
+        .in('user_id', connectionIds)
         .order('created_at', { ascending: false })
         .limit(20);
 

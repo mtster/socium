@@ -6,6 +6,7 @@ import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDate } from '@/src/lib/utils';
 import UserSearchModal from './UserSearchModal';
+import ImageCropperModal from './ImageCropperModal';
 
 interface ProfileViewProps {
   profile: Profile;
@@ -24,6 +25,8 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   
   // Local state for immediate avatar update
   const [localAvatar, setLocalAvatar] = useState(profile.avatar_url);
@@ -157,15 +160,28 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     if (!file) return;
 
     try {
+      const url = URL.createObjectURL(file);
+      setCropperImageSrc(url);
+      setShowPfpMenu(false);
+    } catch (error) {
+      console.error('Error previewing image:', error);
+    }
+    // reset input
+    e.target.value = '';
+  };
+
+  const handleCropComplete = async (croppedFile: File) => {
+    setCropperImageSrc(null);
+    try {
       setIsUploading(true);
       
-      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileExt = 'jpg';
       const fileName = `${profile.id}-${Math.random()}.${fileExt}`;
       const filePath = `${profile.id}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(filePath, file);
+        .upload(filePath, croppedFile);
 
       if (uploadError) {
         if (uploadError.message.includes('bucket not found')) {
@@ -193,7 +209,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       setLocalAvatar(imageUrl);
     } catch (error) {
       console.error('Error updating PFP:', error);
-      alert('Failed to update profile picture. Check browser console for more details.');
+      alert('Failed to update profile picture.');
     } finally {
       setIsUploading(false);
     }
@@ -235,6 +251,13 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       </AnimatePresence>
 
       <div className="px-4 py-8 flex flex-col items-center">
+        {cropperImageSrc && (
+          <ImageCropperModal 
+            imageSrc={cropperImageSrc} 
+            onClose={() => setCropperImageSrc(null)} 
+            onComplete={handleCropComplete} 
+          />
+        )}
         {/* Full Name above picture */}
         <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">{profile.full_name || profile.username}</h1>
 
@@ -325,7 +348,37 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
         {/* Action Buttons for Other Profile */}
         {!isOwnProfile && (
-          <div className="flex space-x-3 mb-8 w-full max-w-xs">
+          <div className="flex space-x-3 mb-8 w-full max-w-xs relative">
+            <AnimatePresence>
+              {showDisconnectConfirm && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                  className="absolute bottom-full mb-2 left-0 right-0 bg-[#222] p-4 rounded-2xl border border-white/10 shadow-xl z-20"
+                >
+                  <p className="text-sm font-medium text-center mb-4 leading-relaxed">Are you sure you want to remove this user from your connections?</p>
+                  <div className="flex space-x-2">
+                    <button 
+                      onClick={() => setShowDisconnectConfirm(false)}
+                      className="flex-1 bg-white/10 hover:bg-white/20 active:scale-95 transition-all text-white font-bold py-2 rounded-xl text-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setShowDisconnectConfirm(false);
+                        if (connectionId) handleRemoveConnection(connectionId);
+                      }}
+                      className="flex-1 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 active:scale-95 transition-all text-red-500 font-bold py-2 rounded-xl text-sm"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {connectionStatus === 'none' && (
               <button 
                 onClick={handleRequestConnection}
@@ -352,7 +405,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             )}
              {connectionStatus === 'accepted' && (
                <button 
-                 onClick={() => connectionId && handleRemoveConnection(connectionId)}
+                 onClick={() => setShowDisconnectConfirm(true)}
                  className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
                >
                  Connected
