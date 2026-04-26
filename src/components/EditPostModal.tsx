@@ -93,7 +93,7 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
         <button 
           onClick={handleSave}
           disabled={isUploading || (!caption.trim() && !imageUrl)}
-          className="text-yellow-500 font-bold active:scale-95 disabled:opacity-50 transition-all p-2"
+          className="text-white font-bold active:scale-95 disabled:opacity-50 transition-all p-2"
         >
           {isUploading ? 'Saving...' : 'Save'}
         </button>
@@ -101,8 +101,7 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
 
       <div className="flex-1 overflow-y-auto p-4">
         <textarea
-          autoFocus
-          className="w-full bg-transparent text-xl font-medium outline-none resize-none placeholder:text-white/20 mb-6 min-h-[150px]"
+          className="w-full bg-transparent text-[15px] leading-relaxed font-medium outline-none resize-none placeholder:text-white/20 mb-6 min-h-[150px]"
           placeholder="What's going on?"
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
@@ -119,12 +118,12 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
             </button>
           </div>
         ) : (
-          <div className="flex space-x-4">
+          <div className="w-full">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center space-x-2 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl active:scale-95 transition-all text-sm font-bold text-white/50"
+              className="w-full flex flex-col items-center justify-center space-y-3 h-32 bg-white/[0.02] hover:bg-white/[0.05] border border-dashed border-white/10 rounded-2xl active:scale-95 transition-all text-sm font-bold text-white/40"
             >
-              <ImageIcon size={20} />
+              <ImageIcon size={24} />
               <span>Add Image</span>
             </button>
           </div>

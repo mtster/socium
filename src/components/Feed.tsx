@@ -24,15 +24,15 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       // Get connections
       const { data: connectionsData } = await supabase
         .from('connections')
-        .select(`requester_id, target_id`)
+        .select(`requester_id, receiver_id`)
         .eq('status', 'accepted')
-        .or(`requester_id.eq.${currentUserId},target_id.eq.${currentUserId}`);
+        .or(`requester_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
         
       const connectionIds = [currentUserId];
       if (connectionsData) {
         connectionsData.forEach(c => {
           if (c.requester_id !== currentUserId) connectionIds.push(c.requester_id);
-          if (c.target_id !== currentUserId) connectionIds.push(c.target_id);
+          if (c.receiver_id !== currentUserId) connectionIds.push(c.receiver_id);
         });
       }
 
@@ -115,7 +115,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
   return (
     <div className="pb-20">
       {posts.length > 0 ? (
-        posts.map((post: Post) => (
+        posts.map((post: Post, i) => (
           <div key={post.id}>
             <PostCard 
               post={post} 
@@ -125,6 +125,9 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
               onLike={handleLikePost}
               onRefetch={fetchPosts}
             />
+            {i < posts.length - 1 && (
+              <div className="mx-6 my-4 border-t border-white/[0.05]" />
+            )}
           </div>
         ))
       ) : (

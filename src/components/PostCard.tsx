@@ -33,6 +33,16 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
 
   const isOwner = post.user_id === currentUserId;
 
+  const getOptimizedUrl = (url: string) => {
+    if (!url) return url;
+    if (url.includes('cloudinary.com/') && url.includes('/upload/')) {
+      // Don't add if already there
+      if (url.includes('/q_auto')) return url;
+      return url.replace('/upload/', '/upload/q_auto,f_auto,w_1000,c_limit/');
+    }
+    return url;
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -128,7 +138,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       {post.image_url && (
         <div className="relative w-full bg-white/5 overflow-hidden">
           <img 
-            src={post.image_url} 
+            src={getOptimizedUrl(post.image_url)} 
             alt="Post content" 
             className="w-full h-auto max-h-[80vh] object-contain"
             loading="lazy"

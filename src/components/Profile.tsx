@@ -69,13 +69,13 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         .select('*')
         .eq('requester_id', currentUserId)
         .eq('receiver_id', profile.id)
-        .single();
+        .maybeSingle();
 
       const { data: rel2 } = await supabase.from('connections')
         .select('*')
         .eq('requester_id', profile.id)
         .eq('receiver_id', currentUserId)
-        .single();
+        .maybeSingle();
 
       const rel = rel1 || rel2;
       
@@ -355,7 +355,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   initial={{ opacity: 0, scale: 0.95, y: -10 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                  className="absolute bottom-full mb-2 left-0 right-0 bg-[#222] p-4 rounded-2xl border border-white/10 shadow-xl z-20"
+                  className="absolute top-full mt-2 left-0 right-0 bg-[#222] p-4 rounded-2xl border border-white/10 shadow-xl z-20"
                 >
                   <p className="text-sm font-medium text-center mb-4 leading-relaxed">Are you sure you want to remove this user from your connections?</p>
                   <div className="flex space-x-2">

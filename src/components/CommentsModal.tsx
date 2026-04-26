@@ -166,7 +166,6 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
           <div className="absolute -left-12 top-1/2 w-8 h-px bg-white/10" />
           <div className="absolute -left-12 bottom-1/2 -top-6 w-px bg-white/10" />
           <input
-            autoFocus
             type="text"
             value={text}
             onChange={e => setText(e.target.value)}

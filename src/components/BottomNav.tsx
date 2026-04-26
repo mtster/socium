@@ -16,7 +16,7 @@ export default function BottomNav({ activeTab, setActiveTab }: BottomNavProps) {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 glass h-16 pb-safe flex items-center justify-around z-50">
+    <nav className="shrink-0 bg-black/90 border-t border-white/10 glass h-16 pb-safe flex items-center justify-around relative z-40">
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;
