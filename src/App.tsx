@@ -8,6 +8,8 @@ import CreatePost from './components/CreatePost';
 import { Profile, Post } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 
+import AddToHomeScreenModal from './components/AddToHomeScreenModal';
+
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('feed');
@@ -173,8 +175,8 @@ export default function App() {
   }
 
   return (
-    <div className="fixed inset-0 bg-black text-white font-sans max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
-      <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full"></div>
+    <div className="fixed inset-0 h-[100dvh] bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
+      <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
       <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90">
@@ -183,6 +185,9 @@ export default function App() {
           {/* Action icons could go here */}
         </div>
       </header>
+
+      {/* Modals and Overlays */}
+      <AddToHomeScreenModal />
 
       {/* Main View Area */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden relative">

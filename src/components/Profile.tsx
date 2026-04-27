@@ -134,12 +134,29 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     }
   }
 
-  const handleRemoveConnection = async (id: string) => {
+  const handleRemoveConnection = async (id: string, connectionProfileId?: string) => {
     try {
+      // Try to delete by ID
       const { error } = await supabase.from('connections').delete().eq('id', id);
-      if (error) throw error;
-      setConnectionStatus('none');
-      setConnectionId(null);
+      
+      // Fallback robust deletion if we are on someone else's profile
+      if (!isOwnProfile) {
+        await supabase.from('connections')
+          .delete()
+          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`);
+      } else if (connectionProfileId) {
+         // robust deletion from pending list if id is unknown
+         await supabase.from('connections')
+          .delete()
+          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${connectionProfileId}),and(requester_id.eq.${connectionProfileId},receiver_id.eq.${currentUserId})`);
+      }
+
+      if (error && error.code !== 'PGRST116') throw error; // Ignore not found error if robust strategy worked
+      
+      if (!isOwnProfile) {
+        setConnectionStatus('none');
+        setConnectionId(null);
+      }
       fetchConnections();
     } catch (e: any) {
       alert(e.message);
@@ -428,7 +445,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 </div>
                 <div className="flex space-x-2">
                   <button onClick={() => handleAcceptConnection(req.id)} className="bg-white text-black text-xs font-bold px-3 py-1.5 rounded-lg active:scale-95">Accept</button>
-                  <button onClick={() => handleRemoveConnection(req.id)} className="bg-white/10 text-white text-xs font-bold px-3 py-1.5 rounded-lg active:scale-95">Reject</button>
+                  <button onClick={() => handleRemoveConnection(req.id, req.profiles.id)} className="bg-white/10 text-white text-xs font-bold px-3 py-1.5 rounded-lg active:scale-95">Reject</button>
                 </div>
               </div>
             ))}

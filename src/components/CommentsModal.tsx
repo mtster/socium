@@ -17,6 +17,15 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
   const [posting, setPosting] = useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Focus input on mount to bring up keyboard automatically
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     fetchComments();
@@ -117,8 +126,9 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
              </div>
           </div>
 
-          <form onSubmit={handlePostComment} className="flex items-center ml-16 mr-4 mt-2 relative">
+          <form onSubmit={handlePostComment} className="flex items-center ml-14 mr-4 mt-2 mb-2 relative">
             <input
+              ref={inputRef}
               autoFocus
               type="text"
               value={text}
