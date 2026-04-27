@@ -28,7 +28,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
         .eq('status', 'accepted')
         .or(`requester_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
         
-      const connectionIds = [currentUserId];
+      const connectionIds = [currentUserId, '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2'];
       if (connectionsData) {
         connectionsData.forEach(c => {
           if (c.requester_id !== currentUserId) connectionIds.push(c.requester_id);

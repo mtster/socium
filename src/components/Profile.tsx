@@ -19,6 +19,15 @@ interface ProfileViewProps {
   onRefetch?: () => void;
 }
 
+const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+let cachedAdminProfile: Profile | null = null;
+async function getAdminProfile() {
+  if (cachedAdminProfile) return cachedAdminProfile;
+  const { data } = await supabase.from('profiles').select('*').eq('id', ADMIN_ID).maybeSingle();
+  if (data) cachedAdminProfile = data;
+  return data;
+}
+
 export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -58,6 +67,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         ...(accepted2?.map(c => c.profiles) || [])
       ].filter(Boolean);
       
+      const adminProf = await getAdminProfile();
+      if (adminProf && !combined.some(c => c.id === ADMIN_ID)) {
+        combined.unshift(adminProf);
+      }
+      
       setConnections(combined);
 
       // Fetch pending requests we received
@@ -79,7 +93,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       const rel = rel1 || rel2;
       
-      if (!rel) {
+      if (profile.id === ADMIN_ID) {
+        setConnectionStatus('accepted');
+      } else if (!rel) {
         setConnectionStatus('none');
       } else {
         setConnectionId(rel.id);
@@ -100,6 +116,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         ...(accepted1?.map(c => c.profiles) || []),
         ...(accepted2?.map(c => c.profiles) || [])
       ].filter(Boolean);
+
+      const adminProf = await getAdminProfile();
+      if (adminProf && !combined.some(c => c.id === ADMIN_ID)) {
+        combined.unshift(adminProf);
+      }
+
       setConnections(combined);
     }
   };
@@ -420,13 +442,18 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 Accept pending
               </button>
             )}
-             {connectionStatus === 'accepted' && (
+             {connectionStatus === 'accepted' && profile.id !== ADMIN_ID && (
                <button 
                  onClick={() => setShowDisconnectConfirm(true)}
                  className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
                >
                  Connected
                </button>
+             )}
+             {connectionStatus === 'accepted' && profile.id === ADMIN_ID && (
+               <div className="flex-1 bg-white/5 text-white/50 text-center font-bold py-2.5 rounded-xl cursor-default border border-white/5 text-sm flex items-center justify-center">
+                 Official Account
+               </div>
              )}
           </div>
         )}

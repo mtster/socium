@@ -36,6 +36,11 @@
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom);
   }
+  @media (display-mode: standalone) {
+    .pb-safe {
+      padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
+    }
+  }
   .pt-safe {
     padding-top: env(safe-area-inset-top);
   }

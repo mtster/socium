@@ -10,6 +10,8 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 
+import CompleteProfileModal from './components/CompleteProfileModal';
+
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('feed');
@@ -171,7 +173,12 @@ export default function App() {
   };
 
   if (!session) {
-    return <AuthView />;
+    return (
+      <>
+        <AddToHomeScreenModal />
+        <AuthView />
+      </>
+    );
   }
 
   return (
@@ -187,6 +194,10 @@ export default function App() {
       </header>
 
       {/* Modals and Overlays */}
+      <CompleteProfileModal 
+        profile={profile} 
+        onComplete={() => { if (session?.user?.id) fetchProfile(session.user.id); }} 
+      />
       <AddToHomeScreenModal />
 
       {/* Main View Area */}
