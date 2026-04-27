@@ -19,10 +19,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [showFeatures, setShowFeatures] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -510,25 +512,33 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  const isPrevConsecutive = prevMsg && prevMsg.sender_id === msg.sender_id;
                  const showAvatar = !isMine && !isConsecutive;
 
-                 let roundedClass = 'rounded-2xl';
+                 let roundedClass = 'rounded-[20px]';
                  if (isMine) {
-                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tr-sm rounded-br-sm';
-                   else if (isConsecutive) roundedClass = 'rounded-2xl rounded-br-sm';
-                   else if (isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tr-sm text-sm mb-2';
-                   else roundedClass = 'rounded-2xl rounded-br-sm mb-2';
+                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tr-sm rounded-br-sm mb-0.5';
+                   else if (isConsecutive) roundedClass = 'rounded-[20px] rounded-br-sm mb-0.5';
+                   else if (isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tr-sm mb-3';
+                   else roundedClass = 'rounded-[20px] rounded-br-sm mb-3';
                  } else {
-                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tl-sm rounded-bl-sm ml-8';
-                   else if (isConsecutive) roundedClass = 'rounded-2xl rounded-bl-sm ml-8';
-                   else if (isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tl-sm mb-2 ml-8';
-                   else roundedClass = 'rounded-2xl rounded-bl-sm mb-2 ml-0'; // With avatar
+                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tl-sm rounded-bl-sm mb-0.5 ml-8';
+                   else if (isConsecutive) roundedClass = 'rounded-[20px] rounded-bl-sm mb-0.5 ml-8';
+                   else if (isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tl-sm mb-3 ml-8';
+                   else roundedClass = 'rounded-[20px] rounded-bl-sm mb-3 ml-0'; // With avatar
                  }
+                 
+                 const isMediaOnly = (msg.media_type === 'image' || msg.media_type === 'location' || msg.media_type === 'audio') && !msg.content;
 
                  return (
                    <div key={msg.id} className={cn("flex w-full gap-2", isMine ? "justify-end" : "justify-start")}>
                       {!isMine && !isConsecutive && (
-                          <div className="w-6 h-6 shrink-0 mt-auto">
+                          <div className="w-6 h-6 shrink-0 mt-auto mb-3">
                               {showAvatar && (
-                                <div className="w-full h-full rounded-full overflow-hidden bg-white/10 border border-white/10">
+                                <div 
+                                  className="w-full h-full rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer"
+                                  onClick={() => {
+                                      window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } }));
+                                      onCloseChat?.();
+                                  }}
+                                >
                                   {activeChat.avatar_url ? (
                                     <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" />
                                   ) : (
@@ -540,27 +550,36 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                       )}
                       
                       <div className={cn(
-                        "max-w-[75%] min-w-[2rem] text-sm leading-relaxed whitespace-pre-wrap break-words overflow-hidden",
+                        "max-w-[75%] min-w-[2rem] text-[15px] leading-tight whitespace-pre-wrap break-words overflow-hidden",
                         roundedClass,
-                        isMine ? "bg-white text-black" : "bg-white/15 text-white",
-                        (msg.media_type === 'image' || msg.media_type === 'location') && "p-1 pb-2", // less padding for images
-                        !msg.media_type && "px-4 py-2.5"
+                        (!isMediaOnly) && (isMine ? "bg-white text-black" : "bg-white/15 text-white"),
+                        !msg.media_type && "px-3.5 py-2",
+                        msg.media_type === 'audio' && "p-0",
+                        (msg.media_type === 'image' || msg.media_type === 'location') && "p-0"
                       )}>
                         {msg.media_type === 'image' && msg.media_url && (
-                          <img src={msg.media_url} alt="Photo" className="w-full h-auto max-h-[300px] object-cover rounded-[14px] mb-1" />
+                          <img 
+                            src={msg.media_url} 
+                            alt="Photo" 
+                            className="w-full h-auto max-h-[300px] object-cover rounded-[18px] cursor-pointer" 
+                            onClick={() => setViewingImage(msg.media_url)}
+                          />
                         )}
                         {msg.media_type === 'audio' && msg.media_url && (
-                          <div className="px-4 py-3 flex items-center gap-3">
-                            <audio src={msg.media_url} controls className={cn("h-8 w-[200px]", isMine && "brightness-[0] invert")} />
+                          <div className={cn("px-4 py-2 flex items-center gap-3 rounded-[20px]", isMine ? "bg-white text-black" : "bg-white/15 text-white")}>
+                            <audio src={msg.media_url} controls className={cn("h-8 w-[200px]", isMine && "brightness-[0] contrast-125")} />
                           </div>
                         )}
                         {msg.media_type === 'location' && msg.content && (
-                           <div className="w-full aspect-square bg-white/5 rounded-[14px] mb-1 overflow-hidden relative">
+                           <div className="w-full aspect-square bg-white/5 rounded-[18px] mb-0.5 overflow-hidden relative">
                              <img src={`https://static-maps.yandex.ru/1.x/?ll=${msg.content.split(',')[1]},${msg.content.split(',')[0]}&z=14&l=map&size=300,300&pt=${msg.content.split(',')[1]},${msg.content.split(',')[0]},pm2rdm`} alt="Location" className="w-full h-full object-cover" />
                            </div>
                         )}
                         {msg.content && msg.media_type !== 'location' && (
-                          <div className={msg.media_type === 'image' || msg.media_type === 'audio' ? "px-2" : ""}>
+                          <div className={cn(
+                            (msg.media_type === 'image') ? "px-3 pb-2 pt-1.5" : "",
+                            (msg.media_type === 'audio') ? "px-3 pb-2 pt-1" : ""
+                          )}>
                             {msg.content}
                           </div>
                         )}
@@ -573,42 +592,48 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
             {/* Input Area */}
             <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/90 glass shrink-0 relative z-10 transition-all">
-               <div className="flex items-end gap-3 relative z-20">
+               <div className="flex items-center gap-3 relative z-20">
                  <button 
                    type="button"
                    onClick={() => setShowFeatures(!showFeatures)}
-                   className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex flex-wrap gap-0.5 p-2 items-center justify-center active:scale-90 transition-transform"
-                 >
-                   {showFeatures ? (
-                     <X size={20} className="text-white absolute" />
-                   ) : (
-                     <>
-                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
-                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
-                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
-                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
-                     </>
+                   disabled={isFocused && !showFeatures}
+                   className={cn(
+                     "w-9 h-9 shrink-0 rounded-full flex items-center justify-center transition-all duration-300",
+                     (isFocused && !showFeatures) ? "w-0 opacity-0 overflow-hidden ml-[-12px]" : "bg-white/10 active:scale-90"
                    )}
+                 >
+                   <Plus 
+                     size={22} 
+                     className={cn(
+                       "text-white transition-transform duration-300",
+                       showFeatures && "rotate-45"
+                     )} 
+                   />
                  </button>
-                 <div className="relative flex-1">
+                 <div className="relative flex-1 flex items-center">
                    <textarea 
                      placeholder="Message..." 
                      value={newMessage}
                      onChange={e => setNewMessage(e.target.value)}
+                     onFocus={() => {
+                        setIsFocused(true);
+                        setShowFeatures(false);
+                     }}
+                     onBlur={() => setIsFocused(false)}
                      onKeyDown={e => {
                        if (e.key === 'Enter' && !e.shiftKey) {
                          e.preventDefault();
                          handleSendMessage(e);
                        }
                      }}
-                     className="w-full bg-white/10 border border-white/10 text-white placeholder:text-white/40 rounded-[20px] px-4 py-2.5 pr-12 focus:outline-none focus:border-white/30 text-sm transition-all resize-none min-h-[40px] max-h-[120px]"
+                     className="w-full bg-white/10 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none focus:border-white/30 text-sm transition-all resize-none min-h-[40px] max-h-[120px] leading-tight flex items-center"
                      rows={1}
                      style={{ height: newMessage ? 'auto' : '40px' }}
                    />
                    <button 
                      type="submit"
                      disabled={!newMessage.trim()}
-                     className="absolute right-1 bottom-1 w-8 h-8 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-50 active:scale-95 transition-all"
+                     className="absolute right-1 w-8 h-8 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-50 active:scale-95 transition-all"
                    >
                      <ArrowUp size={18} strokeWidth={2.5} className="mt-0.5" />
                    </button>
@@ -621,6 +646,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                      initial={{ height: 0, opacity: 0 }}
                      animate={{ height: 'auto', opacity: 1 }}
                      exit={{ height: 0, opacity: 0 }}
+                     transition={{ type: "spring", stiffness: 400, damping: 30 }}
                      className="overflow-hidden mt-4"
                    >
                      <div className="grid grid-cols-4 gap-4 px-2 pb-2">
@@ -690,6 +716,36 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  }} 
                />
             </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {viewingImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4 backdrop-blur-sm"
+            onClick={() => setViewingImage(null)}
+          >
+            <button 
+               className="absolute top-safe right-4 p-2 bg-black/50 text-white rounded-full mt-4 active:scale-90 transition-transform"
+               onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+            >
+              <X size={24} />
+            </button>
+            <motion.img 
+               initial={{ scale: 0.9, y: 20 }}
+               animate={{ scale: 1, y: 0 }}
+               exit={{ scale: 0.9, y: 20 }}
+               transition={{ type: "spring", damping: 25, stiffness: 300 }}
+               src={viewingImage} 
+               alt="Fullscreen" 
+               className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
+               onClick={(e) => e.stopPropagation()} 
+            />
           </motion.div>
         )}
       </AnimatePresence>

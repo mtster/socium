@@ -43,7 +43,6 @@ export default function App() {
       if (session) {
         fetchProfile(session.user.id);
         registerPush(session.user.id);
-        fetchGlobalUnread(session.user.id);
       }
     });
 
@@ -54,7 +53,6 @@ export default function App() {
       if (session) {
         fetchProfile(session.user.id);
         registerPush(session.user.id);
-        fetchGlobalUnread(session.user.id);
       }
     });
 
@@ -64,25 +62,35 @@ export default function App() {
     };
   }, []);
 
-  const fetchGlobalUnread = async (userId: string) => {
-    const { count } = await supabase
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('receiver_id', userId)
-      .is('read_at', null);
-    
-    setTotalUnread(count || 0);
+  useEffect(() => {
+    let globalUnreadChannel: any = null;
 
-    // Global listener for new messages
-    supabase.channel('global_unread')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, () => {
-         fetchGlobalUnread(userId);
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, () => {
-         fetchGlobalUnread(userId);
-      })
-      .subscribe();
-  };
+    if (session?.user?.id) {
+      const getUnread = async () => {
+        const { count } = await supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('receiver_id', session.user.id)
+          .is('read_at', null);
+        setTotalUnread(count || 0);
+      };
+
+      getUnread();
+
+      globalUnreadChannel = supabase.channel('global_unread')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
+           getUnread();
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
+           getUnread();
+        })
+        .subscribe();
+    }
+
+    return () => {
+      if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
+    };
+  }, [session?.user?.id]);
 
   const registerPush = async (userId: string) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
