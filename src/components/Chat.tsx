@@ -243,7 +243,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             className="flex-1 flex flex-col h-full"
           >
             <div className="p-4 pt-safe border-b border-white/10 shrink-0">
-               <h1 className="text-2xl font-bold tracking-tight mb-4 text-white">Messages</h1>
                <div className="relative">
                  <input 
                    type="text" 
@@ -252,14 +251,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                    onChange={e => setSearchQuery(e.target.value)}
                    className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all"
                  />
-                 {searchQuery && (
-                   <button 
-                     onClick={() => setSearchQuery('')}
-                     className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white mt-0.5"
-                   >
-                     <Send size={16} className="rotate-45" />
-                   </button>
-                 )}
                </div>
             </div>
             
@@ -297,7 +288,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                      </div>
                      {c.lastMessage && (
                         <div className="shrink-0 text-[10px] text-white/30">
-                            {new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
                         </div>
                      )}
                   </button>
@@ -311,7 +302,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
-            className="flex-1 flex flex-col h-full absolute inset-0 z-[60] bg-black"
+            className="flex-1 flex flex-col h-[100dvh] fixed inset-0 z-[100] w-full max-w-lg mx-auto bg-black border-x border-white/5"
           >
             {/* Header */}
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 glass shrink-0">

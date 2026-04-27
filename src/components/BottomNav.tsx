@@ -11,7 +11,7 @@ export default function BottomNav({ activeTab, setActiveTab }: BottomNavProps) {
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
     { id: 'create', icon: PlusSquare, label: 'Post' },
-    { id: 'messages', icon: MessageCircle, label: 'Chat' },
+    { id: 'chat', icon: MessageCircle, label: 'Chat' },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
