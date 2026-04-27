@@ -72,7 +72,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         combined.unshift(adminProf);
       }
       
-      setConnections(combined);
+      setConnections(combined.filter(c => c.id !== profile.id && c.id !== currentUserId));
 
       // Fetch pending requests we received
       const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');
@@ -122,7 +122,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         combined.unshift(adminProf);
       }
 
-      setConnections(combined);
+      setConnections(combined.filter(c => c.id !== profile.id && c.id !== currentUserId));
     }
   };
 

@@ -13,7 +13,6 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
     if (!profile) return;
     const hasCompleted = localStorage.getItem(`socium_name_prompt_${profile.id}`);
     if (!hasCompleted) {
-      // Pre-fill if they have a full name
       if (profile.full_name) {
         const parts = profile.full_name.split(' ');
         setFirstName(parts[0] || '');
@@ -27,7 +26,7 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!firstName.trim()) return;
+    if (!firstName.trim() || !lastName.trim()) return;
     setSaving(true);
     try {
       const newFullName = `${firstName.trim()} ${lastName.trim()}`.trim();
@@ -42,68 +41,58 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
     }
   };
 
-  const handleSkip = () => {
-    localStorage.setItem(`socium_name_prompt_${profile.id}`, 'true');
-    setIsVisible(false);
-    onComplete();
-  };
-
   return (
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6"
+        className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-3xl flex flex-col justify-end sm:justify-center"
       >
         <motion.div
-          initial={{ scale: 0.9, y: 20 }}
-          animate={{ scale: 1, y: 0 }}
-          className="bg-[#111] border border-white/10 rounded-3xl p-6 w-full max-w-sm relative"
+          initial={{ y: '100%', scale: 1 }}
+          animate={{ y: 0, scale: 1 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+          className="bg-black border-t border-white/10 sm:border sm:rounded-3xl rounded-t-3xl p-6 sm:p-8 pt-8 pb-safe shadow-2xl w-full sm:max-w-md mx-auto relative"
         >
-          <h2 className="text-2xl font-bold tracking-tight mb-2 text-white">Configure Profile</h2>
-          <p className="text-sm text-white/60 leading-relaxed mb-6">
-            We recommend you input your real first and last name so that your friends can find you on Socium.
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-1 bg-white/20 rounded-full sm:hidden" />
+          
+          <h2 className="text-2xl font-bold tracking-tight mb-2 text-white mt-2">Welcome to Socium</h2>
+          <p className="text-sm text-white/50 leading-relaxed mb-8 font-medium">
+            We recommend you input your real first and last names so that your friends can find you on Socium.
           </p>
 
-          <form onSubmit={handleSave} className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-1">First Name</label>
-              <input
-                type="text"
-                value={firstName}
-                onChange={e => setFirstName(e.target.value)}
-                autoFocus
-                placeholder="e.g. John"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-colors"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-1">Last Name</label>
-              <input
-                type="text"
-                value={lastName}
-                onChange={e => setLastName(e.target.value)}
-                placeholder="e.g. Doe"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-colors"
-              />
+          <form onSubmit={handleSave} className="space-y-6">
+            <div className="space-y-4">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={firstName}
+                  onChange={e => setFirstName(e.target.value)}
+                  autoFocus
+                  placeholder="First Name"
+                  className="w-full bg-transparent border-b border-white/20 px-1 py-3 text-lg text-white placeholder:text-white/30 focus:outline-none focus:border-white transition-colors"
+                />
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={e => setLastName(e.target.value)}
+                  placeholder="Last Name"
+                  className="w-full bg-transparent border-b border-white/20 px-1 py-3 text-lg text-white placeholder:text-white/30 focus:outline-none focus:border-white transition-colors"
+                />
+              </div>
             </div>
 
-            <div className="pt-4 flex flex-col space-y-3">
+            <div className="pt-6 pb-2">
               <button
                 type="submit"
-                disabled={saving || !firstName.trim()}
-                className="w-full bg-white text-black font-bold py-3.5 rounded-xl disabled:opacity-50 active:scale-95 transition-transform"
+                disabled={saving || !firstName.trim() || !lastName.trim()}
+                className="w-full bg-white text-black font-bold py-4 rounded-full disabled:opacity-30 active:scale-95 transition-transform"
               >
-                {saving ? 'Saving...' : 'Save & Continue'}
-              </button>
-              <button
-                type="button"
-                onClick={handleSkip}
-                disabled={saving}
-                className="w-full text-white/40 font-bold py-2 text-sm active:scale-95 transition-transform hover:text-white/70"
-              >
-                Skip for now
+                {saving ? 'Saving...' : 'Continue'}
               </button>
             </div>
           </form>

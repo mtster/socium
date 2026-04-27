@@ -119,6 +119,9 @@ CREATE POLICY "Users can request connection" ON connections FOR INSERT WITH CHEC
 DROP POLICY IF EXISTS "Users can update connection status" ON connections;
 CREATE POLICY "Users can update connection status" ON connections FOR UPDATE USING (auth.uid() = receiver_id);
 
+DROP POLICY IF EXISTS "Users can delete their connections" ON connections;
+CREATE POLICY "Users can delete their connections" ON connections FOR DELETE USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+
 -- ==========================================
 -- SUPABASE STORAGE SETUP
 -- ==========================================
