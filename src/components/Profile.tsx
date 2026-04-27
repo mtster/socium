@@ -68,7 +68,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       ].filter(Boolean);
       
       const adminProf = await getAdminProfile();
-      if (adminProf && !combined.some(c => c.id === ADMIN_ID)) {
+      if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
         combined.unshift(adminProf);
       }
       
@@ -118,7 +118,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       ].filter(Boolean);
 
       const adminProf = await getAdminProfile();
-      if (adminProf && !combined.some(c => c.id === ADMIN_ID)) {
+      if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
         combined.unshift(adminProf);
       }
 
