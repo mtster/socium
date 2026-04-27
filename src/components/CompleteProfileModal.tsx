@@ -97,7 +97,6 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
                   type="text"
                   value={firstName}
                   onChange={e => setFirstName(e.target.value)}
-                  autoFocus
                   placeholder="First Name"
                   className="w-full bg-transparent border-b border-white/20 px-1 py-3 text-lg text-white placeholder:text-white/30 focus:outline-none focus:border-white transition-colors"
                 />

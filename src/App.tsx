@@ -20,8 +20,16 @@ export default function App() {
   const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
+  const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
 
   useEffect(() => {
+    const handleOpenChat = (e: any) => {
+      setInitialActiveChat(e.detail.profile);
+      setViewingProfileId(null);
+      setActiveTab('chat');
+    };
+    window.addEventListener('openChat', handleOpenChat);
+
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
     if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
       window.history.replaceState({}, document.title, '/');
@@ -45,7 +53,10 @@ export default function App() {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('openChat', handleOpenChat);
+    };
   }, []);
 
   const registerPush = async (userId: string) => {
@@ -371,7 +382,11 @@ export default function App() {
                exit={{ opacity: 0, x: -20 }}
                className="page-transition min-h-screen"
              >
-               <Chat currentUserId={session.user.id} />
+               <Chat 
+                 currentUserId={session.user.id} 
+                 initialActiveChat={initialActiveChat}
+                 onCloseChat={() => setInitialActiveChat(null)}
+               />
              </motion.div>
            )}
         </AnimatePresence>

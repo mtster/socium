@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X } from 'lucide-react';
+import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
@@ -452,17 +452,33 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
               </button>
             )}
              {connectionStatus === 'accepted' && profile.id !== ADMIN_ID && currentUserId !== ADMIN_ID && (
-               <button 
-                 onClick={() => setShowDisconnectConfirm(true)}
-                 className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
-               >
-                 Connected
-               </button>
+               <>
+                 <button 
+                   onClick={() => setShowDisconnectConfirm(true)}
+                   className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
+                 >
+                   Connected
+                 </button>
+                 <button 
+                   onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
+                   className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+                 >
+                   <MessageCircle size={20} className="fill-current" />
+                 </button>
+               </>
              )}
              {connectionStatus === 'accepted' && (profile.id === ADMIN_ID || currentUserId === ADMIN_ID) && (
-               <div className="flex-1 bg-white/5 text-white/50 text-center font-bold py-2.5 rounded-xl cursor-default border border-white/5 text-sm flex items-center justify-center">
-                 {profile.id === ADMIN_ID ? 'Official Account' : 'Connected'}
-               </div>
+               <>
+                 <div className="flex-1 bg-white/5 text-white/50 text-center font-bold py-2.5 rounded-xl cursor-default border border-white/5 text-sm flex items-center justify-center">
+                   {profile.id === ADMIN_ID ? 'Official Account' : 'Connected'}
+                 </div>
+                 <button 
+                   onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
+                   className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+                 >
+                   <MessageCircle size={20} className="fill-current" />
+                 </button>
+               </>
              )}
           </div>
         )}

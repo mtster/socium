@@ -7,16 +7,24 @@ import { cn } from '@/src/lib/utils';
 
 interface ChatProps {
   currentUserId: string;
+  initialActiveChat?: Profile | null;
+  onCloseChat?: () => void;
 }
 
-export default function Chat({ currentUserId }: ChatProps) {
+export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: ChatProps) {
   const [connections, setConnections] = useState<(Profile & { lastMessage?: any, unreadCount?: number })[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeChat, setActiveChat] = useState<Profile | null>(null);
+  const [activeChat, setActiveChat] = useState<Profile | null>(initialActiveChat || null);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (initialActiveChat) {
+      setActiveChat(initialActiveChat);
+    }
+  }, [initialActiveChat]);
 
   useEffect(() => {
     fetchConnectionsAndRecentMessages();
@@ -97,19 +105,28 @@ export default function Chat({ currentUserId }: ChatProps) {
 
       // 2. Get last messages and unread counts for each connection
       const connectionsWithMessages = await Promise.all(deduplicated.map(async (prof) => {
-        const { data: msgs } = await supabase
-          .from('messages')
-          .select('*')
-          .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${prof.id}),and(sender_id.eq.${prof.id},receiver_id.eq.${currentUserId})`)
-          .order('created_at', { ascending: false })
-          .limit(1);
-          
-        const { count, error } = await supabase
-          .from('messages')
-          .select('*', { count: 'exact', head: true })
-          .eq('sender_id', prof.id)
-          .eq('receiver_id', currentUserId)
-          .is('read_at', null);
+        let msgs = null;
+        let count = 0;
+        try {
+          const { data } = await supabase
+            .from('messages')
+            .select('*')
+            .or(`sender_id.eq.${prof.id},receiver_id.eq.${prof.id}`)
+            .order('created_at', { ascending: false })
+            .limit(1);
+          msgs = data;
+            
+          const { count: c } = await supabase
+            .from('messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('sender_id', prof.id)
+            .eq('receiver_id', currentUserId)
+            .is('read_at', null);
+            
+          count = c || 0;
+        } catch (e) {
+          console.error("Error fetching message metadata for", prof.id, e);
+        }
 
         return {
           ...prof,
@@ -138,7 +155,7 @@ export default function Chat({ currentUserId }: ChatProps) {
     const { data } = await supabase
       .from('messages')
       .select('*')
-      .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`)
+      .or(`sender_id.eq.${otherUserId},receiver_id.eq.${otherUserId}`)
       .order('created_at', { ascending: true });
     
     if (data) {
@@ -298,7 +315,7 @@ export default function Chat({ currentUserId }: ChatProps) {
           >
             {/* Header */}
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 glass shrink-0">
-               <button onClick={() => setActiveChat(null)} className="p-2 -ml-2 text-white/80 shrink-0 active:scale-95 transition-transform">
+               <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 shrink-0 active:scale-95 transition-transform">
                  <ArrowLeft size={24} />
                </button>
                <div className="flex items-center gap-3 w-full">
