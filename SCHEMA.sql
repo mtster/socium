@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   sender_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   receiver_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  content TEXT NOT NULL,
+  content TEXT,
+  media_url TEXT,
+  media_type TEXT CHECK (media_type IN ('image', 'audio', 'location')),
   created_at TIMESTAMPTZ DEFAULT now(),
   read_at TIMESTAMPTZ
 );
@@ -142,6 +144,17 @@ DROP POLICY IF EXISTS "Users can delete their connections" ON connections;
 CREATE POLICY "Users can delete their connections" ON connections FOR DELETE USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
 
 -- Messages policies
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='media_url') THEN 
+    ALTER TABLE messages ADD COLUMN media_url TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='media_type') THEN 
+    ALTER TABLE messages ADD COLUMN media_type TEXT CHECK (media_type IN ('image', 'audio', 'location'));
+  END IF;
+  ALTER TABLE messages ALTER COLUMN content DROP NOT NULL;
+END $$;
+
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can read their messages" ON messages;
 CREATE POLICY "Users can read their messages" ON messages FOR SELECT USING (auth.uid() = sender_id OR auth.uid() = receiver_id);

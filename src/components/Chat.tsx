@@ -19,7 +19,17 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [showFeatures, setShowFeatures] = useState(false);
+  
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingIntervalRef = useRef<any>(null);
 
   useEffect(() => {
     if (initialActiveChat) {
@@ -184,6 +194,163 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     }, 100);
   };
 
+  const uploadToCloudinary = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    if (!cloudName || !uploadPreset) {
+       alert('Cloudinary is not configured. Please add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to your environment variables.');
+       throw new Error('Cloudinary config missing');
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', uploadPreset);
+    if (type === 'image') {
+      // Add optimization parameters for images
+      formData.append('folder', 'chat_images');
+    } else if (type === 'video') {
+      formData.append('folder', 'chat_audio'); 
+    }
+    
+    // Use resource_type='auto' instead of image/video
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) throw new Error('Upload failed');
+    const data = await res.json();
+
+    // Generate optimized URL
+    let optimizedUrl = data.secure_url;
+    if (type === 'image') {
+       // Insert q_auto,f_auto
+       const urlParts = optimizedUrl.split('/upload/');
+       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_auto,w_800/${urlParts[1]}`;
+    }
+    return optimizedUrl;
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        handleMediaMessage(audioBlob, 'audio');
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    } catch (e) {
+      console.error('Error starting recording:', e);
+      alert('Could not access microphone');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      clearInterval(recordingIntervalRef.current);
+    }
+  };
+
+  const handleLocationShare = () => {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      return;
+    }
+    setUploadingMedia(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const loc = `${position.coords.latitude},${position.coords.longitude}`;
+        await sendSpecialMessage(null, 'location', loc);
+        setUploadingMedia(false);
+      },
+      (error) => {
+        console.error('Error getting location', error);
+        alert('Could not get actual location');
+        setUploadingMedia(false);
+      }
+    );
+  };
+
+  const handleMediaMessage = async (file: File | Blob, type: 'image' | 'audio') => {
+    setUploadingMedia(true);
+    setShowFeatures(false);
+    try {
+      const uploadType = type === 'audio' ? 'video' : 'image'; // Cloudinary treats audio as video resource type
+      const url = await uploadToCloudinary(file, uploadType);
+      await sendSpecialMessage(url, type);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to upload media. Please try again.');
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const sendSpecialMessage = async (mediaUrl: string | null, mediaType: 'image' | 'audio' | 'location', contentStr: string = '') => {
+    if (!activeChat) return;
+
+    const tempMessage = {
+      id: crypto.randomUUID(),
+      sender_id: currentUserId,
+      receiver_id: activeChat.id,
+      content: contentStr,
+      media_url: mediaUrl,
+      media_type: mediaType,
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, tempMessage]);
+    scrollToBottom();
+
+    // Also optimistically update the list
+    setConnections(prev => {
+        const idx = prev.findIndex(c => c.id === activeChat.id);
+        if (idx !== -1) {
+            const newList = [...prev];
+            newList[idx].lastMessage = tempMessage;
+            return newList.sort((a, b) => new Date(b.lastMessage?.created_at || 0).getTime() - new Date(a.lastMessage?.created_at || 0).getTime());
+        }
+        return prev;
+    });
+
+    try {
+      const { data, error } = await supabase.from('messages').insert({
+        sender_id: currentUserId,
+        receiver_id: activeChat.id,
+        content: contentStr,
+        media_url: mediaUrl,
+        media_type: mediaType
+      }).select().single();
+      
+      if (error) throw error;
+      setMessages(prev => prev.map(m => m.id === tempMessage.id ? data : m));
+    } catch (e: any) {
+      console.error('Error sending media message:', e.message);
+      if (e.message.includes('media_url') || e.message.includes('media_type')) {
+         alert('Please update your Supabase schema! Run the SCHEMA.sql script to add media_url and media_type to the messages table.');
+      }
+      setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !activeChat) return;
@@ -223,6 +390,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       setMessages(prev => prev.map(m => m.id === tempMessage.id ? data : m));
     } catch (e: any) {
       console.error('Error sending message:', e.message);
+      if (e.message.includes('media_url') || e.message.includes('media_type') || e.code === 'PGRST204') {
+         alert('Please update your Supabase schema using the SCHEMA.sql script to enable media messages.');
+      }
       // Rollback optimistic update
       setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
     }
@@ -370,11 +540,30 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                       )}
                       
                       <div className={cn(
-                        "max-w-[75%] px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                        "max-w-[75%] min-w-[2rem] text-sm leading-relaxed whitespace-pre-wrap break-words overflow-hidden",
                         roundedClass,
-                        isMine ? "bg-white text-black" : "bg-white/15 text-white"
+                        isMine ? "bg-white text-black" : "bg-white/15 text-white",
+                        (msg.media_type === 'image' || msg.media_type === 'location') && "p-1 pb-2", // less padding for images
+                        !msg.media_type && "px-4 py-2.5"
                       )}>
-                        {msg.content}
+                        {msg.media_type === 'image' && msg.media_url && (
+                          <img src={msg.media_url} alt="Photo" className="w-full h-auto max-h-[300px] object-cover rounded-[14px] mb-1" />
+                        )}
+                        {msg.media_type === 'audio' && msg.media_url && (
+                          <div className="px-4 py-3 flex items-center gap-3">
+                            <audio src={msg.media_url} controls className={cn("h-8 w-[200px]", isMine && "brightness-[0] invert")} />
+                          </div>
+                        )}
+                        {msg.media_type === 'location' && msg.content && (
+                           <div className="w-full aspect-square bg-white/5 rounded-[14px] mb-1 overflow-hidden relative">
+                             <img src={`https://static-maps.yandex.ru/1.x/?ll=${msg.content.split(',')[1]},${msg.content.split(',')[0]}&z=14&l=map&size=300,300&pt=${msg.content.split(',')[1]},${msg.content.split(',')[0]},pm2rdm`} alt="Location" className="w-full h-full object-cover" />
+                           </div>
+                        )}
+                        {msg.content && msg.media_type !== 'location' && (
+                          <div className={msg.media_type === 'image' || msg.media_type === 'audio' ? "px-2" : ""}>
+                            {msg.content}
+                          </div>
+                        )}
                       </div>
                    </div>
                  );
@@ -435,25 +624,32 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                      className="overflow-hidden mt-4"
                    >
                      <div className="grid grid-cols-4 gap-4 px-2 pb-2">
-                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Add storage bucket "messages_media" in Supabase to enable Camera uploads!')}>
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => cameraInputRef.current?.click()} disabled={uploadingMedia}>
                          <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
                            <Camera size={22} />
                          </div>
                          <span className="text-[10px] font-medium text-white/50">Camera</span>
                        </button>
-                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Add storage bucket "messages_media" in Supabase to enable Photo uploads!')}>
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => fileInputRef.current?.click()} disabled={uploadingMedia}>
                          <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
                            <ImageIcon size={22} />
                          </div>
                          <span className="text-[10px] font-medium text-white/50">Photos</span>
                        </button>
-                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Add storage bucket "messages_media" in Supabase to enable Audio messages!')}>
-                         <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
-                           <Mic size={22} />
+                       <button 
+                         type="button" 
+                         className={cn("flex flex-col items-center gap-2 active:scale-95 transition-transform", isRecording && "opacity-100")} 
+                         onClick={isRecording ? stopRecording : startRecording} 
+                         disabled={uploadingMedia}
+                       >
+                         <div className={cn("w-12 h-12 rounded-full border flex items-center justify-center text-white/80 transition-colors", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>
+                           {isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}
                          </div>
-                         <span className="text-[10px] font-medium text-white/50">Audio</span>
+                         <span className={cn("text-[10px] font-medium transition-colors", isRecording ? "text-red-500" : "text-white/50")}>
+                           {isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}
+                         </span>
                        </button>
-                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Location sharing coming soon!')}>
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={handleLocationShare} disabled={uploadingMedia}>
                          <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
                            <MapPin size={22} />
                          </div>
@@ -463,6 +659,36 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                    </motion.div>
                  )}
                </AnimatePresence>
+
+               {uploadingMedia && (
+                 <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm z-50">
+                    <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                 </div>
+               )}
+
+               <input 
+                 type="file" 
+                 ref={fileInputRef} 
+                 accept="image/png, image/jpeg, image/webp" 
+                 className="hidden" 
+                 onChange={(e) => {
+                   const file = e.target.files?.[0];
+                   if (file) handleMediaMessage(file, 'image');
+                   if (e.target) e.target.value = '';
+                 }} 
+               />
+               <input 
+                 type="file" 
+                 ref={cameraInputRef} 
+                 accept="image/*" 
+                 capture="environment" 
+                 className="hidden" 
+                 onChange={(e) => {
+                   const file = e.target.files?.[0];
+                   if (file) handleMediaMessage(file, 'image');
+                   if (e.target) e.target.value = '';
+                 }} 
+               />
             </form>
           </motion.div>
         )}
