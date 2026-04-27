@@ -178,6 +178,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
             currentUserId={currentUserId} 
             onClose={() => setShowComments(false)} 
             onCommentAdded={onRefetch}
+            onUserClick={onUserClick}
           />
         )}
       </AnimatePresence>

@@ -135,13 +135,26 @@ export default function App() {
       .order('created_at', { ascending: false });
     
     if (data) {
-      let isViewingSelf = session?.user.id === userId;
-      const processed = data.map((p: any) => ({
+      const viewerId = session?.user?.id;
+      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+      let isViewingSelf = viewerId === userId;
+      let processed = data.map((p: any) => ({
         ...p,
         likes_count: p.likes?.length || 0,
-        has_liked: p.likes?.some((l: any) => l.user_id === session?.user.id),
+        has_liked: p.likes?.some((l: any) => l.user_id === viewerId),
         comments_count: p.comments?.length || 0
       }));
+
+      // Filter by visibility if not viewing self
+      if (!isViewingSelf && viewerId !== ADMIN_ID) {
+        processed = processed.filter(post => {
+           if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
+              return post.visible_to.includes(viewerId);
+           }
+           return true;
+        });
+      }
+
       setUserPosts(processed as any);
     }
   }

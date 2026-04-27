@@ -9,17 +9,30 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
   const [lastName, setLastName] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [isClosable, setIsClosable] = useState(false);
+
   useEffect(() => {
     if (!profile) return;
+    
+    // Auto-open only for new users who don't have a full name saved yet
     const hasCompleted = localStorage.getItem(`socium_name_prompt_${profile.id}`);
-    if (!hasCompleted) {
+    if (!profile.full_name && !hasCompleted) {
+      setIsVisible(true);
+      setIsClosable(false);
+    }
+
+    const handleOpen = () => {
       if (profile.full_name) {
         const parts = profile.full_name.split(' ');
         setFirstName(parts[0] || '');
         setLastName(parts.slice(1).join(' ') || '');
       }
       setIsVisible(true);
-    }
+      setIsClosable(true);
+    };
+
+    window.addEventListener('openCompleteProfile', handleOpen);
+    return () => window.removeEventListener('openCompleteProfile', handleOpen);
   }, [profile]);
 
   if (!isVisible || !profile) return null;
@@ -41,6 +54,12 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
     }
   };
 
+  const handleClose = () => {
+    if (isClosable && firstName.trim() && lastName.trim()) {
+      setIsVisible(false);
+    }
+  };
+
   return (
     <AnimatePresence>
       <motion.div
@@ -56,6 +75,14 @@ export default function CompleteProfileModal({ profile, onComplete }: { profile:
           transition={{ type: 'spring', damping: 25, stiffness: 200 }}
           className="bg-black border-t border-white/10 sm:border sm:rounded-3xl rounded-t-3xl p-6 sm:p-8 pt-8 pb-safe shadow-2xl w-full sm:max-w-md mx-auto relative"
         >
+          {isClosable && (
+            <button 
+              onClick={handleClose}
+              className="absolute top-6 right-6 text-white/50 hover:text-white p-2"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          )}
           <div className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-1 bg-white/20 rounded-full sm:hidden" />
           
           <h2 className="text-2xl font-bold tracking-tight mb-2 text-white mt-2">Welcome to Socium</h2>

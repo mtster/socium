@@ -298,7 +298,16 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           />
         )}
         {/* Full Name above picture */}
-        <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">{profile.full_name || profile.username}</h1>
+        <h1 
+          className={`text-3xl font-bold tracking-tight mb-6 text-center ${isOwnProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
+          onClick={() => {
+            if (isOwnProfile) {
+              window.dispatchEvent(new CustomEvent('openCompleteProfile'));
+            }
+          }}
+        >
+          {profile.full_name || profile.username}
+        </h1>
 
         {/* Hidden inputs outside AnimatePresence so it doesn't get unmounted */}
         <input 
@@ -442,7 +451,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 Accept pending
               </button>
             )}
-             {connectionStatus === 'accepted' && profile.id !== ADMIN_ID && (
+             {connectionStatus === 'accepted' && profile.id !== ADMIN_ID && currentUserId !== ADMIN_ID && (
                <button 
                  onClick={() => setShowDisconnectConfirm(true)}
                  className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
@@ -450,9 +459,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                  Connected
                </button>
              )}
-             {connectionStatus === 'accepted' && profile.id === ADMIN_ID && (
+             {connectionStatus === 'accepted' && (profile.id === ADMIN_ID || currentUserId === ADMIN_ID) && (
                <div className="flex-1 bg-white/5 text-white/50 text-center font-bold py-2.5 rounded-xl cursor-default border border-white/5 text-sm flex items-center justify-center">
-                 Official Account
+                 {profile.id === ADMIN_ID ? 'Official Account' : 'Connected'}
                </div>
              )}
           </div>

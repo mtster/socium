@@ -15,7 +15,7 @@ export default function AddToHomeScreenModal() {
       // Show after a small delay to not overwhelm the user immediately
       const timer = setTimeout(() => {
         setIsVisible(true);
-      }, 3000);
+      }, 100);
       return () => clearTimeout(timer);
     }
   }, [isInstallable, isStandalone]);

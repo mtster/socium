@@ -10,9 +10,10 @@ interface CommentsModalProps {
   currentUserId: string;
   onClose: () => void;
   onCommentAdded?: () => void;
+  onUserClick?: (userId: string) => void;
 }
 
-export default function CommentsModal({ post, currentUserId, onClose, onCommentAdded }: CommentsModalProps) {
+export default function CommentsModal({ post, currentUserId, onClose, onCommentAdded, onUserClick }: CommentsModalProps) {
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
@@ -108,7 +109,13 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
         {/* Post Context */}
         <div className="border-b border-white/5 pb-4 mb-4">
           <div className="p-4 flex items-start space-x-3">
-             <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
+             <div 
+               className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 cursor-pointer"
+               onClick={() => {
+                 onUserClick?.(post.user_id);
+                 onClose();
+               }}
+             >
                 {post.profiles?.avatar_url ? (
                   <img src={post.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
                 ) : (
@@ -116,7 +123,15 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
                 )}
              </div>
              <div className="flex-1">
-                <p className="font-bold text-sm text-white/90">{post.profiles?.full_name || post.profiles?.username}</p>
+                <p 
+                  className="font-bold text-sm text-white/90 cursor-pointer inline-block"
+                  onClick={() => {
+                    onUserClick?.(post.user_id);
+                    onClose();
+                  }}
+                >
+                  {post.profiles?.full_name || post.profiles?.username}
+                </p>
                 {post.caption && <p className="text-sm text-white/80 mt-1 leading-relaxed">{post.caption}</p>}
                 {post.image_url && (
                   <div className="mt-3 rounded-2xl overflow-hidden bg-white/5 border border-white/10 w-full max-w-xs">
@@ -155,7 +170,13 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
         ) : (
           comments.map(comment => (
             <div key={comment.id} className="flex space-x-3 ml-6 mb-4 relative">
-              <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 z-10">
+              <div 
+                className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 z-10 cursor-pointer"
+                onClick={() => {
+                  onUserClick?.(comment.user_id);
+                  onClose();
+                }}
+              >
                 {comment.profiles?.avatar_url ? (
                   <img src={comment.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
                 ) : (
@@ -164,7 +185,15 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
               </div>
               <div className="flex-1">
                 <div className="bg-transparent border-0 rounded-none p-0">
-                  <p className="text-[12px] font-bold mb-1 text-white/60">{comment.profiles?.full_name || comment.profiles?.username}</p>
+                  <p 
+                    className="text-[12px] font-bold mb-1 text-white/60 cursor-pointer inline-block"
+                    onClick={() => {
+                      onUserClick?.(comment.user_id);
+                      onClose();
+                    }}
+                  >
+                    {comment.profiles?.full_name || comment.profiles?.username}
+                  </p>
                   <p className="text-sm text-white/90 leading-relaxed">{comment.content}</p>
                 </div>
                 <div className="flex items-center mt-2 space-x-4">

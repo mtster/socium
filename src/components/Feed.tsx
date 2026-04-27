@@ -50,12 +50,23 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
 
       if (error) throw error;
       
-      const processed = (data || []).map((p: any) => ({
+      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+      
+      let processed = (data || []).map((p: any) => ({
         ...p,
         likes_count: p.likes?.length || 0,
         has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
         comments_count: p.comments?.length || 0
       }));
+
+      processed = processed.filter((post: any) => {
+         if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
+         if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
+            return post.visible_to.includes(currentUserId);
+         }
+         return true; // Empty array or null means visible to all connections
+      });
+
       setPosts(processed as any);
     } catch (error) {
       console.error('Error fetching posts:', error);
