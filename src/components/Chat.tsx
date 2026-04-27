@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Send } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
 interface ChatProps {
@@ -18,6 +18,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showFeatures, setShowFeatures] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -309,28 +310,52 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 shrink-0 active:scale-95 transition-transform">
                  <ArrowLeft size={24} />
                </button>
-               <div className="flex items-center gap-3 w-full">
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
+               <div 
+                 className="flex items-center gap-3 w-full cursor-pointer group"
+                 onClick={() => {
+                   window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: activeChat.id } }));
+                   onCloseChat?.();
+                 }}
+               >
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 group-active:scale-95 transition-transform">
                     {activeChat.avatar_url ? (
                       <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" />
                     ) : (
                        <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{activeChat.username?.charAt(0).toUpperCase()}</div>
                     )}
                   </div>
-                  <div className="flex flex-col">
+                  <div className="flex flex-col group-active:opacity-70 transition-opacity">
                      <span className="font-bold text-sm text-white/90 leading-tight">{activeChat.full_name || activeChat.username}</span>
                   </div>
                </div>
             </div>
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
                {messages.map((msg, i) => {
                  const isMine = msg.sender_id === currentUserId;
-                 const showAvatar = !isMine && (i === messages.length - 1 || messages[i + 1].sender_id === currentUserId);
+                 const nextMsg = messages[i + 1];
+                 const prevMsg = messages[i - 1];
+                 const isConsecutive = nextMsg && nextMsg.sender_id === msg.sender_id;
+                 const isPrevConsecutive = prevMsg && prevMsg.sender_id === msg.sender_id;
+                 const showAvatar = !isMine && !isConsecutive;
+
+                 let roundedClass = 'rounded-2xl';
+                 if (isMine) {
+                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tr-sm rounded-br-sm';
+                   else if (isConsecutive) roundedClass = 'rounded-2xl rounded-br-sm';
+                   else if (isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tr-sm text-sm mb-2';
+                   else roundedClass = 'rounded-2xl rounded-br-sm mb-2';
+                 } else {
+                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tl-sm rounded-bl-sm ml-8';
+                   else if (isConsecutive) roundedClass = 'rounded-2xl rounded-bl-sm ml-8';
+                   else if (isPrevConsecutive) roundedClass = 'rounded-2xl rounded-tl-sm mb-2 ml-8';
+                   else roundedClass = 'rounded-2xl rounded-bl-sm mb-2 ml-0'; // With avatar
+                 }
+
                  return (
                    <div key={msg.id} className={cn("flex w-full gap-2", isMine ? "justify-end" : "justify-start")}>
-                      {!isMine && (
+                      {!isMine && !isConsecutive && (
                           <div className="w-6 h-6 shrink-0 mt-auto">
                               {showAvatar && (
                                 <div className="w-full h-full rounded-full overflow-hidden bg-white/10 border border-white/10">
@@ -345,8 +370,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                       )}
                       
                       <div className={cn(
-                        "max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed",
-                        isMine ? "bg-white text-black rounded-br-sm" : "bg-white/10 text-white rounded-bl-sm"
+                        "max-w-[75%] px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                        roundedClass,
+                        isMine ? "bg-white text-black" : "bg-white/15 text-white"
                       )}>
                         {msg.content}
                       </div>
@@ -357,23 +383,86 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             </div>
 
             {/* Input Area */}
-            <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/90 glass shrink-0">
-               <div className="relative flex items-center gap-2">
-                 <input 
-                   type="text" 
-                   placeholder="Message..." 
-                   value={newMessage}
-                   onChange={e => setNewMessage(e.target.value)}
-                   className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-full px-5 py-3.5 pr-14 focus:outline-none focus:border-white/30 text-sm transition-all"
-                 />
+            <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/90 glass shrink-0 relative z-10 transition-all">
+               <div className="flex items-end gap-3 relative z-20">
                  <button 
-                   type="submit"
-                   disabled={!newMessage.trim()}
-                   className="absolute right-1.5 w-10 h-10 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-50 active:scale-95 transition-all"
+                   type="button"
+                   onClick={() => setShowFeatures(!showFeatures)}
+                   className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex flex-wrap gap-0.5 p-2 items-center justify-center active:scale-90 transition-transform"
                  >
-                   <Send size={18} className="translate-x-0.5" />
+                   {showFeatures ? (
+                     <X size={20} className="text-white absolute" />
+                   ) : (
+                     <>
+                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
+                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
+                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
+                       <span className="w-1.5 h-1.5 bg-white/60 rounded-full" />
+                     </>
+                   )}
                  </button>
+                 <div className="relative flex-1">
+                   <textarea 
+                     placeholder="Message..." 
+                     value={newMessage}
+                     onChange={e => setNewMessage(e.target.value)}
+                     onKeyDown={e => {
+                       if (e.key === 'Enter' && !e.shiftKey) {
+                         e.preventDefault();
+                         handleSendMessage(e);
+                       }
+                     }}
+                     className="w-full bg-white/10 border border-white/10 text-white placeholder:text-white/40 rounded-[20px] px-4 py-2.5 pr-12 focus:outline-none focus:border-white/30 text-sm transition-all resize-none min-h-[40px] max-h-[120px]"
+                     rows={1}
+                     style={{ height: newMessage ? 'auto' : '40px' }}
+                   />
+                   <button 
+                     type="submit"
+                     disabled={!newMessage.trim()}
+                     className="absolute right-1 bottom-1 w-8 h-8 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-50 active:scale-95 transition-all"
+                   >
+                     <ArrowUp size={18} strokeWidth={2.5} className="mt-0.5" />
+                   </button>
+                 </div>
                </div>
+
+               <AnimatePresence>
+                 {showFeatures && (
+                   <motion.div 
+                     initial={{ height: 0, opacity: 0 }}
+                     animate={{ height: 'auto', opacity: 1 }}
+                     exit={{ height: 0, opacity: 0 }}
+                     className="overflow-hidden mt-4"
+                   >
+                     <div className="grid grid-cols-4 gap-4 px-2 pb-2">
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Add storage bucket "messages_media" in Supabase to enable Camera uploads!')}>
+                         <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
+                           <Camera size={22} />
+                         </div>
+                         <span className="text-[10px] font-medium text-white/50">Camera</span>
+                       </button>
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Add storage bucket "messages_media" in Supabase to enable Photo uploads!')}>
+                         <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
+                           <ImageIcon size={22} />
+                         </div>
+                         <span className="text-[10px] font-medium text-white/50">Photos</span>
+                       </button>
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Add storage bucket "messages_media" in Supabase to enable Audio messages!')}>
+                         <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
+                           <Mic size={22} />
+                         </div>
+                         <span className="text-[10px] font-medium text-white/50">Audio</span>
+                       </button>
+                       <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => alert('Location sharing coming soon!')}>
+                         <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
+                           <MapPin size={22} />
+                         </div>
+                         <span className="text-[10px] font-medium text-white/50">Location</span>
+                       </button>
+                     </div>
+                   </motion.div>
+                 )}
+               </AnimatePresence>
             </form>
           </motion.div>
         )}

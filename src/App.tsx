@@ -13,6 +13,8 @@ import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
 import Chat from './components/Chat';
 
+import { Bell } from 'lucide-react';
+
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('feed');
@@ -21,6 +23,7 @@ export default function App() {
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
+  const [totalUnread, setTotalUnread] = useState(0);
 
   useEffect(() => {
     const handleOpenChat = (e: any) => {
@@ -40,6 +43,7 @@ export default function App() {
       if (session) {
         fetchProfile(session.user.id);
         registerPush(session.user.id);
+        fetchGlobalUnread(session.user.id);
       }
     });
 
@@ -50,6 +54,7 @@ export default function App() {
       if (session) {
         fetchProfile(session.user.id);
         registerPush(session.user.id);
+        fetchGlobalUnread(session.user.id);
       }
     });
 
@@ -58,6 +63,26 @@ export default function App() {
       window.removeEventListener('openChat', handleOpenChat);
     };
   }, []);
+
+  const fetchGlobalUnread = async (userId: string) => {
+    const { count } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('receiver_id', userId)
+      .is('read_at', null);
+    
+    setTotalUnread(count || 0);
+
+    // Global listener for new messages
+    supabase.channel('global_unread')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, () => {
+         fetchGlobalUnread(userId);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, () => {
+         fetchGlobalUnread(userId);
+      })
+      .subscribe();
+  };
 
   const registerPush = async (userId: string) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
@@ -263,7 +288,14 @@ export default function App() {
       <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90">
         <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
         <div className="flex space-x-4 opacity-60">
-          {/* Action icons could go here */}
+          {activeTab === 'chat' && !initialActiveChat && (
+            <button 
+              onClick={() => registerPush(session.user.id)}
+              className="text-white hover:text-white/80 transition-colors"
+            >
+              <Bell size={24} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -393,7 +425,7 @@ export default function App() {
       </main>
 
       {/* Navigation */}
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={totalUnread} />
     </div>
   );
 }

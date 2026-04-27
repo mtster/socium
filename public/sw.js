@@ -13,7 +13,16 @@ self.addEventListener('push', function(event) {
   };
 
   event.waitUntil(
-    self.registration.showNotification(title, options)
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      // If any client window is focused, we don't show the system notification!
+      // This is because the app itself will indicate new messages (e.g. unread dot or in realtime chat window).
+      for (let i = 0; i < clientList.length; i++) {
+        if (clientList[i].focused) {
+          return;
+        }
+      }
+      return self.registration.showNotification(title, options);
+    })
   );
 });
 

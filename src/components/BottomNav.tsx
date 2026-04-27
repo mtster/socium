@@ -5,9 +5,10 @@ import { cn } from '@/src/lib/utils';
 interface BottomNavProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  unreadCount?: number;
 }
 
-export default function BottomNav({ activeTab, setActiveTab }: BottomNavProps) {
+export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0 }: BottomNavProps) {
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
     { id: 'create', icon: PlusSquare, label: 'Post' },
@@ -27,11 +28,16 @@ export default function BottomNav({ activeTab, setActiveTab }: BottomNavProps) {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                "flex flex-col items-center justify-center w-full h-full transition-all duration-300",
+                "flex flex-col items-center justify-center w-full h-full transition-all duration-300 relative",
                 isActive ? "text-white" : "text-white/40"
               )}
             >
-              <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
+              <div className="relative">
+                <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
+                {tab.id === 'chat' && unreadCount > 0 && (
+                  <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
+                )}
+              </div>
               <span className="text-[10px] mt-1 font-medium">{tab.label}</span>
             </button>
           );
