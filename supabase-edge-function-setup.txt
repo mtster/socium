@@ -18,8 +18,8 @@ import webpush from 'https://esm.sh/web-push'
 console.log("Hello from send-push!")
 
 webpush.setVapidDetails(
-  'mailto:your-email@example.com', // MUST REPLACE THIS
-  Deno.env.get('VAPID_PUBLIC_KEY') || '', // You also need to set this secret or hardcode public key
+  Deno.env.get('VAPID_SUBJECT') || 'mailto:your-email@example.com',
+  Deno.env.get('VAPID_PUBLIC_KEY') || '',
   Deno.env.get('VAPID_PRIVATE_KEY') || ''
 );
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
 interface ChatProps {
@@ -25,6 +25,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: any } | null>(null);
+  const [longPressTimer, setLongPressTimer] = useState<any>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -295,7 +297,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     setUploadingMedia(true);
     setShowFeatures(false);
     try {
-      const uploadType = type === 'audio' ? 'video' : 'image'; // Cloudinary treats audio as video resource type
+      const uploadType = type === 'audio' ? 'video' : 'image';
       const url = await uploadToCloudinary(file, uploadType);
       await sendSpecialMessage(url, type);
     } catch (e) {
@@ -303,6 +305,50 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       alert('Failed to upload media. Please try again.');
     } finally {
       setUploadingMedia(false);
+    }
+  };
+
+  const saveToDevice = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error('Save failed', e);
+      // Fallback for iOS
+      window.open(url, '_blank');
+    }
+  };
+
+  const handleLongPress = (e: React.MouseEvent | React.TouchEvent, msg: any) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+
+    if (navigator.vibrate) navigator.vibrate(10);
+    
+    setContextMenu({
+      x: Math.min(clientX, window.innerWidth - 180),
+      y: Math.min(clientY, window.innerHeight - 200),
+      message: msg
+    });
+  };
+
+  const onTouchStart = (e: React.TouchEvent, msg: any) => {
+    const timer = setTimeout(() => handleLongPress(e, msg), 500);
+    setLongPressTimer(timer);
+  };
+
+  const onTouchEnd = () => {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      setLongPressTimer(null);
     }
   };
 
@@ -528,9 +574,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  const isMediaOnly = (msg.media_type === 'image' || msg.media_type === 'location' || msg.media_type === 'audio') && !msg.content;
 
                  return (
-                   <div key={msg.id} className={cn("flex w-full gap-2", isMine ? "justify-end" : "justify-start")}>
-                      {!isMine && !isConsecutive && (
-                          <div className="w-6 h-6 shrink-0 mt-auto mb-3">
+                   <div 
+                     key={msg.id} 
+                     className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start")}
+                     onContextMenu={(e) => { e.preventDefault(); handleLongPress(e, msg); }}
+                     onTouchStart={(e) => onTouchStart(e, msg)}
+                     onTouchEnd={onTouchEnd}
+                   >
+                      {!isMine && (
+                          <div className={cn("w-8 h-8 shrink-0 mt-auto", isConsecutive ? "opacity-0" : "opacity-100")}>
                               {showAvatar && (
                                 <div 
                                   className="w-full h-full rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer"
@@ -550,35 +602,48 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                       )}
                       
                       <div className={cn(
-                        "max-w-[75%] min-w-[2rem] text-[15px] leading-tight whitespace-pre-wrap break-words overflow-hidden",
+                        "max-w-[75%] min-w-[2rem] text-[15px] leading-tight whitespace-pre-wrap break-words overflow-hidden transition-all duration-300",
                         roundedClass,
-                        (!isMediaOnly) && (isMine ? "bg-white text-black" : "bg-white/15 text-white"),
-                        !msg.media_type && "px-3.5 py-2",
-                        msg.media_type === 'audio' && "p-0",
-                        (msg.media_type === 'image' || msg.media_type === 'location') && "p-0"
+                        (!isMediaOnly) && (isMine ? "bg-white text-black shadow-sm" : "bg-white/15 text-white"),
+                        !msg.media_type && "px-3.5 py-2.5",
+                        msg.media_type === 'audio' && "p-0 bg-transparent",
+                        (msg.media_type === 'image' || msg.media_type === 'location') && "p-0 bg-transparent"
                       )}>
                         {msg.media_type === 'image' && msg.media_url && (
                           <img 
                             src={msg.media_url} 
                             alt="Photo" 
-                            className="w-full h-auto max-h-[300px] object-cover rounded-[18px] cursor-pointer" 
+                            className="w-full h-auto max-h-[400px] object-contain rounded-2xl cursor-pointer shadow-lg hover:brightness-95 transition-all" 
                             onClick={() => setViewingImage(msg.media_url)}
                           />
                         )}
                         {msg.media_type === 'audio' && msg.media_url && (
-                          <div className={cn("px-4 py-2 flex items-center gap-3 rounded-[20px]", isMine ? "bg-white text-black" : "bg-white/15 text-white")}>
-                            <audio src={msg.media_url} controls className={cn("h-8 w-[200px]", isMine && "brightness-[0] contrast-125")} />
+                          <div className={cn(
+                            "px-4 py-2 flex items-center gap-3 rounded-[24px] shadow-sm backdrop-blur-md", 
+                            isMine ? "bg-white text-black" : "bg-white/20 text-white"
+                          )}>
+                            <div className="w-8 h-8 rounded-full bg-black/10 flex items-center justify-center shrink-0">
+                               <Mic size={14} className={isMine ? "text-black" : "text-white"} />
+                            </div>
+                            <audio 
+                              src={msg.media_url} 
+                              controls 
+                              className={cn(
+                                "h-8 w-[180px] custom-audio-player", 
+                                isMine ? "brightness-0" : "brightness-200"
+                              )} 
+                            />
                           </div>
                         )}
                         {msg.media_type === 'location' && msg.content && (
-                           <div className="w-full aspect-square bg-white/5 rounded-[18px] mb-0.5 overflow-hidden relative">
+                           <div className="w-full aspect-square bg-white/5 rounded-[20px] overflow-hidden relative shadow-lg">
                              <img src={`https://static-maps.yandex.ru/1.x/?ll=${msg.content.split(',')[1]},${msg.content.split(',')[0]}&z=14&l=map&size=300,300&pt=${msg.content.split(',')[1]},${msg.content.split(',')[0]},pm2rdm`} alt="Location" className="w-full h-full object-cover" />
                            </div>
                         )}
-                        {msg.content && msg.media_type !== 'location' && (
+                        {msg.content && !isMediaOnly && (
                           <div className={cn(
-                            (msg.media_type === 'image') ? "px-3 pb-2 pt-1.5" : "",
-                            (msg.media_type === 'audio') ? "px-3 pb-2 pt-1" : ""
+                            (msg.media_type === 'image') ? "px-3 pb-3 pt-2 bg-white/10 rounded-b-2xl mt-[-10px]" : "",
+                            (msg.media_type === 'audio') ? "px-4 py-2 bg-white/10 rounded-2xl mt-1" : ""
                           )}>
                             {msg.content}
                           </div>
@@ -590,34 +655,29 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                <div ref={messagesEndRef} className="h-2" />
             </div>
 
-            {/* Input Area */}
-            <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/90 glass shrink-0 relative z-10 transition-all">
+             {/* Input Area */}
+            <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/95 backdrop-blur-xl shrink-0 relative z-10">
                <div className="flex items-center gap-3 relative z-20">
                  <button 
                    type="button"
                    onClick={() => setShowFeatures(!showFeatures)}
-                   disabled={isFocused && !showFeatures}
-                   className={cn(
-                     "w-9 h-9 shrink-0 rounded-full flex items-center justify-center transition-all duration-300",
-                     (isFocused && !showFeatures) ? "w-0 opacity-0 overflow-hidden ml-[-12px]" : "bg-white/10 active:scale-90"
-                   )}
+                   className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center active:scale-90 transition-all hover:bg-white/20"
                  >
                    <Plus 
-                     size={22} 
+                     size={24} 
                      className={cn(
-                       "text-white transition-transform duration-300",
+                       "text-white transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1)",
                        showFeatures && "rotate-45"
                      )} 
                    />
                  </button>
-                 <div className="relative flex-1 flex items-center">
+                 <div className="relative flex-1 flex items-center group">
                    <textarea 
                      placeholder="Message..." 
                      value={newMessage}
                      onChange={e => setNewMessage(e.target.value)}
                      onFocus={() => {
                         setIsFocused(true);
-                        setShowFeatures(false);
                      }}
                      onBlur={() => setIsFocused(false)}
                      onKeyDown={e => {
@@ -626,16 +686,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                          handleSendMessage(e);
                        }
                      }}
-                     className="w-full bg-white/10 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none focus:border-white/30 text-sm transition-all resize-none min-h-[40px] max-h-[120px] leading-tight flex items-center"
+                     className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none focus:border-white/20 focus:bg-white/[0.08] text-[16px] transition-all resize-none min-h-[44px] max-h-[120px] leading-tight flex items-center"
                      rows={1}
-                     style={{ height: newMessage ? 'auto' : '40px' }}
+                     style={{ height: newMessage ? 'auto' : '44px' }}
                    />
                    <button 
                      type="submit"
                      disabled={!newMessage.trim()}
-                     className="absolute right-1 w-8 h-8 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-50 active:scale-95 transition-all"
+                     className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 disabled:scale-75 active:scale-90 transition-all shadow-md"
                    >
-                     <ArrowUp size={18} strokeWidth={2.5} className="mt-0.5" />
+                     <ArrowUp size={20} strokeWidth={3} />
                    </button>
                  </div>
                </div>
@@ -726,27 +786,95 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[200] bg-black ring-inset flex items-center justify-center backdrop-blur-2xl"
             onClick={() => setViewingImage(null)}
           >
-            <button 
-               className="absolute top-safe right-4 p-2 bg-black/50 text-white rounded-full mt-4 active:scale-90 transition-transform"
-               onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+            <div className="absolute top-safe w-full flex justify-between items-center px-4 py-4 z-[210]">
+               <button 
+                 onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+                 className="p-3 bg-black/40 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"
+               >
+                 <X size={24} />
+               </button>
+               <button 
+                 onClick={(e) => { e.stopPropagation(); saveToDevice(viewingImage, 'socium_image.jpg'); }}
+                 className="p-3 bg-black/40 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"
+               >
+                 <Download size={24} />
+               </button>
+            </div>
+            
+            <motion.div
+               initial={{ scale: 0.8, opacity: 0 }}
+               animate={{ scale: 1, opacity: 1 }}
+               exit={{ scale: 0.8, opacity: 0 }}
+               transition={{ type: "spring", damping: 30, stiffness: 300 }}
+               className="w-full h-full flex items-center justify-center"
             >
-              <X size={24} />
-            </button>
-            <motion.img 
-               initial={{ scale: 0.9, y: 20 }}
-               animate={{ scale: 1, y: 0 }}
-               exit={{ scale: 0.9, y: 20 }}
-               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-               src={viewingImage} 
-               alt="Fullscreen" 
-               className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
-               onClick={(e) => e.stopPropagation()} 
-            />
+                <img 
+                   src={viewingImage} 
+                   alt="Fullscreen" 
+                   className="max-w-full max-h-screen object-contain"
+                   onClick={(e) => e.stopPropagation()} 
+                />
+            </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {contextMenu && (
+          <>
+            <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               className="fixed inset-0 z-[150] bg-black/20 backdrop-blur-[2px]" 
+               onClick={() => setContextMenu(null)}
+            />
+            <motion.div
+               initial={{ opacity: 0, scale: 0.9, y: 10 }}
+               animate={{ opacity: 1, scale: 1, y: 0 }}
+               exit={{ opacity: 0, scale: 0.9, y: 10 }}
+               className="fixed z-[160] w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden border border-white/20 p-1.5"
+               style={{ top: contextMenu.y, left: contextMenu.x }}
+            >
+               {contextMenu.message.content && (
+                  <button 
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-black hover:bg-black/5 rounded-xl transition-colors"
+                    onClick={() => {
+                        navigator.clipboard.writeText(contextMenu.message.content);
+                        setContextMenu(null);
+                    }}
+                  >
+                    <span>Copy Text</span>
+                    <Copy size={16} />
+                  </button>
+               )}
+               {contextMenu.message.media_url && (
+                  <button 
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-black hover:bg-black/5 rounded-xl transition-colors"
+                    onClick={() => {
+                        saveToDevice(contextMenu.message.media_url, 'socium_media');
+                        setContextMenu(null);
+                    }}
+                  >
+                    <span>Save {contextMenu.message.media_type === 'image' ? 'Image' : 'Audio'}</span>
+                    <Download size={16} />
+                  </button>
+               )}
+               <button 
+                 className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                 onClick={() => {
+                    // Placeholder for delete
+                    setContextMenu(null);
+                 }}
+               >
+                 <span>Delete Message</span>
+                 <Trash2 size={16} />
+               </button>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>
