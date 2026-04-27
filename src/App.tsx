@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 
 import CompleteProfileModal from './components/CompleteProfileModal';
+import Chat from './components/Chat';
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -28,18 +29,67 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
+      if (session) {
+        fetchProfile(session.user.id);
+        registerPush(session.user.id);
+      }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
+      if (session) {
+        fetchProfile(session.user.id);
+        registerPush(session.user.id);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const registerPush = async (userId: string) => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    
+    try {
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const permission = await Notification.requestPermission();
+      
+      if (permission !== 'granted') return;
+
+      const publicVapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      if (!publicVapidKey) return;
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+      });
+
+      const p256dh = btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('p256dh') as any)));
+      const auth = btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('auth') as any)));
+
+      await supabase.from('push_subscriptions').upsert({
+        user_id: userId,
+        endpoint: subscription.endpoint,
+        p256dh_key: p256dh,
+        auth_key: auth
+      }, { onConflict: 'user_id, endpoint' });
+      
+    } catch (e) {
+      console.warn('Push registration failed:', e);
+    }
+  };
+
+  function urlBase64ToUint8Array(base64String: string) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
 
   const handleUserClick = async (userId: string) => {
     if (!session) return;
@@ -311,6 +361,18 @@ export default function App() {
                 }}
                 onCancel={() => setActiveTab('feed')}
              />
+           )}
+
+           {activeTab === 'chat' && (
+             <motion.div 
+               key="chat" 
+               initial={{ opacity: 0, x: 20 }} 
+               animate={{ opacity: 1, x: 0 }} 
+               exit={{ opacity: 0, x: -20 }}
+               className="page-transition min-h-screen"
+             >
+               <Chat currentUserId={session.user.id} />
+             </motion.div>
            )}
         </AnimatePresence>
       </main>

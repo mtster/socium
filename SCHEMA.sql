@@ -60,6 +60,25 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 
 -- RLS Policies Setup
+CREATE TABLE IF NOT EXISTS messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  sender_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  receiver_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  read_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL,
+  auth_key TEXT NOT NULL,
+  p256dh_key TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(user_id, endpoint)
+);
+
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE likes ENABLE ROW LEVEL SECURITY;
@@ -121,6 +140,33 @@ CREATE POLICY "Users can update connection status" ON connections FOR UPDATE USI
 
 DROP POLICY IF EXISTS "Users can delete their connections" ON connections;
 CREATE POLICY "Users can delete their connections" ON connections FOR DELETE USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+
+-- Messages policies
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read their messages" ON messages;
+CREATE POLICY "Users can read their messages" ON messages FOR SELECT USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+DROP POLICY IF EXISTS "Users can send messages" ON messages;
+CREATE POLICY "Users can send messages" ON messages FOR INSERT WITH CHECK (auth.uid() = sender_id);
+DROP POLICY IF EXISTS "Users can update their messages" ON messages;
+CREATE POLICY "Users can update their messages" ON messages FOR UPDATE USING (auth.uid() = receiver_id); -- For read receipts
+
+-- Push subscriptions policies
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can manage their subscriptions" ON push_subscriptions;
+CREATE POLICY "Users can manage their subscriptions" ON push_subscriptions FOR ALL USING (auth.uid() = user_id);
+
+-- Realtime Setup
+-- ==========================================
+-- BEGIN REALTIME CONFIGURATION
+-- We need to ensure that the logical replication publication "supabase_realtime" exists and has "messages" in it.
+do $$ 
+begin 
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then 
+    create publication supabase_realtime; 
+  end if; 
+end $$;
+
+ALTER PUBLICATION supabase_realtime ADD TABLE messages;
 
 -- ==========================================
 -- SUPABASE STORAGE SETUP

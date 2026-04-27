@@ -1,0 +1,93 @@
+// 1. Run this in your terminal to initialize supersbase functions if not already:
+// npx supabase functions new send-push
+// 
+// 2. Put this code in: supabase/functions/send-push/index.ts
+//
+// 3. Deploy it
+// npx supabase deploy
+//
+// 4. Set secrets
+// npx supabase secrets set VAPID_PRIVATE_KEY=your_vapid_private_key
+//
+// 5. In your frontend, add VITE_VAPID_PUBLIC_KEY=your_vapid_public_key to your Vercel/Netlify environments or .env.local
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import webpush from 'https://esm.sh/web-push'
+
+console.log("Hello from send-push!")
+
+webpush.setVapidDetails(
+  'mailto:your-email@example.com', // MUST REPLACE THIS
+  Deno.env.get('VAPID_PUBLIC_KEY') || '', // You also need to set this secret or hardcode public key
+  Deno.env.get('VAPID_PRIVATE_KEY') || ''
+);
+
+serve(async (req) => {
+  try {
+    const record = await req.json();
+    
+    // Webhook shape usually is: { type: 'INSERT', record: { ... }, table: 'messages' }
+    const message = record.record || record;
+    
+    if (!message || !message.receiver_id || !message.content) {
+      return new Response('No valid message structure found', { status: 400 })
+    }
+
+    // Initialize Supabase Client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    const supabase = createClient(supabaseUrl!, supabaseServiceKey!)
+
+    // Fetch the receiver's push subscriptions
+    const { data: subscriptions } = await supabase
+      .from('push_subscriptions')
+      .select('*')
+      .eq('user_id', message.receiver_id);
+
+    if (!subscriptions || subscriptions.length === 0) {
+      return new Response('No subscriptions found', { status: 200 })
+    }
+
+    // Fetch the sender profile for the name
+    const { data: senderProf } = await supabase
+      .from('profiles')
+      .select('full_name, username')
+      .eq('id', message.sender_id)
+      .single();
+
+    const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
+
+    const payload = JSON.stringify({
+      title: `New message from ${senderName}`,
+      body: message.content,
+    });
+
+    const pushPromises = subscriptions.map((sub: any) => {
+      const pushSubscription = {
+        endpoint: sub.endpoint,
+        keys: {
+          auth: sub.auth_key,
+          p256dh: sub.p256dh_key
+        }
+      };
+      return webpush.sendNotification(pushSubscription, payload)
+        .catch((err: any) => {
+           if (err.statusCode === 404 || err.statusCode === 410) {
+              // Endpoint is gone, remove it from the DB
+              console.log('Subscription has expired or is no longer valid: ', err);
+              return supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+           } else {
+              console.error('Subscription threw an error: ', err);
+           }
+        });
+    });
+
+    await Promise.all(pushPromises);
+
+    return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } })
+  } catch (error) {
+    console.error(error)
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
+})
