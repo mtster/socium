@@ -163,6 +163,9 @@ CREATE POLICY "Users can send messages" ON messages FOR INSERT WITH CHECK (auth.
 DROP POLICY IF EXISTS "Users can update their messages" ON messages;
 CREATE POLICY "Users can update their messages" ON messages FOR UPDATE USING (auth.uid() = receiver_id); -- For read receipts
 
+DROP POLICY IF EXISTS "Users can delete their messages" ON messages;
+CREATE POLICY "Users can delete their messages" ON messages FOR DELETE USING (auth.uid() = sender_id);
+
 -- Push subscriptions policies
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage their subscriptions" ON push_subscriptions;

@@ -58,9 +58,17 @@ serve(async (req) => {
 
     const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
 
+    let notificationBody = message.content;
+    if (!notificationBody) {
+      if (message.media_type === 'image') notificationBody = 'Sent an image';
+      else if (message.media_type === 'audio') notificationBody = 'Sent a voice message';
+      else if (message.media_type === 'location') notificationBody = 'Shared a location';
+      else notificationBody = 'New message';
+    }
+
     const payload = JSON.stringify({
-      title: `New message from ${senderName}`,
-      body: message.content,
+      title: `${senderName}`,
+      body: notificationBody,
     });
 
     const pushPromises = subscriptions.map((sub: any) => {

@@ -65,15 +65,24 @@ export default function App() {
   useEffect(() => {
     let globalUnreadChannel: any = null;
 
+    const handleMessagesRead = () => {
+      if (session?.user?.id) {
+        getUnread();
+      }
+    };
+
+    const getUnread = async () => {
+      if (!session?.user?.id) return;
+      const { count } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', session.user.id)
+        .is('read_at', null);
+      setTotalUnread(count || 0);
+    };
+
     if (session?.user?.id) {
-      const getUnread = async () => {
-        const { count } = await supabase
-          .from('messages')
-          .select('*', { count: 'exact', head: true })
-          .eq('receiver_id', session.user.id)
-          .is('read_at', null);
-        setTotalUnread(count || 0);
-      };
+      window.addEventListener('messagesRead', handleMessagesRead);
 
       getUnread();
 
@@ -84,11 +93,15 @@ export default function App() {
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
            getUnread();
         })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, () => {
+           getUnread();
+        })
         .subscribe();
     }
 
     return () => {
       if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
+      window.removeEventListener('messagesRead', handleMessagesRead);
     };
   }, [session?.user?.id]);
 
