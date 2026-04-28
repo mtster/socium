@@ -14,6 +14,13 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior-y: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input, textarea {
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   /* Custom Scrollbar for Sleek Look */
@@ -61,6 +68,19 @@
   .btn-primary {
     @apply bg-white text-black font-semibold rounded-full px-6 py-2 active:scale-95 transition-transform;
   }
+}
+
+/* Audio Player Custom Styles */
+.audio-player-custom::-webkit-media-controls-enclosure {
+  background-color: transparent;
+}
+
+.filter-black {
+  filter: invert(0) grayscale(1) brightness(0);
+}
+
+.filter-white {
+  filter: invert(1) grayscale(1) brightness(2);
 }
 
 /* Animations for route changes */

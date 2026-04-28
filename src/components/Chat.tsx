@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
+import QuickPinchZoom, { make3dTransformValue } from 'react-quick-pinch-zoom';
 import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
@@ -23,12 +24,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: any } | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<any>(null);
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -181,15 +185,24 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   };
 
   const markMessagesAsRead = async (senderId: string) => {
-    await supabase
-      .from('messages')
-      .update({ read_at: new Date().toISOString() })
-      .eq('sender_id', senderId)
-      .eq('receiver_id', currentUserId)
-      .is('read_at', null);
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .update({ read_at: new Date().toISOString() })
+        .eq('sender_id', senderId)
+        .eq('receiver_id', currentUserId)
+        .is('read_at', null);
+
+      if (error) throw error;
+
+      // Update local state for unread count
+      setConnections(prev => prev.map(c => c.id === senderId ? { ...c, unreadCount: 0 } : c));
       
-    // Update local state for unread count
-    setConnections(prev => prev.map(c => c.id === senderId ? { ...c, unreadCount: 0 } : c));
+      // Notify parent about unread change
+      window.dispatchEvent(new CustomEvent('messagesRead'));
+    } catch (e) {
+      console.error('Error marking messages as read:', e);
+    }
   };
 
   const scrollToBottom = () => {
@@ -249,7 +262,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        handleMediaMessage(audioBlob, 'audio');
+        setRecordedAudio(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -352,6 +365,30 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     }
   };
 
+  const deleteMessage = async (messageId: string) => {
+    if (!confirm('Are you sure you want to delete this message?')) return;
+
+    setDeletingMessageId(messageId);
+    setContextMenu(null);
+
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .delete()
+        .eq('id', messageId)
+        .eq('sender_id', currentUserId); // Security check
+
+      if (error) throw error;
+
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+    } catch (e: any) {
+      console.error('Error deleting message:', e.message);
+      alert('Failed to delete message');
+    } finally {
+      setDeletingMessageId(null);
+    }
+  };
+
   const sendSpecialMessage = async (mediaUrl: string | null, mediaType: 'image' | 'audio' | 'location', contentStr: string = '') => {
     if (!activeChat) return;
 
@@ -450,6 +487,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     (c.full_name || c.username)?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const onUpdate = useCallback(({ x, y, scale }: { x: number, y: number, scale: number }) => {
+    if (imgRef.current) {
+      const value = make3dTransformValue({ x, y, scale });
+      imgRef.current.style.setProperty('transform', value);
+    }
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-black">
       <AnimatePresence initial={false}>
@@ -491,17 +535,22 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                         ) : (
                            <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{c.username?.charAt(0).toUpperCase()}</div>
                         )}
-                        {c.unreadCount ? (
-                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-white text-black text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-black">
-                                {c.unreadCount}
-                            </div>
-                        ) : null}
                      </div>
                      <div className="flex-1 text-left overflow-hidden">
                        <p className="font-bold text-white/90 truncate">{c.full_name || c.username}</p>
                        {c.lastMessage && (
                            <p className={cn("text-sm truncate mt-0.5", c.unreadCount ? "text-white font-medium" : "text-white/40")}>
-                               {c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content}
+                               {c.lastMessage.sender_id === currentUserId ? (
+                                 c.lastMessage.media_type === 'audio' ? 'You sent a voice message' :
+                                 c.lastMessage.media_type === 'image' ? 'You have sent an image' :
+                                 c.lastMessage.media_type === 'location' ? 'You shared a location' :
+                                 `You: ${c.lastMessage.content}`
+                               ) : (
+                                 c.lastMessage.media_type === 'audio' ? 'Sent a voice message' :
+                                 c.lastMessage.media_type === 'image' ? 'Sent an image' :
+                                 c.lastMessage.media_type === 'location' ? 'Shared a location' :
+                                 c.lastMessage.content
+                               )}
                            </p>
                        )}
                      </div>
@@ -565,24 +614,30 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                    else if (isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tr-sm mb-3';
                    else roundedClass = 'rounded-[20px] rounded-br-sm mb-3';
                  } else {
-                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tl-sm rounded-bl-sm mb-0.5 ml-8';
-                   else if (isConsecutive) roundedClass = 'rounded-[20px] rounded-bl-sm mb-0.5 ml-8';
-                   else if (isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tl-sm mb-3 ml-8';
-                   else roundedClass = 'rounded-[20px] rounded-bl-sm mb-3 ml-0'; // With avatar
+                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tl-sm rounded-bl-sm mb-0.5';
+                   else if (isConsecutive) roundedClass = 'rounded-[20px] rounded-bl-sm mb-0.5';
+                   else if (isPrevConsecutive) roundedClass = 'rounded-[20px] rounded-tl-sm mb-3';
+                   else roundedClass = 'rounded-[20px] rounded-bl-sm mb-3';
                  }
                  
                  const isMediaOnly = (msg.media_type === 'image' || msg.media_type === 'location' || msg.media_type === 'audio') && !msg.content;
+                 const isDeleting = deletingMessageId === msg.id;
 
                  return (
                    <div 
                      key={msg.id} 
-                     className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start")}
+                     className={cn(
+                       "flex w-full gap-2 relative transition-all duration-300",
+                       isMine ? "justify-end" : "justify-start",
+                       !isMine && "pl-0",
+                       isDeleting && "opacity-50 scale-95"
+                     )}
                      onContextMenu={(e) => { e.preventDefault(); handleLongPress(e, msg); }}
                      onTouchStart={(e) => onTouchStart(e, msg)}
                      onTouchEnd={onTouchEnd}
                    >
                       {!isMine && (
-                          <div className={cn("w-8 h-8 shrink-0 mt-auto", isConsecutive ? "opacity-0" : "opacity-100")}>
+                          <div className={cn("w-8 h-8 shrink-0 self-end mb-3", isConsecutive ? "opacity-0" : "opacity-100")}>
                               {showAvatar && (
                                 <div 
                                   className="w-full h-full rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer"
@@ -619,18 +674,21 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                         )}
                         {msg.media_type === 'audio' && msg.media_url && (
                           <div className={cn(
-                            "px-4 py-2 flex items-center gap-3 rounded-[24px] shadow-sm backdrop-blur-md", 
-                            isMine ? "bg-white text-black" : "bg-white/20 text-white"
+                            "px-4 py-3 flex items-center gap-3 rounded-[24px] shadow-sm",
+                            isMine ? "bg-white text-black" : "bg-white/15 text-white"
                           )}>
-                            <div className="w-8 h-8 rounded-full bg-black/10 flex items-center justify-center shrink-0">
-                               <Mic size={14} className={isMine ? "text-black" : "text-white"} />
+                            <div className={cn(
+                              "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
+                              isMine ? "bg-black/5" : "bg-white/10"
+                            )}>
+                               <Mic size={18} className={isMine ? "text-black" : "text-white"} />
                             </div>
                             <audio 
                               src={msg.media_url} 
                               controls 
                               className={cn(
-                                "h-8 w-[180px] custom-audio-player", 
-                                isMine ? "brightness-0" : "brightness-200"
+                                "h-8 w-[160px] md:w-[200px] audio-player-custom",
+                                isMine ? "filter-black" : "filter-white"
                               )} 
                             />
                           </div>
@@ -706,10 +764,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                      initial={{ height: 0, opacity: 0 }}
                      animate={{ height: 'auto', opacity: 1 }}
                      exit={{ height: 0, opacity: 0 }}
-                     transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                     className="overflow-hidden mt-4"
+                     transition={{ type: "spring", stiffness: 500, damping: 40, mass: 1 }}
+                     className="overflow-hidden"
                    >
-                     <div className="grid grid-cols-4 gap-4 px-2 pb-2">
+                     <div className="grid grid-cols-4 gap-4 px-2 pb-2 pt-4">
                        <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={() => cameraInputRef.current?.click()} disabled={uploadingMedia}>
                          <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
                            <Camera size={22} />
@@ -724,15 +782,21 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                        </button>
                        <button 
                          type="button" 
-                         className={cn("flex flex-col items-center gap-2 active:scale-95 transition-transform", isRecording && "opacity-100")} 
-                         onClick={isRecording ? stopRecording : startRecording} 
+                         className={cn("flex flex-col items-center gap-2 active:scale-95 transition-transform", (isRecording || recordedAudio) && "opacity-100")}
+                         onClick={isRecording ? stopRecording : recordedAudio ? undefined : startRecording}
                          disabled={uploadingMedia}
                        >
-                         <div className={cn("w-12 h-12 rounded-full border flex items-center justify-center text-white/80 transition-colors", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>
-                           {isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}
+                         <div className={cn("w-12 h-12 rounded-full border flex items-center justify-center text-white/80 transition-colors", (isRecording || recordedAudio) ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>
+                           {isRecording ? (
+                             <div className="w-4 h-4 bg-red-500 rounded-sm animate-pulse" />
+                           ) : recordedAudio ? (
+                             <Mic size={22} className="text-red-500" />
+                           ) : (
+                             <Mic size={22} />
+                           )}
                          </div>
-                         <span className={cn("text-[10px] font-medium transition-colors", isRecording ? "text-red-500" : "text-white/50")}>
-                           {isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}
+                         <span className={cn("text-[10px] font-medium transition-colors", (isRecording || recordedAudio) ? "text-red-500" : "text-white/50")}>
+                           {isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : recordedAudio ? 'Recorded' : 'Audio'}
                          </span>
                        </button>
                        <button type="button" className="flex flex-col items-center gap-2 active:scale-95 transition-transform" onClick={handleLocationShare} disabled={uploadingMedia}>
@@ -786,43 +850,76 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-black ring-inset flex items-center justify-center backdrop-blur-2xl"
-            onClick={() => setViewingImage(null)}
+            className="fixed inset-0 z-[200] bg-black flex items-center justify-center overflow-hidden"
           >
-            <div className="absolute top-safe w-full flex justify-between items-center px-4 py-4 z-[210]">
+            <div className="absolute top-safe w-full flex justify-between items-center px-6 py-4 z-[210]">
                <button 
-                 onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
-                 className="p-3 bg-black/40 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"
+                 onClick={() => saveToDevice(viewingImage, 'socium_image.jpg')}
+                 className="p-2.5 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-all border border-white/10"
                >
-                 <X size={24} />
+                 <Download size={22} />
                </button>
                <button 
-                 onClick={(e) => { e.stopPropagation(); saveToDevice(viewingImage, 'socium_image.jpg'); }}
-                 className="p-3 bg-black/40 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"
+                 onClick={() => setViewingImage(null)}
+                 className="p-2.5 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-all border border-white/10"
                >
-                 <Download size={24} />
+                 <X size={22} />
                </button>
             </div>
             
-            <motion.div
-               initial={{ scale: 0.8, opacity: 0 }}
-               animate={{ scale: 1, opacity: 1 }}
-               exit={{ scale: 0.8, opacity: 0 }}
-               transition={{ type: "spring", damping: 30, stiffness: 300 }}
-               className="w-full h-full flex items-center justify-center"
-            >
+            <div className="w-full h-full flex items-center justify-center p-4">
+              <QuickPinchZoom onUpdate={onUpdate} tapBlurOut={true} draggableUnZoomed={false}>
                 <img 
+                   ref={imgRef}
                    src={viewingImage} 
                    alt="Fullscreen" 
-                   className="max-w-full max-h-screen object-contain"
-                   onClick={(e) => e.stopPropagation()} 
+                   className="max-w-full max-h-full object-contain shadow-2xl"
                 />
-            </motion.div>
+              </QuickPinchZoom>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
+                 {recordedAudio && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="absolute bottom-full left-0 right-0 p-4 mb-2 z-30"
+                    >
+                      <div className="bg-white/10 backdrop-blur-2xl rounded-[32px] border border-white/20 p-2 flex items-center gap-3 shadow-2xl">
+                         <button
+                           onClick={() => setRecordedAudio(null)}
+                           className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/60 hover:text-red-500 transition-colors"
+                         >
+                           <Trash2 size={18} />
+                         </button>
+                         <div className="flex-1 px-4 py-2 bg-white/5 rounded-full flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                               <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                               <span className="text-xs font-mono text-white/80">Audio Message</span>
+                            </div>
+                            <audio
+                               src={URL.createObjectURL(recordedAudio)}
+                               controls
+                               className="h-8 w-32 brightness-200"
+                            />
+                         </div>
+                         <button
+                           onClick={() => {
+                              handleMediaMessage(recordedAudio, 'audio');
+                              setRecordedAudio(null);
+                           }}
+                           className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center active:scale-90 transition-transform"
+                         >
+                           <ArrowUp size={20} />
+                         </button>
+                      </div>
+                    </motion.div>
+                 )}
+
         {contextMenu && (
           <>
             <motion.div 
@@ -863,16 +960,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                     <Download size={16} />
                   </button>
                )}
-               <button 
-                 className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                 onClick={() => {
-                    // Placeholder for delete
-                    setContextMenu(null);
-                 }}
-               >
-                 <span>Delete Message</span>
-                 <Trash2 size={16} />
-               </button>
+               {contextMenu.message.sender_id === currentUserId && (
+                  <button
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                    onClick={() => deleteMessage(contextMenu.message.id)}
+                  >
+                    <span>Delete Message</span>
+                    <Trash2 size={16} />
+                  </button>
+               )}
             </motion.div>
           </>
         )}
