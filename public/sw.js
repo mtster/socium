@@ -13,27 +13,37 @@ self.addEventListener('push', function(event) {
   let body = 'New notification';
   let url = '/';
 
-  if (event.data) {
+  try {
+    if (event.data) {
+      const parsedData = event.data.json();
+      if (parsedData.title) title = parsedData.title;
+      if (parsedData.body) body = parsedData.body;
+      if (parsedData.data && parsedData.data.url) url = parsedData.data.url;
+    }
+  } catch (e) {
     try {
-      const data = event.data.json();
-      if (data.title) title = data.title;
-      if (data.body) body = data.body;
-      if (data.data && data.data.url) url = data.data.url;
-    } catch(e) {
-      body = event.data.text();
+      body = event.data ? event.data.text() : 'No payload';
+    } catch (e2) {
+      body = 'Error reading push data';
     }
   }
 
   const options = {
     body: body,
-    icon: 'https://files.catbox.moe/p9p4j1.png',
-    badge: 'https://files.catbox.moe/p9p4j1.png',
-    requireInteraction: true,
     data: { url: url }
   };
 
+  const notificationPromise = self.registration.showNotification(title, options);
+
   event.waitUntil(
-    self.registration.showNotification(title, options)
+    notificationPromise.then(() => {
+      // Send message to all open clients so they can show an in-app toast if foregrounded
+      return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+        clientList.forEach(client => {
+          client.postMessage({ type: 'IN_APP_PUSH', title: title, body: body, url: url });
+        });
+      });
+    })
   );
 });
 

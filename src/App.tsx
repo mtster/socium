@@ -16,6 +16,7 @@ import Chat from './components/Chat';
 import { Bell } from 'lucide-react';
 
 import DebuggerConsole from './components/DebuggerConsole';
+import toast, { Toaster } from 'react-hot-toast';
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -93,6 +94,35 @@ export default function App() {
       if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
     };
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'IN_APP_PUSH') {
+        toast((t) => (
+          <div className="flex flex-col cursor-pointer" onClick={() => {
+            toast.dismiss(t.id);
+            if (event.data.url === '/') setActiveTab('chat');
+          }}>
+            <span className="font-bold">{event.data.title}</span>
+            <span className="text-sm">{event.data.body}</span>
+          </div>
+        ), {
+          duration: 4000,
+          position: 'top-center',
+          style: {
+            background: '#333',
+            color: '#fff',
+            borderRadius: '12px',
+            border: '1px solid rgba(255,255,255,0.1)'
+          }
+        });
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handleMessage);
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', handleMessage);
+    };
+  }, []);
 
   const registerPush = async (userId: string, isUserAction = false) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -333,6 +363,7 @@ export default function App() {
   if (!session) {
     return (
       <>
+        <Toaster />
         <AddToHomeScreenModal />
         <AuthView />
       </>
@@ -341,6 +372,7 @@ export default function App() {
 
   return (
     <div className="fixed inset-0 h-[100dvh] bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
+      <Toaster />
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
