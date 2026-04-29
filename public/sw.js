@@ -9,51 +9,46 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', function(event) {
-  console.log('[Service Worker] Push Received.');
-  const pushText = event.data ? event.data.text() : 'no data';
-  console.log(`[Service Worker] Push had this data: "${pushText}"`);
+  let title = 'Socium';
+  let body = 'New notification';
+  let url = '/';
 
-  // Report to clients
-  clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-    clientList.forEach(client => {
-      client.postMessage({ type: 'SW_LOG', message: `Push Received: ${pushText}` });
-    });
-  });
-
-  let data = {};
   if (event.data) {
     try {
-      data = JSON.parse(pushText);
+      const data = event.data.json();
+      if (data.title) title = data.title;
+      if (data.body) body = data.body;
+      if (data.data && data.data.url) url = data.data.url;
     } catch(e) {
-      console.error('[Service Worker] Failed to parse push data as JSON', e);
-      data = { body: pushText };
+      body = event.data.text();
     }
   }
 
-  const title = data.title || 'Socium';
   const options = {
-    body: data.body || 'New notification',
-    data: { url: '/' }
+    body: body,
+    data: { url: url }
   };
 
-  event.waitUntil(
-    self.registration.showNotification(title, options)
-      .then(() => {
-        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-          clientList.forEach(client => {
-            client.postMessage({ type: 'SW_LOG', message: `showNotification completed successfully.` });
-          });
+  const notificationPromise = self.registration.showNotification(title, options)
+    .then(() => {
+      // broadcast success securely
+      return clients.matchAll({ type: 'window', includeUncontrolled: true });
+    })
+    .then(clientList => {
+      clientList.forEach(client => {
+        client.postMessage({ type: 'SW_LOG', message: `Delivery Success: push notification displayed` });
+      });
+    })
+    .catch(err => {
+      console.error(err);
+      return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+        list.forEach(client => {
+          client.postMessage({ type: 'SW_LOG', message: `Delivery Failed: error showing notification` });
         });
-      })
-      .catch(err => {
-        console.error('[Service Worker] Error showing notification:', err);
-        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-          clientList.forEach(client => {
-            client.postMessage({ type: 'SW_LOG', message: `Error showing notification: ${err.message}` });
-          });
-        });
-      })
-  );
+      });
+    });
+
+  event.waitUntil(notificationPromise);
 });
 
 self.addEventListener('notificationclick', function(event) {

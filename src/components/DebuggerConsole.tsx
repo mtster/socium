@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, X, Copy, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -8,6 +8,7 @@ export default function DebuggerConsole() {
   const [isOpen, setIsOpen] = useState(false);
   const [position, setPosition] = useState({ x: 10, y: 10 });
   const [isVisible, setIsVisible] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const isDebugUrl = window.location.search.includes('debugger') || window.location.pathname.includes('debugger') || localStorage.getItem('debugger_enabled') === 'true';
@@ -50,6 +51,10 @@ export default function DebuggerConsole() {
       console.info = originalConsoleInfo;
     };
   }, []);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs, isOpen]);
 
   if (!isVisible) return null;
 
@@ -111,6 +116,7 @@ export default function DebuggerConsole() {
                 </div>
               ))}
               {logs.length === 0 && <div className="text-white/40 italic">No logs yet...</div>}
+              <div ref={endRef} />
             </div>
           </motion.div>
         )}
