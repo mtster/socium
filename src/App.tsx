@@ -15,6 +15,8 @@ import Chat from './components/Chat';
 
 import { Bell } from 'lucide-react';
 
+import DebuggerConsole from './components/DebuggerConsole';
+
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('feed');
@@ -92,42 +94,77 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
-  const registerPush = async (userId: string) => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  const registerPush = async (userId: string, isUserAction = false) => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      console.warn("Push unsupported");
+      // if (isUserAction) alert("Push notifications are not supported by your browser/device.");
+      return;
+    }
     
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js');
-      const permission = await Notification.requestPermission();
+      console.log(`registerPush called (userAction: ${isUserAction}), current permission:`, Notification.permission);
       
-      if (permission !== 'granted') return;
+      if (isUserAction) {
+        // Must be called immediately without prior awaits on iOS!
+        const permission = await Notification.requestPermission();
+        console.log("Requested permission:", permission);
+        if (permission !== 'granted') {
+          alert('Notifications were denied or dismissed.');
+          return;
+        }
+      } else {
+        // If not user action and not already granted, abort silently so we don't trigger the iOS silent deny
+        if (Notification.permission !== 'granted') return;
+      }
+
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      console.log('SW Registration successful');
 
       let publicVapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-      if (!publicVapidKey) return;
+      if (!publicVapidKey) {
+        console.error("VITE_VAPID_PUBLIC_KEY is not defined");
+        return;
+      }
       publicVapidKey = publicVapidKey.trim().replace(/^['"]|['"]$/g, '');
 
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
-      });
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        console.log("No existing subscription, subscribing...");
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+        });
+      }
+
+      console.log("Subscription obtained:", subscription?.endpoint);
 
       const subJSON = subscription.toJSON();
       const p256dh = subJSON.keys?.p256dh;
       const auth = subJSON.keys?.auth;
 
       if (!p256dh || !auth) {
-        console.error('Invalid subscription keys');
+        console.error('Invalid subscription keys', subJSON);
         return;
       }
 
-      await supabase.from('push_subscriptions').upsert({
+      console.log("Upserting subscription to database for user:", userId);
+      const { error } = await supabase.from('push_subscriptions').upsert({
         user_id: userId,
         endpoint: subscription.endpoint,
         p256dh_key: p256dh,
         auth_key: auth
       }, { onConflict: 'user_id, endpoint' });
       
-    } catch (e) {
-      console.warn('Push registration failed:', e);
+      if (error) {
+        console.error('Error upserting DB:', error);
+      } else {
+        console.log('Successfully saved subscription to database');
+        if (isUserAction) alert('Notifications enabled successfully!');
+      }
+      
+    } catch (e: any) {
+      console.error('Push registration failed:', e.name, e.message);
+      if (isUserAction) alert(`Push registration failed: ${e.message}`);
     }
   };
 
@@ -305,7 +342,7 @@ export default function App() {
         <div className="flex space-x-4 opacity-60">
           {activeTab === 'chat' && !initialActiveChat && (
             <button 
-              onClick={() => registerPush(session.user.id)}
+              onClick={() => registerPush(session.user.id, true)}
               className="text-white hover:text-white/80 transition-colors"
             >
               <Bell size={24} />
@@ -441,6 +478,8 @@ export default function App() {
 
       {/* Navigation */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={totalUnread} />
+      
+      <DebuggerConsole />
     </div>
   );
 }

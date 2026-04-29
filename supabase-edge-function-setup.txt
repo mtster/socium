@@ -1,23 +1,29 @@
-// 1. Run this in your terminal to initialize supersbase functions if not already:
-// npx supabase functions new send-push
+// 1. You must create an Edge Function in your Supabase dashboard and paste this code in it. Let's assume it's called "send-push".
 // 
-// 2. Put this code in: supabase/functions/send-push/index.ts
-//
-// 3. Deploy it
-// npx supabase deploy
-//
-// 4. Set secrets
-// npx supabase secrets set VAPID_PRIVATE_KEY=your_vapid_private_key
-//
-// 5. In your frontend, add VITE_VAPID_PUBLIC_KEY=your_vapid_public_key to your Vercel/Netlify environments or .env.local
+// 2. Set the Secrets in your Supabase Edge Function settings:
+//    - VAPID_PRIVATE_KEY
+//    - VAPID_PUBLIC_KEY
+//    - VAPID_SUBJECT (e.g. mailto:your-email@example.com)
+// 
+// 3. IMPORTANT: YOU MUST CREATE A DATABASE WEBHOOK!
+//    - Go to Supabase Dashboard -> Database -> Webhooks
+//    - Click "Create Webhook"
+//    - Name: "Send Push on Message"
+//    - Table: "messages"
+//    - Events: Check "Insert"
+//    - Type: "Supabase Edge Function" 
+//    - Method: POST
+//    - Edge Function: Select "send-push" (or whatever you named the function)
+//    - Save the Webhook.
+// 
+// Without the webhook, this file does absolutely nothing because it will never be called when someone sends a message!
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import webpush from 'https://esm.sh/web-push'
+import webpush from 'https://esm.sh/web-push@3.6.7'
 
-console.log("Hello from send-push!")
+console.log("Hello from send-push edge function!")
 
-// Import and setup as before...
 const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY')?.trim();
 const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY')?.trim();
 const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:brare.black@gmail.com';
@@ -30,34 +36,63 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
     VAPID_PRIVATE_KEY
   );
 } else {
-  console.error("CRITICAL: VAPID keys are missing from environment variables!");
+  console.error("CRITICAL: VAPID keys are missing from Edge Function Secrets!");
 }
 
 serve(async (req) => {
+  console.log("----- INCOMING REQUEST TRIGGERED -----");
+  
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } });
+  }
+
   try {
-    const record = await req.json();
+    const rawBody = await req.text();
+    console.log("Raw payload:", rawBody);
+    
+    let record;
+    try {
+      record = JSON.parse(rawBody);
+    } catch (e) {
+      console.error("Failed to parse JSON payload");
+      return new Response('Invalid JSON', { status: 400 });
+    }
     
     // Webhook shape usually is: { type: 'INSERT', record: { ... }, table: 'messages' }
     const message = record.record || record;
+    console.log("Parsed message:", message);
     
-    if (!message || !message.receiver_id || !message.content) {
-      return new Response('No valid message structure found', { status: 400 })
+    if (!message || !message.receiver_id) {
+      console.warn("Message missing receiver_id.");
+      return new Response('No valid message structure found', { status: 400 });
     }
 
     // Initialize Supabase Client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    const supabase = createClient(supabaseUrl!, supabaseServiceKey!)
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables!");
+    }
+    
+    const supabase = createClient(supabaseUrl!, supabaseServiceKey!);
 
-    // Fetch the receiver's push subscriptions
-    const { data: subscriptions } = await supabase
+    console.log(`Fetching subscriptions for user: ${message.receiver_id}`);
+    const { data: subscriptions, error: subError } = await supabase
       .from('push_subscriptions')
       .select('*')
       .eq('user_id', message.receiver_id);
 
-    if (!subscriptions || subscriptions.length === 0) {
-      return new Response('No subscriptions found', { status: 200 })
+    if (subError) {
+      console.error("Error fetching subscriptions:", subError);
     }
+
+    if (!subscriptions || subscriptions.length === 0) {
+      console.log(`No active subscriptions found for user: ${message.receiver_id}`);
+      return new Response('No subscriptions found', { status: 200 });
+    }
+    
+    console.log(`Found ${subscriptions.length} subscriptions. Proceeding to push...`);
 
     // Fetch the sender profile for the name
     const { data: senderProf } = await supabase
@@ -70,7 +105,7 @@ serve(async (req) => {
 
     const payload = JSON.stringify({
       title: `New message from ${senderName}`,
-      body: message.content,
+      body: message.content || "Sent you a media message",
     });
 
     const pushPromises = subscriptions.map((sub: any) => {
@@ -82,22 +117,25 @@ serve(async (req) => {
         }
       };
       return webpush.sendNotification(pushSubscription, payload)
-        .catch((err: any) => {
+        .then(() => {
+           console.log(`Push sent successfully to: ${sub.endpoint.substring(0, 30)}...`);
+        })
+        .catch(async (err: any) => {
            if (err.statusCode === 404 || err.statusCode === 410) {
-              // Endpoint is gone, remove it from the DB
-              console.log('Subscription has expired or is no longer valid: ', err);
-              return supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+              console.log(`Subscription expired/invalid for endpoint: ${sub.endpoint}, removing from DB.`);
+              await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
            } else {
-              console.error('Subscription threw an error: ', err);
+              console.error('Push delivery error:', err);
            }
         });
     });
 
     await Promise.all(pushPromises);
+    console.log("All push promises settled.");
 
-    return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } })
-  } catch (error) {
-    console.error(error)
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+  } catch (error: any) {
+    console.error("Fatal error in edge function:", error);
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 })
