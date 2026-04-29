@@ -101,16 +101,23 @@ export default function App() {
       
       if (permission !== 'granted') return;
 
-      const publicVapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      let publicVapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
       if (!publicVapidKey) return;
+      publicVapidKey = publicVapidKey.trim().replace(/^['"]|['"]$/g, '');
 
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
       });
 
-      const p256dh = btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('p256dh') as any)));
-      const auth = btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('auth') as any)));
+      const subJSON = subscription.toJSON();
+      const p256dh = subJSON.keys?.p256dh;
+      const auth = subJSON.keys?.auth;
+
+      if (!p256dh || !auth) {
+        console.error('Invalid subscription keys');
+        return;
+      }
 
       await supabase.from('push_subscriptions').upsert({
         user_id: userId,
