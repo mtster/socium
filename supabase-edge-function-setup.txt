@@ -112,7 +112,7 @@ serve(async (req) => {
     const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
 
     const payload = JSON.stringify({
-      title: `New message from ${senderName}`,
+      title: senderName,
       body: message.content || "Sent you a media message",
       data: {
         url: "/" // needed for service worker

@@ -30,20 +30,14 @@ self.addEventListener('push', function(event) {
 
   const options = {
     body: body,
-    data: { url: url }
+    icon: 'https://files.catbox.moe/p9p4j1.png',
+    badge: 'https://files.catbox.moe/p9p4j1.png',
+    data: { url: url },
+    requireInteraction: true
   };
 
-  const notificationPromise = self.registration.showNotification(title, options);
-
   event.waitUntil(
-    notificationPromise.then(() => {
-      // Send message to all open clients so they can show an in-app toast if foregrounded
-      return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-        clientList.forEach(client => {
-          client.postMessage({ type: 'IN_APP_PUSH', title: title, body: body, url: url });
-        });
-      });
-    })
+    self.registration.showNotification(title, options)
   );
 });
 
