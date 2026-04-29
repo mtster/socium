@@ -94,6 +94,14 @@ serve(async (req) => {
     
     console.log(`Found ${subscriptions.length} subscriptions. Proceeding to push...`);
 
+    // Deduplicate subscriptions by endpoint
+    const uniqueSubs = new Map();
+    for (const sub of subscriptions) {
+      uniqueSubs.set(sub.endpoint, sub);
+    }
+    const dedupedSubscriptions = Array.from(uniqueSubs.values());
+    console.log(`After deduping, sending to ${dedupedSubscriptions.length} endpoints.`);
+
     // Fetch the sender profile for the name
     const { data: senderProf } = await supabase
       .from('profiles')
@@ -108,7 +116,7 @@ serve(async (req) => {
       body: message.content || "Sent you a media message",
     });
 
-    const pushPromises = subscriptions.map((sub: any) => {
+    const pushPromises = dedupedSubscriptions.map((sub: any) => {
       const pushSubscription = {
         endpoint: sub.endpoint,
         keys: {
@@ -116,7 +124,10 @@ serve(async (req) => {
           p256dh: sub.p256dh_key
         }
       };
-      return webpush.sendNotification(pushSubscription, payload)
+      
+      const options = { urgency: 'high' };
+      
+      return webpush.sendNotification(pushSubscription, payload, options)
         .then(() => {
            console.log(`Push sent successfully to: ${sub.endpoint.substring(0, 30)}...`);
         })

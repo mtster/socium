@@ -119,6 +119,13 @@ export default function App() {
 
       const registration = await navigator.serviceWorker.register('/sw.js');
       console.log('SW Registration successful');
+      
+      try {
+        await registration.update();
+        console.log('SW Updated successfully');
+      } catch (e) {
+        console.warn('SW Update failed', e);
+      }
 
       let publicVapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
       if (!publicVapidKey) {
@@ -478,6 +485,22 @@ export default function App() {
 
       {/* Navigation */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={totalUnread} />
+      
+      {/* Hidden button to enable debugger: tap 5 times on top center */}
+      <div 
+        className="fixed top-0 left-1/2 -translate-x-1/2 w-32 h-12 z-[10000] opacity-0"
+        onClick={() => {
+          const currentCount = parseInt(localStorage.getItem('debug_taps') || '0', 10);
+          if (currentCount >= 4) {
+            localStorage.setItem('debugger_enabled', 'true');
+            alert('Debugger enabled. Reload the app.');
+            window.location.reload();
+          } else {
+            localStorage.setItem('debug_taps', (currentCount + 1).toString());
+            setTimeout(() => localStorage.removeItem('debug_taps'), 3000);
+          }
+        }}
+      />
       
       <DebuggerConsole />
     </div>

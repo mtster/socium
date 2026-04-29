@@ -10,7 +10,13 @@ export default function DebuggerConsole() {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    const isDebugUrl = window.location.search.includes('debugger') || window.location.pathname.includes('debugger');
+    const isDebugUrl = window.location.search.includes('debugger') || window.location.pathname.includes('debugger') || localStorage.getItem('debugger_enabled') === 'true';
+    if (window.location.search.includes('debugger=true')) {
+      localStorage.setItem('debugger_enabled', 'true');
+    } else if (window.location.search.includes('debugger=false')) {
+      localStorage.removeItem('debugger_enabled');
+    }
+    
     if (!isDebugUrl) return;
     setIsVisible(true);
 

@@ -1,28 +1,38 @@
+self.addEventListener('install', (event) => {
+  console.log('[Service Worker] Install');
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('[Service Worker] Activate');
+  event.waitUntil(clients.claim());
+});
+
 self.addEventListener('push', function(event) {
+  console.log('[Service Worker] Push Received.');
+  console.log(`[Service Worker] Push had this data: "${event.data ? event.data.text() : 'no data'}"`);
+
   let data = {};
   if (event.data) {
-    data = event.data.json();
+    try {
+      data = JSON.parse(event.data.text());
+    } catch(e) {
+      console.error('[Service Worker] Failed to parse push data as JSON', e);
+      data = { body: event.data.text() };
+    }
   }
 
-  const title = data.title || 'New Message on Socium';
+  const title = data.title || 'Socium';
   const options = {
-    body: data.body || 'You have a new message.',
+    body: data.body || 'New notification',
     icon: '/vite.svg',
     badge: '/vite.svg',
     data: { url: '/' }
   };
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      // If any client window is focused, we don't show the system notification!
-      // This is because the app itself will indicate new messages (e.g. unread dot or in realtime chat window).
-      for (let i = 0; i < clientList.length; i++) {
-        if (clientList[i].focused) {
-          return;
-        }
-      }
-      return self.registration.showNotification(title, options);
-    })
+    self.registration.showNotification(title, options)
+      .catch(err => console.error('[Service Worker] Error showing notification:', err))
   );
 });
 
