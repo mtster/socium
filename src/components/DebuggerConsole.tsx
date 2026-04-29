@@ -122,22 +122,34 @@ export default function DebuggerConsole() {
             <div className="p-2 border-t border-white/10 flex justify-end">
               <button 
                   onClick={() => {
-                    const request = indexedDB.open('SWLogsDB', 1);
-                    request.onsuccess = (e: any) => {
-                      const db = e.target.result;
-                      if (!db.objectStoreNames.contains('logs')) return;
-                      const tx = db.transaction('logs', 'readonly');
-                      const store = tx.objectStore('logs');
-                      const req = store.getAll();
-                      req.onsuccess = () => {
-                        const idbLogs = req.result.map((r: any) => ({
-                          type: 'info',
-                          message: r.message,
-                          time: r.time,
-                        }));
-                        setLogs(prev => [...prev, ...idbLogs].sort((a,b) => new Date(a.time).getTime() - new Date(b.time).getTime()));
+                    try {
+                      const request = indexedDB.open('SWLogsDB', 1);
+                      request.onsuccess = (e: any) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains('logs')) {
+                          console.log('No IDB logs store found.');
+                          return;
+                        }
+                        const tx = db.transaction('logs', 'readonly');
+                        const store = tx.objectStore('logs');
+                        const req = store.getAll();
+                        req.onsuccess = () => {
+                          const idbLogs = req.result.map((r: any) => ({
+                            type: 'info',
+                            message: `[IDB LOAD] ${r.message}`,
+                            time: r.time || new Date().toISOString(),
+                          }));
+                          setLogs(prev => {
+                            const filtered = prev.filter(l => !l.message.startsWith('[IDB LOAD]'));
+                            return [...filtered, ...idbLogs].sort((a,b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+                          });
+                          console.log(`Loaded ${idbLogs.length} logs from SWLogsDB`);
+                        };
                       };
-                    };
+                      request.onerror = (err) => console.error('Failed to open SWLogsDB', err);
+                    } catch (err) {
+                      console.error('Error loading IDB logs:', err);
+                    }
                   }}
                   className="text-xs font-bold text-white/50 hover:text-white px-3 py-1 rounded bg-white/5"
                 >

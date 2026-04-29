@@ -48,14 +48,17 @@ self.addEventListener('push', function(event) {
 
   const options = {
     body: body,
+    icon: 'https://files.catbox.moe/p9p4j1.png',
+    badge: 'https://files.catbox.moe/p9p4j1.png',
+    requireInteraction: true,
     data: { url: url }
   };
 
-  const notificationPromise = self.registration.showNotification(title, options)
-    .then(() => persistLog(`[SW] showNotification completed successfully. Push Received: title=${title}, body=${body}`))
-    .catch(err => persistLog(`[SW] showNotification ERROR: ${err.message}`));
-
-  event.waitUntil(notificationPromise);
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+      .then(() => persistLog(`[SW] Displayed push notification: ${title} - ${body}`))
+      .catch(err => persistLog(`[SW] showNotification ERROR: ${err.message}`))
+  );
 });
 
 self.addEventListener('notificationclick', function(event) {
