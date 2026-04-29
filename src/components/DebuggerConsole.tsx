@@ -30,12 +30,20 @@ export default function DebuggerConsole() {
       setLogs(prev => [...prev, { type, message: msg, time: new Date().toISOString() }]);
     };
 
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'SW_LOG') {
+        addLog('info', ['[SW]', event.data.message]);
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handleMessage);
+
     console.log = (...args) => { addLog('log', args); originalConsoleLog(...args); };
     console.error = (...args) => { addLog('error', args); originalConsoleError(...args); };
     console.warn = (...args) => { addLog('warn', args); originalConsoleWarn(...args); };
     console.info = (...args) => { addLog('info', args); originalConsoleInfo(...args); };
 
     return () => {
+      navigator.serviceWorker?.removeEventListener('message', handleMessage);
       console.log = originalConsoleLog;
       console.error = originalConsoleError;
       console.warn = originalConsoleWarn;

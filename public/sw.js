@@ -10,29 +10,49 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', function(event) {
   console.log('[Service Worker] Push Received.');
-  console.log(`[Service Worker] Push had this data: "${event.data ? event.data.text() : 'no data'}"`);
+  const pushText = event.data ? event.data.text() : 'no data';
+  console.log(`[Service Worker] Push had this data: "${pushText}"`);
+
+  // Report to clients
+  clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+    clientList.forEach(client => {
+      client.postMessage({ type: 'SW_LOG', message: `Push Received: ${pushText}` });
+    });
+  });
 
   let data = {};
   if (event.data) {
     try {
-      data = JSON.parse(event.data.text());
+      data = JSON.parse(pushText);
     } catch(e) {
       console.error('[Service Worker] Failed to parse push data as JSON', e);
-      data = { body: event.data.text() };
+      data = { body: pushText };
     }
   }
 
   const title = data.title || 'Socium';
   const options = {
     body: data.body || 'New notification',
-    icon: '/vite.svg',
-    badge: '/vite.svg',
     data: { url: '/' }
   };
 
   event.waitUntil(
     self.registration.showNotification(title, options)
-      .catch(err => console.error('[Service Worker] Error showing notification:', err))
+      .then(() => {
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+          clientList.forEach(client => {
+            client.postMessage({ type: 'SW_LOG', message: `showNotification completed successfully.` });
+          });
+        });
+      })
+      .catch(err => {
+        console.error('[Service Worker] Error showing notification:', err);
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+          clientList.forEach(client => {
+            client.postMessage({ type: 'SW_LOG', message: `Error showing notification: ${err.message}` });
+          });
+        });
+      })
   );
 });
 
