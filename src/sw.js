@@ -1,3 +1,7 @@
+import { precacheAndRoute } from 'workbox-precaching';
+
+precacheAndRoute(self.__WB_MANIFEST || []);
+
 self.addEventListener('push', function(event) {
   let data = {};
   if (event.data) {
@@ -14,13 +18,14 @@ self.addEventListener('push', function(event) {
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      // If any client window is focused, we don't show the system notification!
-      // This is because the app itself will indicate new messages (e.g. unread dot or in realtime chat window).
-      for (let i = 0; i < clientList.length; i++) {
-        if (clientList[i].focused) {
-          return;
-        }
+      // For iOS PWA, we want to be more careful about suppressing notifications.
+      // If the app is in the foreground (focused), we can skip.
+      const isAppFocused = clientList.some(client => client.focused);
+
+      if (isAppFocused) {
+        return;
       }
+
       return self.registration.showNotification(title, options);
     })
   );

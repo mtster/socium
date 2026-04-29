@@ -18,7 +18,7 @@ import webpush from 'https://esm.sh/web-push'
 console.log("Hello from send-push!")
 
 webpush.setVapidDetails(
-  Deno.env.get('VAPID_SUBJECT') || 'mailto:your-email@example.com',
+  Deno.env.get('VAPID_SUBJECT') || 'https://socium-app.vercel.app', // IMPORTANT: Must be a valid URL or mailto for Apple
   Deno.env.get('VAPID_PUBLIC_KEY') || '',
   Deno.env.get('VAPID_PRIVATE_KEY') || ''
 );

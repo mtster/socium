@@ -42,7 +42,7 @@ export default function App() {
       setSession(session);
       if (session) {
         fetchProfile(session.user.id);
-        registerPush(session.user.id);
+        registerPush(session.user.id, false);
       }
     });
 
@@ -52,7 +52,7 @@ export default function App() {
       setSession(session);
       if (session) {
         fetchProfile(session.user.id);
-        registerPush(session.user.id);
+        registerPush(session.user.id, false);
       }
     });
 
@@ -105,11 +105,17 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
-  const registerPush = async (userId: string) => {
+  const registerPush = async (userId: string, isUserAction = false) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
     
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js');
+      const registration = await navigator.serviceWorker.ready;
+
+      const existingSubscription = await registration.pushManager.getSubscription();
+      if (existingSubscription && !isUserAction) {
+        return;
+      }
+
       const permission = await Notification.requestPermission();
       
       if (permission !== 'granted') return;
@@ -311,7 +317,7 @@ export default function App() {
         <div className="flex space-x-4 opacity-60">
           {activeTab === 'chat' && !initialActiveChat && (
             <button 
-              onClick={() => registerPush(session.user.id)}
+              onClick={() => registerPush(session.user.id, true)}
               className="text-white hover:text-white/80 transition-colors"
             >
               <Bell size={24} />

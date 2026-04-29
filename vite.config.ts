@@ -11,7 +11,11 @@ export default defineConfig(({mode}) => {
       react(),
       tailwindcss(),
       VitePWA({
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.js',
         registerType: 'autoUpdate',
+        injectRegister: 'auto',
         manifest: {
           name: 'Socium',
           short_name: 'Socium',
