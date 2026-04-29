@@ -17,11 +17,21 @@ import webpush from 'https://esm.sh/web-push'
 
 console.log("Hello from send-push!")
 
-webpush.setVapidDetails(
-  Deno.env.get('VAPID_SUBJECT') || 'mailto:your-email@example.com',
-  Deno.env.get('VAPID_PUBLIC_KEY') || '',
-  Deno.env.get('VAPID_PRIVATE_KEY') || ''
-);
+// Import and setup as before...
+const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY');
+const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY');
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:brare.black@gmail.com';
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  console.log(`Initializing VAPID with public key starting with: ${VAPID_PUBLIC_KEY.substring(0, 10)}...`);
+  webpush.setVapidDetails(
+    VAPID_SUBJECT,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+} else {
+  console.error("CRITICAL: VAPID keys are missing from environment variables!");
+}
 
 serve(async (req) => {
   try {
