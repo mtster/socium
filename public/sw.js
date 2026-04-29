@@ -8,28 +8,6 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(clients.claim());
 });
 
-// Simple helper to log to IndexedDB
-function persistLog(message) {
-  const time = new Date().toISOString();
-  console.log(message);
-  
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('SWLogsDB', 1);
-    request.onupgradeneeded = (e) => {
-      e.target.result.createObjectStore('logs', { autoIncrement: true });
-    };
-    request.onsuccess = (e) => {
-      const db = e.target.result;
-      const tx = db.transaction('logs', 'readwrite');
-      const store = tx.objectStore('logs');
-      store.add({ time, message });
-      tx.oncomplete = () => resolve();
-      tx.onerror = (err) => reject(err);
-    };
-    request.onerror = (err) => reject(err);
-  }).catch(e => console.error('IDB log failed', e));
-}
-
 self.addEventListener('push', function(event) {
   let title = 'Socium';
   let body = 'New notification';
@@ -56,29 +34,25 @@ self.addEventListener('push', function(event) {
 
   event.waitUntil(
     self.registration.showNotification(title, options)
-      .then(() => persistLog(`[SW] Displayed push notification: ${title} - ${body}`))
-      .catch(err => persistLog(`[SW] showNotification ERROR: ${err.message}`))
   );
 });
 
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   
-  const clickPromise = persistLog(`[SW] Notification clicked`)
-    .then(() => clients.matchAll({ type: 'window', includeUncontrolled: true }))
-    .then((clientList) => {
-      if (clientList.length > 0) {
-        let client = clientList[0];
-        for (let i = 0; i < clientList.length; i++) {
-          if (clientList[i].focused) {
-            client = clientList[i];
-          }
+  const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : '/';
+  
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url === urlToOpen && 'focus' in client) {
+          return client.focus();
         }
-        return client.focus();
       }
-      return clients.openWindow('/');
-    });
-
-  event.waitUntil(clickPromise);
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
 });
 
