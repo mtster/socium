@@ -125,7 +125,11 @@ serve(async (req) => {
         }
       };
       
-      const options = { urgency: 'high' };
+      const options = { 
+        urgency: 'high',
+        TTL: 86400,
+        topic: 'socium-message'
+      };
       
       return webpush.sendNotification(pushSubscription, payload, options)
         .then(() => {
