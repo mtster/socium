@@ -1,18 +1,13 @@
 importScripts('https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.9.0/firebase-messaging-compat.js');
 
-// We use self.FIREBASE_CONFIG which can be set dynamically or statically.
-// The user will replace this block using the actual config, but we'll try to get it from URL params if we were clever, OR just leave placeholder.
-// Note: Service Workers don't have access to import.meta.env, so config must be hardcoded here or injected during build.
-// For now, we will add an explicit REPLACE_ME block.
-
 firebase.initializeApp({
-  apiKey: "REPLACE_ME_VITE_FIREBASE_API_KEY",
-  authDomain: "REPLACE_ME_VITE_FIREBASE_AUTH_DOMAIN",
-  projectId: "REPLACE_ME_VITE_FIREBASE_PROJECT_ID",
-  storageBucket: "REPLACE_ME_VITE_FIREBASE_STORAGE_BUCKET",
-  messagingSenderId: "REPLACE_ME_VITE_FIREBASE_MESSAGING_SENDER_ID",
-  appId: "REPLACE_ME_VITE_FIREBASE_APP_ID"
+  apiKey: "AIzaSyDZMeRiZVKqvziAjAaZSsn7QpQ4xGG0QKs",
+  authDomain: "socium-b881e.firebaseapp.com",
+  projectId: "socium-b881e",
+  storageBucket: "socium-b881e.firebasestorage.app",
+  messagingSenderId: "43198571088",
+  appId: "1:43198571088:web:97d0170b52ea90af146755"
 });
 
 const messaging = firebase.messaging();
