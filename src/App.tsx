@@ -124,6 +124,14 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.error('SW registration failed:', err);
+      });
+    }
+  }, []);
+
   const registerPush = async (userId: string, isUserAction = false) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.warn("Push unsupported");
@@ -147,8 +155,9 @@ export default function App() {
         if (Notification.permission !== 'granted') return;
       }
 
-      const registration = await navigator.serviceWorker.register('/sw.js');
-      console.log('SW Registration successful');
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      const registration = await navigator.serviceWorker.ready;
+      console.log('SW Registration ready');
       
       try {
         await registration.update();

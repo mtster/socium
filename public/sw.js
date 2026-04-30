@@ -30,10 +30,9 @@ self.addEventListener('push', function(event) {
 
   const options = {
     body: body,
-    icon: 'https://files.catbox.moe/p9p4j1.png',
-    badge: 'https://files.catbox.moe/p9p4j1.png',
-    data: { url: url },
-    requireInteraction: true
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    data: { url: url }
   };
 
   event.waitUntil(
