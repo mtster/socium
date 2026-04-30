@@ -93,6 +93,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
   useEffect(() => {
     if (activeChat) {
+      (window as any).currentChatUserId = activeChat.id;
       fetchMessages(activeChat.id);
       
       const channel = supabase
@@ -117,7 +118,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
       return () => {
         supabase.removeChannel(channel);
+        (window as any).currentChatUserId = null;
       };
+    } else {
+      (window as any).currentChatUserId = null;
     }
   }, [activeChat]);
 
@@ -505,11 +509,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                         ) : (
                            <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{c.username?.charAt(0).toUpperCase()}</div>
                         )}
-                        {c.unreadCount ? (
-                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-white text-black text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-black font-sans">
-                                {c.unreadCount}
-                            </div>
-                        ) : null}
                      </div>
                      <div className="flex-1 text-left overflow-hidden">
                        <p className="font-bold text-white/90 truncate text-sm">{c.full_name || c.username}</p>

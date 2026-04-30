@@ -14,18 +14,8 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  
-  const notificationTitle = payload.notification?.title || payload.data?.title || 'New Message';
-  const notificationOptions = {
-    body: payload.notification?.body || payload.data?.body || '',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    data: {
-      url: payload.data?.url || '/'
-    }
-  };
-
-  return self.registration.showNotification(notificationTitle, notificationOptions);
+  // FCM automatically handles displaying the notification if payload has `notification`.
+  // We don't need to manually showNotification here, which caused duplicates.
 });
 
 self.addEventListener('notificationclick', function(event) {

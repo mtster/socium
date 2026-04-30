@@ -27,9 +27,11 @@ export default function App() {
   const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
   const [totalUnread, setTotalUnread] = useState(0);
+  const [floatingAvatar, setFloatingAvatar] = useState<Profile | null>(null);
 
   useEffect(() => {
     const handleOpenChat = (e: any) => {
+      setFloatingAvatar(null);
       setInitialActiveChat(e.detail.profile);
       setViewingProfileId(null);
       setActiveTab('chat');
@@ -81,8 +83,16 @@ export default function App() {
       getUnread();
 
       globalUnreadChannel = supabase.channel('global_unread')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, async (payload) => {
            getUnread();
+           const senderId = payload.new.sender_id;
+           if ((window as any).currentChatUserId !== senderId) {
+             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
+             if (senderProfile) {
+               setFloatingAvatar(senderProfile);
+               setTimeout(() => setFloatingAvatar(null), 4000);
+             }
+           }
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
            getUnread();
@@ -98,29 +108,9 @@ export default function App() {
   useEffect(() => {
     const initForegroundMessaging = async () => {
       const { setupForegroundMessageListener } = await import('./lib/firebase');
-      setupForegroundMessageListener((payload) => {
-        const title = payload.notification?.title || payload.data?.title || 'New Message';
-        const body = payload.notification?.body || payload.data?.body || '';
-        const url = payload.data?.url || '/';
-
-        toast((t) => (
-          <div className="flex flex-col cursor-pointer" onClick={() => {
-            toast.dismiss(t.id);
-            if (url === '/') setActiveTab('chat');
-          }}>
-            <span className="font-bold">{title}</span>
-            <span className="text-sm">{body}</span>
-          </div>
-        ), {
-          duration: 4000,
-          position: 'top-center',
-          style: {
-            background: '#333',
-            color: '#fff',
-            borderRadius: '12px',
-            border: '1px solid rgba(255,255,255,0.1)'
-          }
-        });
+      setupForegroundMessageListener(() => {
+        // We use Supabase Realtime to update the UI securely and reliably.
+        // Doing nothing here prevents the system push notification from appearing while the app is actively open, satisfying the requirement.
       });
     };
     
@@ -487,7 +477,13 @@ export default function App() {
       </main>
 
       {/* Navigation */}
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={totalUnread} />
+      <BottomNav 
+         activeTab={activeTab} 
+         setActiveTab={setActiveTab} 
+         unreadCount={totalUnread} 
+         floatingAvatar={floatingAvatar}
+         setFloatingAvatar={setFloatingAvatar}
+      />
       
       {/* Hidden button to enable debugger: tap 5 times on top center */}
       <div 

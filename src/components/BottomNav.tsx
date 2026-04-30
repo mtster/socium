@@ -1,14 +1,18 @@
 import React from 'react';
 import { Home, User, PlusSquare, Search, MessageCircle } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import { Profile } from '@/src/types';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface BottomNavProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   unreadCount?: number;
+  floatingAvatar?: Profile | null;
+  setFloatingAvatar?: (profile: Profile | null) => void;
 }
 
-export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0 }: BottomNavProps) {
+export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar }: BottomNavProps) {
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
     { id: 'create', icon: PlusSquare, label: 'Post' },
@@ -18,7 +22,7 @@ export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0 }: 
 
   return (
     <nav className="shrink-0 bg-black/90 border-t border-white/10 glass pb-safe relative z-40">
-      <div className="h-[60px] flex items-center justify-around w-full">
+      <div className="h-[60px] flex items-center justify-around w-full relative">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -32,11 +36,33 @@ export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0 }: 
                 isActive ? "text-white" : "text-white/40"
               )}
             >
-              <div className="relative">
+              <div className="relative flex flex-col items-center">
                 <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
-                {tab.id === 'chat' && unreadCount > 0 && (
-                  <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
+                {tab.id === 'chat' && unreadCount > 0 && !floatingAvatar && (
+                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
                 )}
+                
+                <AnimatePresence>
+                  {tab.id === 'chat' && floatingAvatar && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.5 }}
+                      animate={{ opacity: 1, y: -45, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.5, y: -20 }}
+                      className="absolute z-50 rounded-full border-2 border-black overflow-hidden bg-black/50 shadow-2xl w-10 h-10 flex items-center justify-center"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (setFloatingAvatar) setFloatingAvatar(null);
+                        window.dispatchEvent(new CustomEvent('openChat', { detail: { profile: floatingAvatar } }));
+                      }}
+                    >
+                      {floatingAvatar.avatar_url ? (
+                        <img src={floatingAvatar.avatar_url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-white text-sm font-bold">{floatingAvatar.username?.charAt(0).toUpperCase()}</span>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
               <span className="text-[10px] mt-1 font-medium">{tab.label}</span>
             </button>
