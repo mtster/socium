@@ -19,16 +19,19 @@ export default defineConfig(({mode}) => {
           theme_color: '#000000',
           background_color: '#000000',
           display: 'standalone',
+          start_url: '/',
           icons: [
             {
-              src: 'https://files.catbox.moe/p9p4j1.png',
+              src: '/icon-192.png',
               sizes: '192x192',
-              type: 'image/png'
+              type: 'image/png',
+              purpose: 'any maskable'
             },
             {
-              src: 'https://files.catbox.moe/p9p4j1.png',
+              src: '/icon-512.png',
               sizes: '512x512',
-              type: 'image/png'
+              type: 'image/png',
+              purpose: 'any maskable'
             }
           ]
         }
