@@ -96,15 +96,20 @@ export default function App() {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'IN_APP_PUSH') {
+    const initForegroundMessaging = async () => {
+      const { setupForegroundMessageListener } = await import('./lib/firebase');
+      setupForegroundMessageListener((payload) => {
+        const title = payload.notification?.title || payload.data?.title || 'New Message';
+        const body = payload.notification?.body || payload.data?.body || '';
+        const url = payload.data?.url || '/';
+
         toast((t) => (
           <div className="flex flex-col cursor-pointer" onClick={() => {
             toast.dismiss(t.id);
-            if (event.data.url === '/') setActiveTab('chat');
+            if (url === '/') setActiveTab('chat');
           }}>
-            <span className="font-bold">{event.data.title}</span>
-            <span className="text-sm">{event.data.body}</span>
+            <span className="font-bold">{title}</span>
+            <span className="text-sm">{body}</span>
           </div>
         ), {
           duration: 4000,
@@ -116,17 +121,15 @@ export default function App() {
             border: '1px solid rgba(255,255,255,0.1)'
           }
         });
-      }
+      });
     };
-    navigator.serviceWorker?.addEventListener('message', handleMessage);
-    return () => {
-      navigator.serviceWorker?.removeEventListener('message', handleMessage);
-    };
+    
+    initForegroundMessaging();
   }, []);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch((err) => {
+      navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((err) => {
         console.error('SW registration failed:', err);
       });
     }
@@ -135,76 +138,35 @@ export default function App() {
   const registerPush = async (userId: string, isUserAction = false) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.warn("Push unsupported");
-      // if (isUserAction) alert("Push notifications are not supported by your browser/device.");
       return;
     }
     
     try {
       console.log(`registerPush called (userAction: ${isUserAction}), current permission:`, Notification.permission);
       
-      if (isUserAction) {
-        // Must be called immediately without prior awaits on iOS!
-        const permission = await Notification.requestPermission();
-        console.log("Requested permission:", permission);
-        if (permission !== 'granted') {
-          alert('Notifications were denied or dismissed.');
-          return;
-        }
-      } else {
-        // If not user action and not already granted, abort silently so we don't trigger the iOS silent deny
-        if (Notification.permission !== 'granted') return;
-      }
-
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-      const registration = await navigator.serviceWorker.ready;
-      console.log('SW Registration ready');
+      const { requestFirebaseNotificationPermission } = await import('./lib/firebase');
+      const token = await requestFirebaseNotificationPermission();
       
-      try {
-        await registration.update();
-        console.log('SW Updated successfully');
-      } catch (e) {
-        console.warn('SW Update failed', e);
-      }
-
-      let publicVapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-      if (!publicVapidKey) {
-        console.error("VITE_VAPID_PUBLIC_KEY is not defined");
+      if (!token) {
+        console.warn("Could not get Firebase FCM token.");
+        if (isUserAction) alert('Could not enable notifications.');
         return;
       }
-      publicVapidKey = publicVapidKey.trim().replace(/^['"]|['"]$/g, '');
 
-      let subscription = await registration.pushManager.getSubscription();
-      if (!subscription) {
-        console.log("No existing subscription, subscribing...");
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
-        });
-      }
-
-      console.log("Subscription obtained:", subscription?.endpoint);
-
-      const subJSON = subscription.toJSON();
-      const p256dh = subJSON.keys?.p256dh;
-      const auth = subJSON.keys?.auth;
-
-      if (!p256dh || !auth) {
-        console.error('Invalid subscription keys', subJSON);
-        return;
-      }
+      console.log("Firebase FCM token obtained:", token.substring(0, 20) + "...");
 
       console.log("Upserting subscription to database for user:", userId);
       const { error } = await supabase.from('push_subscriptions').upsert({
         user_id: userId,
-        endpoint: subscription.endpoint,
-        p256dh_key: p256dh,
-        auth_key: auth
+        endpoint: token, // We store the FCM token in the 'endpoint' column for simplicity
+        p256dh_key: 'FCM',
+        auth_key: 'FCM'
       }, { onConflict: 'user_id, endpoint' });
       
       if (error) {
         console.error('Error upserting DB:', error);
       } else {
-        console.log('Successfully saved subscription to database');
+        console.log('Successfully saved FCM token to database');
         if (isUserAction) alert('Notifications enabled successfully!');
       }
       

@@ -1,9 +1,8 @@
 // 1. You must create an Edge Function in your Supabase dashboard and paste this code in it. Let's assume it's called "send-push".
 // 
 // 2. Set the Secrets in your Supabase Edge Function settings:
-//    - VAPID_PRIVATE_KEY
-//    - VAPID_PUBLIC_KEY
-//    - VAPID_SUBJECT (e.g. mailto:your-email@example.com)
+//    - FIREBASE_SERVICE_ACCOUNT (This should be the raw JSON string of your Firebase Service Account JSON file)
+//      You can get this from Firebase Console -> Project Settings -> Service Accounts -> "Generate new private key"
 // 
 // 3. IMPORTANT: YOU MUST CREATE A DATABASE WEBHOOK!
 //    - Go to Supabase Dashboard -> Database -> Webhooks
@@ -20,26 +19,25 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import webpush from 'https://esm.sh/web-push@3.6.7'
+import admin from 'npm:firebase-admin@11'
 
-console.log("Hello from send-push edge function!")
+// Initialize Firebase Admin if not already initialized
+const serviceAccountRaw = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
 
-const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY')?.trim();
-const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY')?.trim();
-let VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT')?.trim() || 'mailto:brare.black@gmail.com';
-if (!VAPID_SUBJECT.startsWith('mailto:')) {
-  VAPID_SUBJECT = 'mailto:' + VAPID_SUBJECT;
-}
-
-if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  console.log(`Initializing VAPID with public key starting with: ${VAPID_PUBLIC_KEY.substring(0, 10)}...`);
-  webpush.setVapidDetails(
-    VAPID_SUBJECT,
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY
-  );
+if (serviceAccountRaw) {
+  try {
+    const serviceAccount = JSON.parse(serviceAccountRaw);
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+      console.log("Firebase Admin initialized successfully.");
+    }
+  } catch (error) {
+    console.error("CRITICAL: Failed to parse FIREBASE_SERVICE_ACCOUNT JSON or initialize admin.", error);
+  }
 } else {
-  console.error("CRITICAL: VAPID keys are missing from Edge Function Secrets!");
+  console.error("CRITICAL: FIREBASE_SERVICE_ACCOUNT secret is missing from Edge Function Secrets!");
 }
 
 serve(async (req) => {
@@ -47,6 +45,11 @@ serve(async (req) => {
   
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } });
+  }
+
+  if (!admin.apps.length) {
+    console.error("Firebase Admin is not configured. Aborting push delivery.");
+    return new Response('Firebase Admin not initialized', { status: 500 });
   }
 
   try {
@@ -74,13 +77,9 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables!");
-    }
-    
     const supabase = createClient(supabaseUrl!, supabaseServiceKey!);
 
-    console.log(`Fetching subscriptions for user: ${message.receiver_id}`);
+    console.log(`Fetching FCM tokens for user: ${message.receiver_id}`);
     const { data: subscriptions, error: subError } = await supabase
       .from('push_subscriptions')
       .select('*')
@@ -95,15 +94,13 @@ serve(async (req) => {
       return new Response('No subscriptions found', { status: 200 });
     }
     
-    console.log(`Found ${subscriptions.length} subscriptions. Proceeding to push...`);
-
-    // Deduplicate subscriptions by endpoint
+    // Deduplicate endpoints (tokens)
     const uniqueSubs = new Map();
     for (const sub of subscriptions) {
       uniqueSubs.set(sub.endpoint, sub);
     }
     const dedupedSubscriptions = Array.from(uniqueSubs.values());
-    console.log(`After deduping, sending to ${dedupedSubscriptions.length} endpoints.`);
+    console.log(`Sending to ${dedupedSubscriptions.length} FCM endpoints.`);
 
     // Fetch the sender profile for the name
     const { data: senderProf } = await supabase
@@ -114,42 +111,43 @@ serve(async (req) => {
 
     const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
 
-    const payload = JSON.stringify({
-      title: senderName,
-      body: message.content || "Sent you a media message",
-      data: {
-        url: "/" // needed for service worker
-      }
-    });
-
-    const pushPromises = dedupedSubscriptions.map((sub: any) => {
-      const pushSubscription = {
-        endpoint: sub.endpoint,
-        keys: {
-          auth: sub.auth_key,
-          p256dh: sub.p256dh_key
+    const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
+      const fcmToken = sub.endpoint;
+      
+      const payload = {
+        token: fcmToken,
+        notification: {
+          title: senderName,
+          body: message.content || "Sent you a media message",
+        },
+        data: {
+          url: "/"
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: 'default'
+            }
+          }
         }
       };
       
-      const options = { 
-        urgency: 'high',
-        TTL: 86400,
-        topic: 'socium-message'
-      };
-      
-      return webpush.sendNotification(pushSubscription, payload, options)
-        .then((response: any) => {
-           console.log(`Push sent successfully to ${sub.endpoint.substring(0, 30)}... | Status: ${response.statusCode} | Headers: ${JSON.stringify(response.headers)} | Body: ${response.body}`);
-        })
-        .catch(async (err: any) => {
-           if (err.statusCode === 404 || err.statusCode === 410) {
-              console.log(`Subscription expired/invalid for endpoint: ${sub.endpoint}, removing from DB.`);
-              await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
-           } else {
-              console.error(`Push delivery error for ${sub.endpoint}: statusCode=${err.statusCode}, headers=${JSON.stringify(err.headers)}, body=${err.body}`);
-              console.error(err);
-           }
-        });
+      try {
+        const response = await admin.messaging().send(payload);
+        console.log(`Firebase push sent successfully to token ${fcmToken.substring(0, 20)}... | Message ID: ${response}`);
+      } catch (err: any) {
+        console.error(`Firebase push error for token ${fcmToken.substring(0, 20)}...:`, err);
+        
+        // Cleanup invalid FCM tokens
+        if (
+          err.code === 'messaging/invalid-registration-token' ||
+          err.code === 'messaging/registration-token-not-registered' ||
+          err.code === 'messaging/invalid-argument'
+        ) {
+          console.log(`Token is invalid or unregistered. Removing from DB...`);
+          await supabase.from('push_subscriptions').delete().eq('endpoint', fcmToken);
+        }
+      }
     });
 
     await Promise.all(pushPromises);
