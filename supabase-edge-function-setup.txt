@@ -116,17 +116,16 @@ serve(async (req) => {
       
       const payload = {
         token: fcmToken,
-        notification: {
+        data: {
           title: senderName,
           body: message.content || "Sent you a media message",
-        },
-        data: {
-          url: "/"
+          url: "/",
+          senderId: message.sender_id || ""
         },
         apns: {
           payload: {
             aps: {
-              sound: 'default'
+              'content-available': 1 // Enable background update format
             }
           }
         }

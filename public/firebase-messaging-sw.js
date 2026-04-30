@@ -12,10 +12,21 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-messaging.onBackgroundMessage((payload) => {
+messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  // FCM automatically handles displaying the notification if payload has `notification`.
-  // We don't need to manually showNotification here, which caused duplicates.
+  
+  const notificationTitle = payload.data?.title || 'New Message';
+  const notificationOptions = {
+    body: payload.data?.body || '',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    data: {
+      url: payload.data?.url || '/',
+      senderId: payload.data?.senderId || ''
+    }
+  };
+
+  self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
 self.addEventListener('notificationclick', function(event) {

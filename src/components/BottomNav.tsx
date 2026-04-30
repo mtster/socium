@@ -30,7 +30,12 @@ export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0, fl
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                if (tab.id === 'chat' && setFloatingAvatar) {
+                  setFloatingAvatar(null);
+                }
+                setActiveTab(tab.id);
+              }}
               className={cn(
                 "flex flex-col items-center justify-center w-full h-full transition-all duration-300 relative",
                 isActive ? "text-white" : "text-white/40"

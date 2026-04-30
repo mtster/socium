@@ -70,6 +70,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<{file: File | Blob | null, type: 'image' | 'audio' | 'location', dataUrl?: string, locationString?: string} | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: any } | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<any>(null);
@@ -80,6 +81,18 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<any>(null);
+
+  const handleDeleteMessage = async () => {
+    if (!contextMenu?.message) return;
+    const msgId = contextMenu.message.id;
+    setContextMenu(null);
+    setMessages(prev => prev.filter(m => m.id !== msgId));
+    try {
+      await supabase.from('messages').delete().eq('id', msgId);
+    } catch (e) {
+      console.error('Failed to delete message', e);
+    }
+  };
 
   useEffect(() => {
     if (initialActiveChat) {
@@ -286,8 +299,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        handleMediaMessage(audioBlob, 'audio');
+        const dataUrl = URL.createObjectURL(audioBlob);
+        setPendingMedia({ file: audioBlob, type: 'audio', dataUrl });
         stream.getTracks().forEach(track => track.stop());
+        setShowFeatures(false);
       };
 
       mediaRecorder.start();
@@ -319,7 +334,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const loc = `${position.coords.latitude},${position.coords.longitude}`;
-        await sendSpecialMessage(null, 'location', loc);
+        setPendingMedia({ file: null, type: 'location', locationString: loc });
+        setShowFeatures(false);
         setUploadingMedia(false);
       },
       (error) => {
@@ -345,18 +361,29 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     }
   };
 
-  const saveToDevice = async (url: string, filename: string) => {
+  const saveToDevice = async (url: string, filename: string, mediaType?: string) => {
     try {
       const response = await fetch(url);
       const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
+      
+      const fileExt = mediaType === 'audio' ? 'webm' : 'jpg';
+      const file = new File([blob], `${filename}.${fileExt}`, { type: blob.type });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: filename
+        });
+      } else {
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = `${filename}.${fileExt}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+      }
     } catch (e) {
       window.open(url, '_blank');
     }
@@ -572,16 +599,17 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  const showAvatar = !isMine && !isConsecutive;
 
                  let roundedClass = 'rounded-[18px]';
+                 let marginClass = 'mb-3';
                  if (isMine) {
-                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-[18px] rounded-tr-[4px] rounded-br-[4px] mb-[2px]';
-                   else if (isConsecutive) roundedClass = 'rounded-[18px] rounded-br-[4px] mb-[2px]';
-                   else if (isPrevConsecutive) roundedClass = 'rounded-[18px] rounded-tr-[4px] mb-3';
-                   else roundedClass = 'rounded-[18px] rounded-br-[4px] mb-3';
+                   if (isConsecutive && isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tr-[4px] rounded-br-[4px]'; marginClass = 'mb-[2px]'; }
+                   else if (isConsecutive) { roundedClass = 'rounded-[18px] rounded-br-[4px]'; marginClass = 'mb-[2px]'; }
+                   else if (isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tr-[4px]'; marginClass = 'mb-3'; }
+                   else { roundedClass = 'rounded-[18px] rounded-br-[4px]'; marginClass = 'mb-3'; }
                  } else {
-                   if (isConsecutive && isPrevConsecutive) roundedClass = 'rounded-[18px] rounded-tl-[4px] rounded-bl-[4px] mb-[2px]';
-                   else if (isConsecutive) roundedClass = 'rounded-[18px] rounded-bl-[4px] mb-[2px]';
-                   else if (isPrevConsecutive) roundedClass = 'rounded-[18px] rounded-tl-[4px] mb-3';
-                   else roundedClass = 'rounded-[18px] rounded-bl-[4px] mb-3';
+                   if (isConsecutive && isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tl-[4px] rounded-bl-[4px]'; marginClass = 'mb-[2px]'; }
+                   else if (isConsecutive) { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-[2px]'; }
+                   else if (isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tl-[4px]'; marginClass = 'mb-3'; }
+                   else { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-3'; }
                  }
                  
                  const isMediaOnly = (msg.media_type === 'image' || msg.media_type === 'location' || msg.media_type === 'audio') && !msg.content;
@@ -589,7 +617,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  return (
                     <div 
                       key={msg.id} 
-                      className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start")}
+                      className={cn("flex w-full gap-2 relative select-none", isMine ? "justify-end" : "justify-start", marginClass)}
                       onContextMenu={(e) => { e.preventDefault(); handleLongPress(e, msg); }}
                       onTouchStart={(e) => onTouchStart(e, msg)}
                       onTouchEnd={onTouchEnd}
@@ -598,7 +626,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                            <div className="w-8 shrink-0 flex items-end">
                                {showAvatar ? (
                                  <div 
-                                   className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer active:scale-95 transition-transform mb-1"
+                                   className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer active:scale-95 transition-transform"
                                    onClick={() => {
                                        window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } }));
                                        onCloseChat?.();
@@ -632,7 +660,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                            <img 
                              src={msg.media_url} 
                              alt="Photo" 
-                             className="w-full h-auto max-h-[450px] object-contain cursor-pointer shadow-lg active:brightness-90 transition-all rounded-inherit" 
+                             className="w-full h-auto max-h-[450px] object-cover cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.1)] active:brightness-90 transition-all rounded-inherit block" 
                              onClick={() => setViewingImage(msg.media_url)}
                            />
                          )}
@@ -755,13 +783,77 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
                <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={(e) => {
                  const file = e.target.files?.[0];
-                 if (file) handleMediaMessage(file, 'image');
+                 if (file) {
+                   const dataUrl = URL.createObjectURL(file);
+                   setPendingMedia({ file, type: 'image', dataUrl });
+                   setShowFeatures(false);
+                 }
+                 e.target.value = '';
                }} />
                <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" className="hidden" onChange={(e) => {
                  const file = e.target.files?.[0];
-                 if (file) handleMediaMessage(file, 'image');
+                 if (file) {
+                   const dataUrl = URL.createObjectURL(file);
+                   setPendingMedia({ file, type: 'image', dataUrl });
+                   setShowFeatures(false);
+                 }
+                 e.target.value = '';
                }} />
             </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {pendingMedia && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed inset-0 z-[150] bg-black/90 flex flex-col justify-between backdrop-blur-md"
+          >
+            <div className="p-4 pt-safe flex items-center justify-between">
+              <button 
+                onClick={() => setPendingMedia(null)} 
+                className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform"
+              >
+                <X size={24} />
+              </button>
+              <h2 className="text-white font-bold tracking-tight">Send {pendingMedia.type.charAt(0).toUpperCase() + pendingMedia.type.slice(1)}</h2>
+              <div className="w-10" />
+            </div>
+
+            <div className="flex-1 flex items-center justify-center p-4">
+              {pendingMedia.type === 'image' && pendingMedia.dataUrl && (
+                <img src={pendingMedia.dataUrl} alt="Preview" className="max-w-full max-h-full object-contain rounded-2xl shadow-2xl" />
+              )}
+              {pendingMedia.type === 'audio' && pendingMedia.dataUrl && (
+                <div className="w-full max-w-sm">
+                  <AudioPlayer src={pendingMedia.dataUrl} isMine={true} />
+                </div>
+              )}
+              {pendingMedia.type === 'location' && pendingMedia.locationString && (
+                <div className="w-full max-w-xs aspect-square border border-white/20 rounded-2xl overflow-hidden relative shadow-2xl">
+                  <img src={`https://static-maps.yandex.ru/1.x/?ll=${pendingMedia.locationString.split(',')[1]},${pendingMedia.locationString.split(',')[0]}&z=14&l=map&size=300,300&pt=${pendingMedia.locationString.split(',')[1]},${pendingMedia.locationString.split(',')[0]},pm2rdm`} alt="Location" className="w-full h-full object-cover" />
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 pb-safe flex justify-end">
+              <button 
+                onClick={() => {
+                  if (pendingMedia.type === 'location') {
+                    sendSpecialMessage(null, 'location', pendingMedia.locationString || '');
+                  } else if (pendingMedia.file) {
+                    handleMediaMessage(pendingMedia.file, pendingMedia.type as 'image' | 'audio');
+                  }
+                  setPendingMedia(null);
+                }}
+                className="bg-white text-black font-bold px-8 py-3.5 rounded-full active:scale-95 transition-transform flex items-center gap-2 shadow-2xl"
+              >
+                Send <SendHorizonal size={20} className="ml-1" />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -776,8 +868,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             onClick={() => setViewingImage(null)}
           >
             <div className="absolute top-safe w-full flex justify-between items-center px-4 py-4 z-[210]">
+               <button onClick={(e) => { e.stopPropagation(); saveToDevice(viewingImage, 'socium'); }} className="p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><Download size={24} /></button>
                <button onClick={(e) => { e.stopPropagation(); setViewingImage(null); }} className="p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><X size={24} /></button>
-               <button onClick={(e) => { e.stopPropagation(); saveToDevice(viewingImage, 'socium.jpg'); }} className="p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><Download size={24} /></button>
             </div>
             
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full h-full flex items-center justify-center overflow-hidden">
@@ -791,23 +883,35 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
         {contextMenu && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-[2px]" onClick={() => setContextMenu(null)} />
-            <motion.div initial={{ opacity: 0, scale: 0.9, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 10 }} className="fixed z-[160] w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 10 }} className="fixed z-[160] w-48 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
                {contextMenu.message.content && (
-                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-black hover:bg-black/5 rounded-xl transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}>
+                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}>
                     <span>Copy Text</span>
                     <Copy size={16} />
                   </button>
                )}
                {contextMenu.message.media_url && (
-                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-black hover:bg-black/5 rounded-xl transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium'); setContextMenu(null); }}>
+                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}>
                     <span>Save {contextMenu.message.media_type === 'image' ? 'Photo' : 'Audio'}</span>
                     <Download size={16} />
                   </button>
                )}
-               <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-50 rounded-xl transition-colors" onClick={() => setContextMenu(null)}>
-                 <span>Delete</span>
-                 <Trash2 size={16} />
-               </button>
+               {contextMenu.message.media_type === 'location' && (
+                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { 
+                    const [lng, lat] = contextMenu.message.content.split(',');
+                    window.open(`https://maps.apple.com/?q=${lat},${lng}`, '_blank'); 
+                    setContextMenu(null); 
+                  }}>
+                    <span>Open in Maps</span>
+                    <MapPin size={16} />
+                  </button>
+               )}
+               {contextMenu.message.sender_id === currentUserId && (
+                 <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-500 hover:bg-white/5 rounded-xl transition-colors mt-1" onClick={handleDeleteMessage}>
+                   <span>Delete</span>
+                   <Trash2 size={16} />
+                 </button>
+               )}
             </motion.div>
           </>
         )}

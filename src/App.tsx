@@ -89,8 +89,12 @@ export default function App() {
            if ((window as any).currentChatUserId !== senderId) {
              const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
              if (senderProfile) {
-               setFloatingAvatar(senderProfile);
-               setTimeout(() => setFloatingAvatar(null), 4000);
+               // Only show the floating avatar if the user is NOT already looking at the chat list or chat view
+               const currentPathOpen = (window as any).currentActiveTab;
+               if (currentPathOpen !== 'chat') {
+                 setFloatingAvatar(senderProfile);
+                 setTimeout(() => setFloatingAvatar(null), 4000);
+               }
              }
            }
         })
@@ -258,6 +262,7 @@ export default function App() {
 
   // Reload posts when switching back to profile tab
   useEffect(() => {
+    (window as any).currentActiveTab = activeTab;
     if (session?.user?.id && activeTab === 'profile') {
       fetchUserPosts(session.user.id);
     }
