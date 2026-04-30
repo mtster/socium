@@ -13,31 +13,47 @@ self.addEventListener('push', function(event) {
   let body = 'New notification';
   let url = '/';
 
-  try {
-    if (event.data) {
-      const parsedData = event.data.json();
-      if (parsedData.title) title = parsedData.title;
-      if (parsedData.body) body = parsedData.body;
-      if (parsedData.data && parsedData.data.url) url = parsedData.data.url;
-    }
-  } catch (e) {
+  const notificationPromise = Promise.resolve().then(() => {
     try {
-      body = event.data ? event.data.text() : 'No payload';
-    } catch (e2) {
-      body = 'Error reading push data';
+      if (event.data) {
+        const parsedData = event.data.json();
+        if (parsedData.title) title = parsedData.title;
+        if (parsedData.body) body = parsedData.body;
+        if (parsedData.data && parsedData.data.url) url = parsedData.data.url;
+      }
+    } catch (e) {
+      console.error('Failed to parse push data:', e);
+      body = 'You have a new message';
+      title = 'Socium';
     }
-  }
 
-  const options = {
-    body: body,
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    data: { url: url }
-  };
+    const options = {
+      body: body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: url }
+    };
 
-  event.waitUntil(
-    self.registration.showNotification(title, options)
-  );
+    return self.registration.showNotification(title, options).then(() => {
+      // Send message to all open clients so they can show an in-app toast if foregrounded
+      return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+        clientList.forEach(client => {
+          client.postMessage({ type: 'IN_APP_PUSH', title: title, body: body, url: url });
+        });
+      });
+    });
+  }).catch((error) => {
+    console.error('Notification display failed, showing fallback:', error);
+    // Explicit fallback in case something breaks above
+    return self.registration.showNotification('Socium', {
+      body: 'New Message',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: '/' }
+    });
+  });
+
+  event.waitUntil(notificationPromise);
 });
 
 self.addEventListener('notificationclick', function(event) {

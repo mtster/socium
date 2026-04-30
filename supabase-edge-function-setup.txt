@@ -26,7 +26,10 @@ console.log("Hello from send-push edge function!")
 
 const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY')?.trim();
 const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY')?.trim();
-const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:brare.black@gmail.com';
+let VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT')?.trim() || 'mailto:brare.black@gmail.com';
+if (!VAPID_SUBJECT.startsWith('mailto:')) {
+  VAPID_SUBJECT = 'mailto:' + VAPID_SUBJECT;
+}
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   console.log(`Initializing VAPID with public key starting with: ${VAPID_PUBLIC_KEY.substring(0, 10)}...`);
