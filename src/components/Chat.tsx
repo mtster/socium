@@ -4,9 +4,27 @@ import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, MoreHorizontal, Play, Pause, SendHorizonal } from 'lucide-react';
 
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+
+const Linkify = ({ text }: { text: string }) => {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = text.split(urlRegex);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.match(urlRegex)) {
+          return <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 break-all">{part}</a>;
+        }
+        return part;
+      })}
+    </>
+  );
+};
+
 const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const toggle = () => {
@@ -26,7 +44,14 @@ const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
       "flex items-center gap-3 px-3 py-2 rounded-[24px] min-w-[180px] backdrop-blur-md transition-all duration-300",
       isMine ? "bg-white text-black" : "bg-white/20 text-white"
     )}>
-      <audio ref={audioRef} src={src} onTimeUpdate={onTimeUpdate} onEnded={() => setPlaying(false)} className="hidden" />
+      <audio 
+        ref={audioRef} 
+        src={src} 
+        onTimeUpdate={onTimeUpdate} 
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onEnded={() => setPlaying(false)} 
+        className="hidden" 
+      />
       <button 
         onClick={toggle}
         className={cn(
@@ -44,7 +69,7 @@ const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
         />
       </div>
       <span className="text-[10px] font-medium opacity-50 w-8">
-        {audioRef.current ? `${Math.floor(audioRef.current.duration || 0)}s` : '...'}
+        {duration > 0 || audioRef.current?.duration ? `${Math.floor(duration || audioRef.current?.duration || 0)}s` : '...'}
       </span>
     </div>
   );
@@ -332,7 +357,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     }
     setUploadingMedia(true);
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
+      (position) => {
         const loc = `${position.coords.latitude},${position.coords.longitude}`;
         setPendingMedia({ file: null, type: 'location', locationString: loc });
         setShowFeatures(false);
@@ -340,9 +365,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       },
       (error) => {
         console.error('Error getting location', error);
-        alert('Could not get actual location');
+        alert('Could not get actual location. Please allow location access in your device settings.');
         setUploadingMedia(false);
-      }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
@@ -384,8 +410,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
         document.body.removeChild(link);
         window.URL.revokeObjectURL(blobUrl);
       }
-    } catch (e) {
-      window.open(url, '_blank');
+    } catch (e: any) {
+      if (e.name === 'AbortError') return;
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
   };
 
@@ -395,9 +428,29 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
     if (navigator.vibrate) navigator.vibrate(10);
     
+    const elementId = `msg-inner-${msg.id}`;
+    const element = document.getElementById(elementId);
+    let x = clientX, y = clientY;
+    if (element) {
+      const rect = element.getBoundingClientRect();
+      const isMineMsg = msg.sender_id === currentUserId;
+      if (isMineMsg) {
+        x = rect.left - 192 - 8;
+        if (x < 10) x = 10;
+      } else {
+        x = rect.right + 8;
+        if (x + 192 > window.innerWidth - 10) x = window.innerWidth - 192 - 10;
+      }
+      y = rect.top;
+      if (y + 160 > window.innerHeight - 20) y = window.innerHeight - 160 - 20;
+    } else {
+       x = Math.min(clientX, window.innerWidth - 180);
+       y = Math.min(clientY, window.innerHeight - 200);
+    }
+    
     setContextMenu({
-      x: Math.min(clientX, window.innerWidth - 180),
-      y: Math.min(clientY, window.innerHeight - 200),
+      x,
+      y,
       message: msg
     });
   };
@@ -645,12 +698,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                        )}
                        
                        <motion.div 
+                         id={`msg-inner-${msg.id}`}
                          initial={false}
-                         whileTap={{ scale: 0.98 }}
+                         whileTap={{ scale: contextMenu?.message?.id === msg.id ? 1.05 : 0.98 }}
                          className={cn(
                            "max-w-[75%] min-w-[2rem] text-[15px] leading-[1.3] whitespace-pre-wrap break-words overflow-hidden transition-all duration-300",
                            roundedClass,
                            (!isMediaOnly) && (isMine ? "bg-white text-black shadow-sm" : "bg-white/15 text-white"),
+                           contextMenu?.message?.id === msg.id ? "scale-[1.05] shadow-2xl z-[160]" : "",
                            !msg.media_type && "px-4 py-2.5",
                            msg.media_type === 'audio' && "p-0 rounded-3xl",
                            (msg.media_type === 'image' || msg.media_type === 'location') && "p-0 rounded-2xl overflow-hidden"
@@ -668,8 +723,18 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                            <AudioPlayer src={msg.media_url} isMine={isMine} />
                          )}
                          {msg.media_type === 'location' && msg.content && (
-                           <div className="w-full aspect-square bg-white/5 overflow-hidden relative shadow-lg">
-                             <img src={`https://static-maps.yandex.ru/1.x/?ll=${msg.content.split(',')[1]},${msg.content.split(',')[0]}&z=14&l=map&size=300,300&pt=${msg.content.split(',')[1]},${msg.content.split(',')[0]},pm2rdm`} alt="Location" className="w-full h-full object-cover" />
+                           <div 
+                             className="w-full aspect-square bg-[#1c1c1c] overflow-hidden relative shadow-lg flex flex-col items-center justify-center border border-white/10 cursor-pointer active:scale-95 transition-transform"
+                             onClick={() => {
+                               const [lat, lng] = msg.content.split(',');
+                               window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+                             }}
+                           >
+                             <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-3">
+                               <MapPin size={32} className="text-white" />
+                             </div>
+                             <span className="text-white font-bold text-sm">Shared Location</span>
+                             <span className="text-white/50 text-[10px] mt-1">Tap to open in Google Maps</span>
                            </div>
                          )}
                          {msg.content && !isMediaOnly && (
@@ -677,7 +742,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                              (msg.media_type === 'image') ? "px-4 pb-3 pt-2 bg-black/5 backdrop-blur-sm mt-[-1px]" : "",
                              (msg.media_type === 'audio') ? "px-4 py-2 bg-black/5 mt-1" : ""
                            )}>
-                             {msg.content}
+                             <Linkify text={msg.content} />
                            </div>
                          )}
                        </motion.div>
@@ -833,8 +898,11 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                 </div>
               )}
               {pendingMedia.type === 'location' && pendingMedia.locationString && (
-                <div className="w-full max-w-xs aspect-square border border-white/20 rounded-2xl overflow-hidden relative shadow-2xl">
-                  <img src={`https://static-maps.yandex.ru/1.x/?ll=${pendingMedia.locationString.split(',')[1]},${pendingMedia.locationString.split(',')[0]}&z=14&l=map&size=300,300&pt=${pendingMedia.locationString.split(',')[1]},${pendingMedia.locationString.split(',')[0]},pm2rdm`} alt="Location" className="w-full h-full object-cover" />
+                <div className="w-full max-w-xs aspect-square border border-white/20 rounded-2xl overflow-hidden relative shadow-2xl bg-[#1c1c1c] flex flex-col items-center justify-center">
+                  <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-3">
+                    <MapPin size={32} className="text-white" />
+                  </div>
+                  <span className="text-white font-bold text-sm">Shared Location</span>
                 </div>
               )}
             </div>
@@ -864,16 +932,17 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-black flex items-center justify-center backdrop-blur-2xl"
-            onClick={() => setViewingImage(null)}
+            className="fixed inset-0 z-[200] bg-black backdrop-blur-2xl"
           >
-            <div className="absolute top-safe w-full flex justify-between items-center px-4 py-4 z-[210]">
-               <button onClick={(e) => { e.stopPropagation(); saveToDevice(viewingImage, 'socium'); }} className="p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><Download size={24} /></button>
-               <button onClick={(e) => { e.stopPropagation(); setViewingImage(null); }} className="p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><X size={24} /></button>
-            </div>
+            <button onClick={(e) => { e.stopPropagation(); saveToDevice(viewingImage, 'socium'); }} className="absolute z-[210] top-safe left-4 mt-4 p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><Download size={24} /></button>
+            <button onClick={(e) => { e.stopPropagation(); setViewingImage(null); }} className="absolute z-[210] top-safe right-4 mt-4 p-3 bg-white/10 text-white rounded-full backdrop-blur-md active:scale-90 transition-transform"><X size={24} /></button>
             
-            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full h-full flex items-center justify-center overflow-hidden">
-                <motion.img drag dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }} dragElastic={0.1} src={viewingImage} alt="" className="max-w-full max-h-screen object-contain pointer-events-auto touch-pan-x touch-pan-y" onClick={(e) => e.stopPropagation()} />
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full h-full">
+              <TransformWrapper doubleClick={{ mode: "zoomIn" }} centerOnInit>
+                <TransformComponent wrapperStyle={{ width: "100%", height: "100%" }} contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <img src={viewingImage} alt="" className="max-w-full max-h-screen object-contain pointer-events-auto" />
+                </TransformComponent>
+              </TransformWrapper>
             </motion.div>
           </motion.div>
         )}
@@ -882,7 +951,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       <AnimatePresence>
         {contextMenu && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-[2px]" onClick={() => setContextMenu(null)} />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} />
             <motion.div initial={{ opacity: 0, scale: 0.9, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 10 }} className="fixed z-[160] w-48 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
                {contextMenu.message.content && (
                   <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}>

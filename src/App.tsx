@@ -15,7 +15,6 @@ import Chat from './components/Chat';
 
 import { Bell } from 'lucide-react';
 
-import DebuggerConsole from './components/DebuggerConsole';
 import toast, { Toaster } from 'react-hot-toast';
 
 export default function App() {
@@ -28,6 +27,8 @@ export default function App() {
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
   const [totalUnread, setTotalUnread] = useState(0);
   const [floatingAvatar, setFloatingAvatar] = useState<Profile | null>(null);
+  const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
+  const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
 
   useEffect(() => {
     const handleOpenChat = (e: any) => {
@@ -161,7 +162,6 @@ export default function App() {
         console.error('Error upserting DB:', error);
       } else {
         console.log('Successfully saved FCM token to database');
-        if (isUserAction) alert('Notifications enabled successfully!');
       }
       
     } catch (e: any) {
@@ -266,7 +266,12 @@ export default function App() {
     if (session?.user?.id && activeTab === 'profile') {
       fetchUserPosts(session.user.id);
     }
-  }, [activeTab, session?.user?.id]);
+    if (activeTab === 'chat' && !hasSeenPromo && session?.user) {
+      setHasSeenPromo(true);
+      setShowNotifPromoPopup(true);
+      localStorage.setItem('first_time_chat_notif', 'true');
+    }
+  }, [activeTab, session?.user, hasSeenPromo]);
 
   async function fetchUserPosts(userId: string) {
     const { data } = await supabase
@@ -344,17 +349,48 @@ export default function App() {
       {/* Header */}
       <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90">
         <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
-        <div className="flex space-x-4 opacity-60">
+        <div className="flex space-x-4">
           {activeTab === 'chat' && !initialActiveChat && (
             <button 
-              onClick={() => registerPush(session.user.id, true)}
-              className="text-white hover:text-white/80 transition-colors"
+              onClick={() => {
+                if ('Notification' in window && Notification.permission !== 'granted') {
+                  registerPush(session.user.id, true);
+                }
+              }}
+              className="text-white hover:text-white/80 transition-colors relative"
             >
               <Bell size={24} />
+              {('Notification' in window) && Notification.permission === 'granted' && (
+                <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
+              )}
             </button>
           )}
         </div>
       </header>
+
+      {/* Promo Popup */}
+      <AnimatePresence>
+        {showNotifPromoPopup && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-[env(safe-area-inset-top,20px)] right-4 z-[200] w-72 bg-[#1c1c1c] border border-white/20 p-4 rounded-3xl shadow-2xl origin-top-right flex flex-col gap-3 mt-14"
+          >
+            <div className="absolute -top-2 right-4 w-4 h-4 bg-[#1c1c1c] border-t border-l border-white/20 rotate-45 transform" />
+            <div className="relative z-10 flex flex-col gap-2">
+              <h3 className="font-bold text-white text-base">Stay in the loop</h3>
+              <p className="text-white/60 text-sm leading-tight">Turn on notifications to never miss a message. Tap the bell icon anytime.</p>
+              <button 
+                onClick={() => setShowNotifPromoPopup(false)}
+                className="mt-2 text-sm font-bold bg-white text-black py-2 rounded-full w-full active:scale-95 transition-transform"
+              >
+                Got it
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Modals and Overlays */}
       <CompleteProfileModal 
@@ -488,25 +524,9 @@ export default function App() {
          unreadCount={totalUnread} 
          floatingAvatar={floatingAvatar}
          setFloatingAvatar={setFloatingAvatar}
+         showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
       />
       
-      {/* Hidden button to enable debugger: tap 5 times on top center */}
-      <div 
-        className="fixed top-0 left-1/2 -translate-x-1/2 w-32 h-12 z-[10000] opacity-0"
-        onClick={() => {
-          const currentCount = parseInt(localStorage.getItem('debug_taps') || '0', 10);
-          if (currentCount >= 4) {
-            localStorage.setItem('debugger_enabled', 'true');
-            alert('Debugger enabled. Reload the app.');
-            window.location.reload();
-          } else {
-            localStorage.setItem('debug_taps', (currentCount + 1).toString());
-            setTimeout(() => localStorage.removeItem('debug_taps'), 3000);
-          }
-        }}
-      />
-      
-      <DebuggerConsole />
     </div>
   );
 }

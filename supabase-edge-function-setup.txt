@@ -111,6 +111,19 @@ serve(async (req) => {
 
     const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
 
+    let bodyText = message.content;
+    if (!bodyText) {
+      if (message.media_type === 'image') {
+        bodyText = 'Sent you an image';
+      } else if (message.media_type === 'audio') {
+        bodyText = 'Sent you a voice message';
+      } else if (message.media_type === 'location') {
+        bodyText = 'Sent you a location';
+      } else {
+        bodyText = 'Sent you a media message';
+      }
+    }
+
     const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
       const fcmToken = sub.endpoint;
       
@@ -118,7 +131,7 @@ serve(async (req) => {
         token: fcmToken,
         data: {
           title: senderName,
-          body: message.content || "Sent you a media message",
+          body: bodyText,
           url: "/",
           senderId: message.sender_id || ""
         },

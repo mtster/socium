@@ -10,9 +10,10 @@ interface BottomNavProps {
   unreadCount?: number;
   floatingAvatar?: Profile | null;
   setFloatingAvatar?: (profile: Profile | null) => void;
+  showFirstTimeChatDot?: boolean;
 }
 
-export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar }: BottomNavProps) {
+const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar, showFirstTimeChatDot = false }: BottomNavProps) => {
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
     { id: 'create', icon: PlusSquare, label: 'Post' },
@@ -43,7 +44,7 @@ export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0, fl
             >
               <div className="relative flex flex-col items-center">
                 <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
-                {tab.id === 'chat' && unreadCount > 0 && !floatingAvatar && (
+                {tab.id === 'chat' && ((unreadCount > 0 && !floatingAvatar) || showFirstTimeChatDot) && (
                   <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
                 )}
                 
@@ -77,3 +78,5 @@ export default function BottomNav({ activeTab, setActiveTab, unreadCount = 0, fl
     </nav>
   );
 }
+
+export default BottomNav;

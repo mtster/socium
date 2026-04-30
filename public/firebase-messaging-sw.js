@@ -26,7 +26,18 @@ messaging.onBackgroundMessage(function(payload) {
     }
   };
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+    let isVisible = false;
+    for (let i = 0; i < clientList.length; i++) {
+      if (clientList[i].visibilityState === 'visible') {
+        isVisible = true;
+        break;
+      }
+    }
+    if (!isVisible) {
+      self.registration.showNotification(notificationTitle, notificationOptions);
+    }
+  });
 });
 
 self.addEventListener('notificationclick', function(event) {
