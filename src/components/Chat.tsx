@@ -973,92 +973,22 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
 
                  return (
-                    <div 
-                      key={msg.id} 
-                      className={cn("flex w-full gap-2 relative select-none", isMine ? "justify-end" : "justify-start", marginClass)}
-                    >
-                       {!isMine && (
-                           <div className="w-8 shrink-0 flex items-end">
-                               {showAvatar ? (
-                                 <div 
-                                   className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer active:scale-95 transition-transform"
-                                   onClick={() => {
-                                       window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } }));
-                                       onCloseChat?.();
-                                   }}
-                                 >
-                                   {activeChat.avatar_url ? (
-                                     <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" />
-                                   ) : (
-                                      <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-white/50">{activeChat.username?.charAt(0).toUpperCase()}</div>
-                                   )}
-                                 </div>
-                               ) : (
-                                 <div className="w-8" />
-                               )}
-                           </div>
-                       )}
-                       
-                       <motion.div 
-                         id={`msg-inner-${msg.id}`}
-                         initial={false}
-                         whileTap={{ scale: contextMenu?.message?.id === msg.id ? 1.05 : 0.98 }}
-                         onContextMenu={(e: any) => { e.preventDefault(); handleLongPress(e, msg); }}
-                         onTouchStart={(e: any) => onTouchStart(e, msg)}
-                         onTouchMove={onTouchMove}
-                         onTouchEnd={onTouchEnd}
-                         className={cn(
-                           "max-w-[75%] min-w-[2rem] text-[15px] leading-[1.3] whitespace-pre-wrap break-words overflow-hidden transition-all duration-300",
-                           roundedClass,
-                           (!isMediaOnly) && (isMine ? "bg-white text-black shadow-sm" : "bg-white/15 text-white"),
-                           contextMenu?.message?.id === msg.id ? "scale-[1.05] shadow-2xl z-[160]" : "",
-                           !msg.media_type && !isLoc && "px-4 py-2.5",
-                           msg.media_type === 'audio' && "p-0 rounded-3xl",
-                           (msg.media_type === 'image' || isLoc) && "p-0 rounded-2xl overflow-hidden"
-                         )}
-                       >
-                         {msg.media_type === 'image' && msg.media_url && (
-                           <img 
-                             src={msg.media_url} 
-                             alt="Photo" 
-                             className="w-full h-auto max-h-[450px] object-cover cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.1)] active:brightness-90 transition-all rounded-inherit block" 
-                             onClick={() => setViewingImage(msg.media_url)}
-                           />
-                         )}
-                         {msg.media_type === 'audio' && msg.media_url && (
-                           <AudioPlayer src={msg.media_url} isMine={isMine} />
-                         )}
-                         {isLoc && lat !== null && lng !== null && (
-                           <div 
-                             className="w-full aspect-square bg-[#121212] overflow-hidden relative shadow-2xl flex flex-col items-center justify-center border border-white/10 cursor-pointer active:scale-95 transition-all block group"
-                             onClick={(e) => {
-                               e.stopPropagation();
-                               openInNativeMaps(lat, lng);
-                             }}
-                           >
-                             <div className="absolute top-4 left-0 right-0 flex justify-center">
-                               <span className="text-white font-bold text-sm tracking-tight">Shared Location</span>
-                             </div>
-                             
-                             <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center border border-white/10 shadow-[inset_0_4px_12px_rgba(255,255,255,0.05)] group-active:scale-90 transition-transform">
-                               <MapPin size={32} className="text-white/90 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]" />
-                             </div>
-
-                             <div className="absolute bottom-4 left-0 right-0 flex justify-center">
-                               <span className="text-white/30 text-[10px] font-black tracking-[0.05em] uppercase">Click to open in Google Maps</span>
-                             </div>
-                           </div>
-                         )}
-                         {msg.content && !isMediaOnly && (
-                           <div className={cn(
-                             (msg.media_type === 'image') ? "px-4 pb-3 pt-2 bg-black/5 backdrop-blur-sm mt-[-1px]" : "",
-                             (msg.media_type === 'audio') ? "px-4 py-2 bg-black/5 mt-1" : ""
-                           )}>
-                             <Linkify text={msg.content} />
-                           </div>
-                         )}
-                       </motion.div>
-                    </div>
+                    <MessageBubble 
+                      key={msg.id}
+                      msg={msg}
+                      isMine={isMine}
+                      nextMsg={nextMsg}
+                      prevMsg={prevMsg}
+                      activeChat={activeChat}
+                      currentUserId={currentUserId}
+                      setViewingImage={setViewingImage}
+                      handleLongPress={handleLongPress}
+                      contextMenu={contextMenu}
+                      onTouchStart={onTouchStart}
+                      onTouchMove={onTouchMove}
+                      onTouchEnd={onTouchEnd}
+                      onCloseChat={onCloseChat}
+                    />
                   );
                })}
                <div ref={messagesEndRef} className="h-4" />
@@ -1341,3 +1271,130 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     </div>
   );
 }
+
+const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, currentUserId, setViewingImage, handleLongPress, contextMenu, onTouchStart, onTouchMove, onTouchEnd, onCloseChat }: any) => {
+  const isConsecutive = nextMsg && nextMsg.sender_id === msg.sender_id;
+  const isPrevConsecutive = prevMsg && prevMsg.sender_id === msg.sender_id;
+  const showAvatar = !isMine && !isConsecutive;
+
+  let roundedClass = 'rounded-[18px]';
+  let marginClass = 'mb-3';
+  if (isMine) {
+    if (isConsecutive && isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tr-[4px] rounded-br-[4px]'; marginClass = 'mb-[2px]'; }
+    else if (isConsecutive) { roundedClass = 'rounded-[18px] rounded-br-[4px]'; marginClass = 'mb-[2px]'; }
+    else if (isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tr-[4px]'; marginClass = 'mb-3'; }
+    else { roundedClass = 'rounded-[18px] rounded-br-[4px]'; marginClass = 'mb-3'; }
+  } else {
+    if (isConsecutive && isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tl-[4px] rounded-bl-[4px]'; marginClass = 'mb-[2px]'; }
+    else if (isConsecutive) { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-[2px]'; }
+    else if (isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tl-[4px]'; marginClass = 'mb-3'; }
+    else { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-3'; }
+  }
+  
+  const isLocDirect = msg.media_type === 'location';
+  const locUrlRegex = /(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/;
+  const locMatch = msg.content?.match(locUrlRegex);
+  const parsedLoc = locMatch ? parseLocation(locMatch[0]) : (isLocDirect && msg.content ? parseLocation(msg.content) : { lat: null, lng: null });
+  const isLoc = isLocDirect || (parsedLoc.lat !== null && parsedLoc.lng !== null);
+  const { lat, lng } = parsedLoc;
+  
+  const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
+
+  return (
+    <div 
+      key={msg.id} 
+      className={cn("flex w-full gap-2 relative select-none", isMine ? "justify-end" : "justify-start", marginClass)}
+    >
+       {!isMine && (
+           <div className="w-8 shrink-0 flex items-end">
+               {showAvatar ? (
+                 <div 
+                   className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 cursor-pointer active:scale-95 transition-transform"
+                   onClick={() => {
+                       window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } }));
+                       onCloseChat?.();
+                   }}
+                 >
+                   {activeChat.avatar_url ? (
+                     <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" />
+                   ) : (
+                      <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-white/50">{activeChat.username?.charAt(0).toUpperCase()}</div>
+                   )}
+                 </div>
+               ) : (
+                 <div className="w-8" />
+               )}
+           </div>
+       )}
+       
+       <motion.div 
+         id={`msg-inner-${msg.id}`}
+         initial={false}
+         whileTap={{ scale: contextMenu?.message?.id === msg.id ? 1.05 : 0.98 }}
+         onContextMenu={(e: any) => { e.preventDefault(); handleLongPress(e, msg); }}
+         onTouchStart={(e: any) => onTouchStart(e, msg)}
+         onTouchMove={onTouchMove}
+         onTouchEnd={onTouchEnd}
+         className={cn(
+           "max-w-[75%] min-w-[2rem] text-[15px] leading-[1.3] whitespace-pre-wrap break-words overflow-hidden transition-all duration-300",
+           roundedClass,
+           (!isMediaOnly) && (isMine ? "bg-white text-black shadow-sm" : "bg-white/15 text-white"),
+           contextMenu?.message?.id === msg.id ? "scale-[1.05] shadow-2xl z-[160]" : "",
+           !msg.media_type && !isLoc && "px-4 py-2.5",
+           msg.media_type === 'audio' && "p-0 rounded-3xl",
+           (msg.media_type === 'image' || isLoc) && "p-0 rounded-2xl overflow-hidden"
+         )}
+       >
+         {msg.media_type === 'image' && msg.media_url && (
+           <img 
+             src={msg.media_url} 
+             alt="Photo" 
+             className="w-full h-auto max-h-[450px] object-cover cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.1)] active:brightness-90 transition-all rounded-inherit block" 
+             onClick={() => setViewingImage(msg.media_url)}
+           />
+         )}
+         {msg.media_type === 'audio' && msg.media_url && (
+           <AudioPlayer src={msg.media_url} isMine={isMine} />
+         )}
+         {isLoc && lat !== null && lng !== null && (
+           <div 
+             className="relative w-full aspect-[4/3] bg-gradient-to-br from-[#1E1E1E] to-[#121212] flex flex-col cursor-pointer transition-transform group"
+             onClick={(e) => {
+               e.stopPropagation();
+               openInNativeMaps(lat, lng);
+             }}
+           >
+             <div className="absolute inset-0 bg-white/5 [mask-image:linear-gradient(to_bottom,white,transparent)]" />
+             
+             {/* Map-like grid pattern */}
+             <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(255,255,255,0.15) 1px, transparent 0)', backgroundSize: '16px 16px' }} />
+             
+             <div className="flex-1 flex items-center justify-center relative">
+                <div className="absolute">
+                   <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-[0_8px_16px_rgba(0,0,0,0.4)] group-active:scale-90 transition-transform border-4 border-[#121212]/50">
+                     <MapPin size={20} className="text-black ml-px mt-px" fill="currentColor" />
+                   </div>
+                   <div className="w-4 h-4 bg-white/20 rounded-full absolute -bottom-2 left-1/2 -translate-x-1/2 blur-[2px]" />
+                </div>
+             </div>
+
+             <div className="h-12 bg-black/40 backdrop-blur-md border-t border-white/10 flex items-center px-4 relative z-10 w-full overflow-hidden">
+               <div className="flex flex-col truncate flex-1">
+                 <span className="text-white text-[13px] font-semibold leading-tight truncate w-full">Location</span>
+                 <span className="text-white/50 text-[11px] font-medium tracking-wide truncate w-full">Tap to view map</span>
+               </div>
+             </div>
+           </div>
+         )}
+         {msg.content && !isMediaOnly && (
+           <div className={cn(
+             (msg.media_type === 'image') ? "px-4 pb-3 pt-2 bg-black/5 backdrop-blur-sm mt-[-1px]" : "",
+             (msg.media_type === 'audio') ? "px-4 py-2 bg-black/5 mt-1" : ""
+           )}>
+             <Linkify text={msg.content} />
+           </div>
+         )}
+       </motion.div>
+    </div>
+  );
+});

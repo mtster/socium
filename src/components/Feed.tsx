@@ -75,7 +75,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
   }
 
   return (
-    <div className="pb-6 pt-10">
+    <div className="pb-6 pt-4">
       {feedPosts.length > 0 ? (
         feedPosts.map((post: Post) => (
           <div key={post.id}>

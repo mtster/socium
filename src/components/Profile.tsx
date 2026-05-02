@@ -599,7 +599,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/10 to-transparent mb-8" />
 
       {/* Posts */}
-      <div className="w-full space-y-0 pt-10">
+      <div className="w-full space-y-0 pt-0">
         {(isOwnProfile ? userPosts : posts).map((post) => (
           <div key={post.id} className="relative">
             <PostCard 

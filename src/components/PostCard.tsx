@@ -231,7 +231,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
           <div className="relative w-full bg-white/5 overflow-hidden grid grid-cols-2 gap-1 mb-2 h-[350px]">
             {images.slice(0, 2).map((img, index) => {
               const isLastShown = index === 1;
-              const moreCount = images.length - 2;
+              const moreCount = images.length - 1;
               return (
                 <div 
                    key={index} 
@@ -240,7 +240,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                 >
                   <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" loading="lazy" />
                   {isLastShown && moreCount > 0 && (
-                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center backdrop-blur-[0.5px]">
+                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center backdrop-blur-md">
                        <div className="w-12 h-12 rounded-full bg-[#1c1c1c]/90 border border-white/10 flex items-center justify-center shadow-2xl transition-transform active:scale-90">
                          <span className="text-white text-sm font-bold tabular-nums">+{moreCount}</span>
                        </div>
@@ -278,7 +278,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         </div>
       </div>
 
-      <div className="w-full h-[0.5px] bg-white/20 my-10" />
+      <div className="w-full h-px bg-white/5 my-6" />
 
       <AnimatePresence>
         {showComments && (
