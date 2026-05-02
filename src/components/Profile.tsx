@@ -596,7 +596,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       </div>
 
-      <div className="h-[1px] w-[90%] mx-auto bg-gradient-to-r from-transparent via-white/20 to-transparent my-8" />
+      <div className="h-px w-full bg-white/5 my-8" />
 
       {/* Posts */}
       <div className="w-full space-y-0 pt-0">

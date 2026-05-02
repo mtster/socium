@@ -279,7 +279,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         </div>
       </div>
 
-      <div className="w-full max-w-[90%] mx-auto h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent my-8" />
+      <div className="w-full h-px bg-white/5 my-8" />
 
       <AnimatePresence>
         {showComments && (
@@ -366,6 +366,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
   const [loading, setLoading] = useState(true);
   const [direction, setDirection] = useState(0);
   const [scale, setScale] = useState(1);
+  const [isMultiTouch, setIsMultiTouch] = useState(false);
 
   // Preload all images
   useEffect(() => {
@@ -449,8 +450,18 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
             dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
             dragElastic={0.4}
             dragDirectionLock
+            onTouchStart={(e) => {
+              if (e.touches.length > 1) {
+                setIsMultiTouch(true);
+              }
+            }}
+            onTouchEnd={(e) => {
+              if (e.touches.length === 0) {
+                setTimeout(() => setIsMultiTouch(false), 200);
+              }
+            }}
             onDragEnd={(_, info) => {
-              if (scale > 1.05) return;
+              if (scale > 1.05 || isMultiTouch) return;
               const xThreshold = 60;
               const yThreshold = 100;
               

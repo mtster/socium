@@ -228,6 +228,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<{file: File | Blob | null, type: 'image' | 'audio' | 'location', dataUrl?: string, locationString?: string} | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [isMultiTouch, setIsMultiTouch] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: any } | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<any>(null);
   
@@ -843,15 +844,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
           </motion.div>
         ) : (
-          createPortal(
-            <motion.div
-              key="chat-room"
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: "spring", stiffness: 350, damping: 35 }}
-              className="flex-1 flex flex-col h-[100dvh] fixed inset-0 z-[100] w-full max-w-lg mx-auto bg-black border-x border-white/5"
-            >
+          <motion.div
+            key="chat-room"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: "spring", stiffness: 350, damping: 35 }}
+            className="absolute inset-0 z-[100] flex flex-col bg-black"
+          >
             {/* Room Header */}
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 shrink-0 active:scale-90 transition-transform">
@@ -1110,9 +1110,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                  e.target.value = '';
                }} />
             </form>
-          </motion.div>,
-          document.body
-          )
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1191,9 +1189,34 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full h-full">
               <TransformWrapper doubleClick={{ mode: "zoomIn" }} centerOnInit>
-                <TransformComponent wrapperStyle={{ width: "100%", height: "100%" }} contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <img src={viewingImage} alt="" className="max-w-full max-h-screen object-contain pointer-events-auto" />
-                </TransformComponent>
+                {({ state }: any) => (
+                  <motion.div
+                    className="w-full h-full"
+                    drag={state.scale <= 1.05 ? "y" : false}
+                    dragConstraints={{ top: 0, bottom: 0 }}
+                    dragElastic={0.4}
+                    onTouchStart={(e) => {
+                      if (e.touches.length > 1) {
+                        setIsMultiTouch(true);
+                      }
+                    }}
+                    onTouchEnd={(e) => {
+                      if (e.touches.length === 0) {
+                        setTimeout(() => setIsMultiTouch(false), 200);
+                      }
+                    }}
+                    onDragEnd={(_, info) => {
+                      if (state.scale > 1.05 || isMultiTouch) return;
+                      if (Math.abs(info.offset.y) > 100) {
+                        setViewingImage(null);
+                      }
+                    }}
+                  >
+                    <TransformComponent wrapperStyle={{ width: "100%", height: "100%" }} contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <img src={viewingImage} alt="" className="max-w-full max-h-screen object-contain pointer-events-auto" />
+                    </TransformComponent>
+                  </motion.div>
+                )}
               </TransformWrapper>
             </motion.div>
           </motion.div>,
