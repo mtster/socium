@@ -159,6 +159,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [loading, setLoading] = useState(!chatConnectionsCache);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [page, setPage] = useState(0);
   const [showFeatures, setShowFeatures] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   

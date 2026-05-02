@@ -35,7 +35,7 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (files.length > 0) {
       setImages(prev => [...prev, ...files]);
       files.forEach(file => {

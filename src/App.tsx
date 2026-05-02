@@ -1,22 +1,17 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
 import BottomNav from './components/BottomNav';
 import AuthView from './components/Auth';
 import CreatePost from './components/CreatePost';
+import Feed from './components/Feed';
+import ProfileView from './components/Profile';
+import Chat from './components/Chat';
 import { Profile, Post } from './types';
 import { motion, AnimatePresence } from 'motion/react';
-
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
-
 import CompleteProfileModal from './components/CompleteProfileModal';
-
 import { Bell } from 'lucide-react';
-
-import toast, { Toaster } from 'react-hot-toast';
-
-const Feed = lazy(() => import('./components/Feed'));
-const ProfileView = lazy(() => import('./components/Profile'));
-const Chat = lazy(() => import('./components/Chat'));
+import { Toaster } from 'react-hot-toast';
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -72,6 +67,8 @@ export default function App() {
   useEffect(() => {
     let globalUnreadChannel: any = null;
 
+    let forceGetUnreadHandler: any = null;
+
     if (session?.user?.id) {
       const getUnread = async () => {
         const { data } = await supabase
@@ -91,8 +88,8 @@ export default function App() {
         }
       };
 
-      const handleForceGetUnread = () => getUnread();
-      window.addEventListener('forceGetUnread', handleForceGetUnread);
+      forceGetUnreadHandler = () => getUnread();
+      window.addEventListener('forceGetUnread', forceGetUnreadHandler);
 
       getUnread();
 
@@ -137,7 +134,7 @@ export default function App() {
     }
 
     return () => {
-      window.removeEventListener('forceGetUnread', handleForceGetUnread);
+      if (forceGetUnreadHandler) window.removeEventListener('forceGetUnread', forceGetUnreadHandler);
       if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
     };
   }, [session?.user?.id]);
@@ -188,7 +185,8 @@ export default function App() {
     }
     
     try {
-      console.log(`registerPush called (userAction: ${isUserAction}), current permission:`, Notification.permission);
+      const permission = typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default';
+      console.log(`registerPush called (userAction: ${isUserAction}), current permission:`, permission);
       
       const { requestFirebaseNotificationPermission } = await import('./lib/firebase');
       const token = await requestFirebaseNotificationPermission();
@@ -472,9 +470,7 @@ export default function App() {
                exit={{ opacity: 0, x: 20 }}
                className="page-transition"
              >
-               <Suspense fallback={<div className="flex-1 flex items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
-                 <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
-               </Suspense>
+               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
              </motion.div>
            )}
            
@@ -487,18 +483,16 @@ export default function App() {
                className="page-transition min-h-screen"
              >
                {profile ? (
-                 <Suspense fallback={<div className="flex flex-col items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
-                   <ProfileView 
-                     profile={profile} 
-                     posts={userPosts} 
-                     isOwnProfile={true}
-                     currentUserId={session.user.id}
-                     onUserClick={handleUserClick}
-                     onDeletePost={handleDeletePost}
-                     onLikePost={handleLikeProfilePost}
-                     onRefetch={() => { fetchUserPosts(session.user.id); }}
-                   />
-                 </Suspense>
+                 <ProfileView 
+                   profile={profile} 
+                   posts={userPosts} 
+                   isOwnProfile={true}
+                   currentUserId={session.user.id}
+                   onUserClick={handleUserClick}
+                   onDeletePost={handleDeletePost}
+                   onLikePost={handleLikeProfilePost}
+                   onRefetch={() => { fetchUserPosts(session.user.id); }}
+                 />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
@@ -517,36 +511,34 @@ export default function App() {
                className="page-transition min-h-screen"
              >
                {viewingProfileData ? (
-                 <Suspense fallback={<div className="flex-1 flex items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
-                   <ProfileView 
-                     profile={viewingProfileData.profile} 
-                     posts={viewingProfileData.posts} 
-                     isOwnProfile={false}
-                     currentUserId={session.user.id}
-                     onUserClick={handleUserClick}
-                     onDeletePost={handleDeletePost}
-                     onLikePost={async (id, isLiked) => {
-                       // Optimistic Update inside viewingProfileData
-                       setViewingProfileData(prev => {
-                         if (!prev) return prev;
-                         return {
-                           ...prev,
-                           posts: prev.posts.map(p => {
-                             if (p.id === id) {
-                               return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
-                             }
-                             return p;
-                           })
-                         };
-                       });
-                       try {
-                          if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
-                          else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
-                       } catch(e) {}
-                     }}
-                     onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
-                   />
-                 </Suspense>
+                 <ProfileView 
+                   profile={viewingProfileData.profile} 
+                   posts={viewingProfileData.posts} 
+                   isOwnProfile={false}
+                   currentUserId={session.user.id}
+                   onUserClick={handleUserClick}
+                   onDeletePost={handleDeletePost}
+                   onLikePost={async (id, isLiked) => {
+                     // Optimistic Update inside viewingProfileData
+                     setViewingProfileData(prev => {
+                       if (!prev) return prev;
+                       return {
+                         ...prev,
+                         posts: prev.posts.map(p => {
+                           if (p.id === id) {
+                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
+                           }
+                           return p;
+                         })
+                       };
+                     });
+                     try {
+                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                     } catch(e) {}
+                   }}
+                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
+                 />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
@@ -575,13 +567,11 @@ export default function App() {
                exit={{ opacity: 0, x: -20 }}
                className="page-transition min-h-screen"
              >
-               <Suspense fallback={<div className="flex-1 flex items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
-                 <Chat 
-                   currentUserId={session.user.id} 
-                   initialActiveChat={initialActiveChat}
-                   onCloseChat={() => setInitialActiveChat(null)}
-                 />
-               </Suspense>
+               <Chat 
+                 currentUserId={session.user.id} 
+                 initialActiveChat={initialActiveChat}
+                 onCloseChat={() => setInitialActiveChat(null)}
+               />
              </motion.div>
            )}
         </AnimatePresence>
