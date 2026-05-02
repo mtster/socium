@@ -239,6 +239,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<any>(null);
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImage } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
+    };
+  }, [viewingImage]);
+
   const handleDeleteMessage = async () => {
     if (!contextMenu?.message) return;
     const msgId = contextMenu.message.id;
@@ -277,6 +284,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       
       // Always fetch latest to ensure we didn't miss messages while offline/away
       fetchMessages(activeChat.id);
+
+      // Force a state update to ensure UI is ready
+      setMessages(prev => [...prev]);
       
       const channel = supabase
         .channel(`chat_${activeChat.id}_active`)
@@ -311,7 +321,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     } else {
       (window as any).currentChatUserId = null;
     }
-  }, [activeChat]);
+  }, [activeChat, currentUserId]);
 
   // Subscribe to all incoming messages for the list updates
   useEffect(() => {
@@ -429,7 +439,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   };
 
   const fetchMessages = async (otherUserId: string, loadOld = false) => {
-    if (loadOld) setLoadingMessages(true);
+    setLoadingMessages(true);
     const limit = loadOld ? 15 : 20;
     const offset = loadOld ? messages.length : 0;
     
@@ -468,7 +478,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         setHasMoreMessages(data.length === limit);
       }
     }
-    if (loadOld) setLoadingMessages(false);
+    setLoadingMessages(false);
   };
 
   const markMessagesAsRead = async (senderId: string) => {
@@ -830,14 +840,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
               )}
             </div>
           </motion.div>
-        ) : createPortal(
+        ) : (
           <motion.div
             key="chat-room"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: "spring", stiffness: 350, damping: 35 }}
-            className="fixed inset-0 z-[100] flex flex-col bg-black w-full max-w-lg mx-auto border-x border-white/5"
+            className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden"
           >
             {/* Room Header */}
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
@@ -868,7 +878,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             <div 
               ref={scrollContainerRef}
               id="chat-messages-container"
-              className="flex-1 overflow-y-auto p-4 space-y-1 relative no-scrollbar [-webkit-overflow-scrolling:touch] [will-change:transform]"
+              className="flex-1 flex flex-col overflow-y-auto p-4 space-y-1 relative no-scrollbar [-webkit-overflow-scrolling:touch]"
               onScroll={(e) => {
                 const target = e.target as HTMLDivElement;
                 // Detect if at top for potential pull interaction start
@@ -1084,8 +1094,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                  e.target.value = '';
                }} />
             </form>
-          </motion.div>,
-          document.body
+          </motion.div>
         )}
       </AnimatePresence>
 

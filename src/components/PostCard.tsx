@@ -59,6 +59,13 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
     return url;
   };
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImages } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
+    };
+  }, [viewingImages]);
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -430,7 +437,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
       className="fixed inset-0 z-[500] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-0"
     >
       <button 
-        className="absolute top-6 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
+        className="absolute top-10 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
         onClick={onClose}
       >
         <X size={24} />

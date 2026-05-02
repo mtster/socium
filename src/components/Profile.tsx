@@ -285,6 +285,13 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     }
   };
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImage } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
+    };
+  }, [viewingImage]);
+
   return (
     <div className="pb-6 relative">
       {/* Full Screen Image Viewer */}
@@ -294,11 +301,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 overflow-hidden"
+            className="fixed inset-0 z-[1000] bg-black flex items-center justify-center p-4 overflow-hidden"
             onClick={() => setViewingImage(null)}
           >
             <button 
-              className="absolute top-safe right-6 mt-6 z-[1010] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all border border-white/10 shadow-2xl"
+              className="absolute top-10 right-6 z-[1010] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all border border-white/10 shadow-2xl"
               onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
             >
               <X size={24} />

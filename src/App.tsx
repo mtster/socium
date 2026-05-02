@@ -31,6 +31,7 @@ export default function App() {
   const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
   const [isChatRoomOpen, setIsChatRoomOpen] = useState(false);
+  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
 
@@ -41,7 +42,12 @@ export default function App() {
       setViewingProfileId(null);
       setActiveTab('chat');
     };
+    const handleViewerState = (e: any) => {
+      setIsImageViewerOpen(e.detail.isOpen);
+    };
+
     window.addEventListener('openChat', handleOpenChat);
+    window.addEventListener('viewerState', handleViewerState);
 
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
     if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
@@ -93,6 +99,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('openChat', handleOpenChat);
+      window.removeEventListener('viewerState', handleViewerState);
     };
   }, []);
 
@@ -390,7 +397,7 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      {(activeTab !== 'create' && !isChatRoomOpen) && (
+      {(activeTab !== 'create' && !isChatRoomOpen && !isImageViewerOpen) && (
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
@@ -565,7 +572,7 @@ export default function App() {
       </main>
 
       {/* Navigation */}
-      {(activeTab !== 'create' && !isChatRoomOpen) && (
+      {(activeTab !== 'create' && !isChatRoomOpen && !isImageViewerOpen) && (
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={setActiveTab} 
