@@ -59,6 +59,9 @@ messaging.onBackgroundMessage(function(payload) {
     }
 
     if (!isVisible) {
+      if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator && payload.data?.badge) {
+        navigator.setAppBadge(parseInt(payload.data.badge)).catch(() => {});
+      }
       self.registration.showNotification(notificationTitle, notificationOptions);
     }
   });

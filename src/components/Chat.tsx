@@ -271,7 +271,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       fetchMessages(activeChat.id);
       
       const channel = supabase
-        .channel(`chat_${activeChat.id}`)
+        .channel(`chat_${activeChat.id}_active`)
         .on(
           'postgres_changes',
           {
@@ -283,6 +283,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
           (payload) => {
             if (payload.new.receiver_id === currentUserId) {
               setMessages((prev) => {
+                // Prevent duplicate messages from appearing
+                if (prev.some(m => m.id === payload.new.id)) return prev;
                 const newMsgs = [...prev, payload.new];
                 chatMessagesCache[activeChat.id] = newMsgs;
                 return newMsgs;
@@ -305,8 +307,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
   // Subscribe to all incoming messages for the list updates
   useEffect(() => {
+    // Global message listener for unread badges and list updates
     const mainChannel = supabase
-      .channel('public_messages')
+      .channel('global_messages')
       .on(
         'postgres_changes',
         {
@@ -316,7 +319,31 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
           filter: `receiver_id=eq.${currentUserId}`,
         },
         (payload) => {
-           fetchConnectionsAndRecentMessages(); // Refresh list to get latest unread/last messages
+          const newMessage = payload.new;
+          
+          // Update connections list immediately
+          setConnections(prev => {
+            const idx = prev.findIndex(c => c.id === newMessage.sender_id);
+            if (idx === -1) return prev;
+            
+            const updatedConnections = [...prev];
+            const conn = updatedConnections[idx];
+            
+            const isCurrentlyActive = (window as any).currentChatUserId === newMessage.sender_id;
+            
+            updatedConnections[idx] = {
+              ...conn,
+              lastMessage: newMessage,
+              unreadCount: isCurrentlyActive ? 0 : (conn.unreadCount || 0) + 1
+            };
+            
+            const topConn = updatedConnections.splice(idx, 1)[0];
+            updatedConnections.unshift(topConn);
+            
+            return updatedConnections;
+          });
+
+          window.dispatchEvent(new CustomEvent('forceGetUnread'));
         }
       )
       .subscribe();
@@ -807,9 +834,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
         ) : (
           <motion.div
             key="chat-room"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: "spring", stiffness: 350, damping: 35 }}
             className="flex-1 flex flex-col h-[100dvh] fixed inset-0 z-[100] w-full max-w-lg mx-auto bg-black border-x border-white/5"
           >
             {/* Room Header */}

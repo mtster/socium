@@ -62,10 +62,10 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mb-6 bg-black pb-4 relative"
+      className="bg-black relative"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-3">
+      <div className="flex items-center justify-between px-4 pt-0 pb-3">
         <div 
           className="flex items-center space-x-3 cursor-pointer group"
           onClick={() => onUserClick?.(post.user_id)}
@@ -278,7 +278,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         </div>
       </div>
 
-      <div className="w-full h-[0.5px] bg-white/5 mt-4" />
+      <div className="w-full h-[0.5px] bg-white/20 my-10" />
 
       <AnimatePresence>
         {showComments && (
@@ -452,7 +452,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
               centerOnInit={true}
               wheel={{ disabled: false }}
               doubleTap={{ step: 0.5 }}
-              panning={{ disabled: false }}
+              panning={{ disabled: scale === 1, velocityDisabled: false }}
               onTransformed={(ref) => setScale(ref.state.scale)}
             >
               <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
@@ -463,7 +463,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
                   dragElastic={0.4}
                   onDragEnd={(_, info) => {
                     if (scale > 1) return;
-                    const xThreshold = 40;
+                    const xThreshold = 30; // Reduced threshold for better feel
                     const yThreshold = 80;
                     if (info.offset.x > xThreshold) prev();
                     else if (info.offset.x < -xThreshold) next();
