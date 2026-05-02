@@ -6,6 +6,39 @@ import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, D
 
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 
+const parseLocation = (content: string) => {
+  if (!content) return { lat: null, lng: null };
+  const locMatch = content.match(/query=([-0-9.]+),([-0-9.]+)/) || content.match(/([-0-9.]+),([-0-9.]+)/);
+  if (locMatch) return { lat: parseFloat(locMatch[1]), lng: parseFloat(locMatch[2]) };
+  return { lat: null, lng: null };
+};
+
+const openInNativeMaps = (lat: number, lng: number) => {
+  const dest = `${lat},${lng}`;
+  const iosUrl = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
+  const appleUrl = `http://maps.apple.com/?ll=${lat},${lng}`;
+  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
+
+  // Try Google Maps native scheme first
+  const tryOpen = (url: string) => {
+    window.location.href = url;
+  };
+
+  tryOpen(iosUrl);
+  
+  // Fallback chain
+  setTimeout(() => {
+    // If google maps failed, try apple maps for iOS device
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+      window.open(appleUrl, '_system');
+    }
+    // Final fallback to web maps
+    setTimeout(() => {
+       window.open(webUrl, '_blank');
+    }, 100);
+  }, 500);
+};
+
 const Linkify = ({ text }: { text: string }) => {
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   const parts = text.split(urlRegex);
@@ -13,7 +46,26 @@ const Linkify = ({ text }: { text: string }) => {
     <>
       {parts.map((part, i) => {
         if (part.match(urlRegex)) {
-          return <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 break-all">{part}</a>;
+          const isMapUrl = part.includes('google.com/maps') || part.includes('maps.apple.com');
+          return (
+            <a 
+              key={i} 
+              href={part} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="underline underline-offset-2 break-all opacity-80 hover:opacity-100 transition-opacity"
+              onClick={(e) => {
+                if (isMapUrl) {
+                  e.preventDefault();
+                  const { lat, lng } = parseLocation(part);
+                  if (lat && lng) openInNativeMaps(lat, lng);
+                  else window.open(part, '_blank');
+                }
+              }}
+            >
+              {part}
+            </a>
+          );
         }
         return part;
       })}
@@ -954,19 +1006,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                            <AudioPlayer src={msg.media_url} isMine={isMine} />
                          )}
                          {isLoc && lat && lng && (
-                           <a 
-                             href={`https://maps.google.com/?q=${lat},${lng}`}
-                             target="_blank"
-                             rel="noopener noreferrer"
-                             className="w-full aspect-square bg-[#1c1c1c] overflow-hidden relative shadow-lg flex flex-col items-center justify-center border border-white/10 cursor-pointer active:scale-95 transition-transform block"
-                             style={{ textDecoration: 'none' }}
+                           <div 
+                             className="w-full aspect-square bg-[#121212] overflow-hidden relative shadow-2xl flex flex-col items-center justify-center border border-white/10 cursor-pointer active:brightness-90 transition-all block group"
+                             onClick={() => openInNativeMaps(parseFloat(lat), parseFloat(lng))}
                            >
-                             <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-3 pointer-events-none">
-                               <MapPin size={32} className="text-white" />
+                             <div className="w-14 h-14 bg-white/5 rounded-full flex items-center justify-center mb-3 border border-white/10 shadow-inner group-active:scale-95 transition-transform">
+                               <MapPin size={28} className="text-white/80" />
                              </div>
-                             <span className="text-white font-bold text-sm pointer-events-none">Shared Location</span>
-                             <span className="text-white/50 text-[10px] mt-1 pointer-events-none">Tap to open in Google Maps</span>
-                           </a>
+                             <span className="text-white font-black text-sm tracking-tight uppercase italic underline underline-offset-4 decoration-white/20">Location</span>
+                             <span className="text-white/30 text-[9px] font-black tracking-[0.4em] uppercase mt-3">Navigate</span>
+                           </div>
                          )}
                          {msg.content && !isMediaOnly && (
                            <div className={cn(
@@ -1215,14 +1264,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  return isLocContext && (
                    <>
                      <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { 
-                       const dest = `${latContext},${lngContext}`;
-                       const iosUrl = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
-                       const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
-
-                       window.location.href = iosUrl;
-                       setTimeout(() => {
-                         window.open(webUrl, '_blank');
-                       }, 500);
+                       const { lat, lng } = parseLocation(contextMenu.message.content);
+                       if (lat && lng) openInNativeMaps(lat, lng);
                        setContextMenu(null); 
                      }}>
                        <div className="flex items-center gap-3">
@@ -1231,12 +1274,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                        </div>
                      </button>
                      <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { 
-                       const url = `http://maps.apple.com/?ll=${latContext},${lngContext}`;
-                       window.open(url, '_system'); // _system is often used for native openers in PWAs
-                       // Fallback for standard browsers
-                       setTimeout(() => {
-                         window.open(url, '_blank');
-                       }, 100);
+                       const { lat, lng } = parseLocation(contextMenu.message.content);
+                       if (lat && lng) {
+                         const url = `http://maps.apple.com/?ll=${lat},${lng}`;
+                         window.open(url, '_system');
+                         setTimeout(() => window.open(url, '_blank'), 100);
+                       }
                        setContextMenu(null); 
                      }}>
                        <div className="flex items-center gap-3">

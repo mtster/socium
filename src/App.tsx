@@ -81,10 +81,12 @@ export default function App() {
         if (data) {
           const unreadCount = new Set(data.map(d => d.sender_id)).size;
           setTotalUnread(unreadCount);
-          if (unreadCount === 0 && 'clearAppBadge' in navigator) {
-             (navigator as any).clearAppBadge().catch(console.error);
-          } else if ('setAppBadge' in navigator) {
-             (navigator as any).setAppBadge(unreadCount).catch(console.error);
+          
+          // Persistence for PWA badge
+          if (unreadCount > 0 && typeof (navigator as any).setAppBadge === 'function') {
+            (navigator as any).setAppBadge(unreadCount).catch(() => {});
+          } else if (unreadCount === 0 && typeof (navigator as any).clearAppBadge === 'function') {
+            (navigator as any).clearAppBadge().catch(() => {});
           }
         }
       };

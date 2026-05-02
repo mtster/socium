@@ -158,7 +158,7 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
           {/* Existing Images */}
           {existingImages.map((url, i) => (
             <div key={`existing-${i}`} className="relative aspect-[4/5] h-64 rounded-3xl bg-white/5 border border-white/10 overflow-hidden shrink-0 shadow-xl snap-center transition-all">
-               <img src={url} alt="" className="w-full h-full object-cover" />
+               <img src={url.includes('cloudinary') ? url.replace('/upload/', '/upload/q_auto,f_auto,w_500/') : url} alt="" className="w-full h-full object-cover" />
                <button 
                  className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 shadow-lg border border-white/20 flex items-center justify-center text-white backdrop-blur-md active:scale-95"
                  onClick={() => removeExistingImage(i)}

@@ -230,19 +230,19 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         return (
           <div className="relative w-full bg-white/5 overflow-hidden grid grid-cols-2 gap-1 mb-2 h-[350px]">
             {images.slice(0, 2).map((img, index) => {
-              const isLast = index === 1;
+              const isLastShown = index === 1;
               const moreCount = images.length - 2;
               return (
                 <div 
-                  key={index} 
-                  className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all"
-                  onClick={() => setViewingImages({ images, startIndex: index })}
+                   key={index} 
+                   className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all"
+                   onClick={() => setViewingImages({ images, startIndex: index })}
                 >
                   <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" loading="lazy" />
-                  {isLast && moreCount > 0 && (
-                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-[2px]">
-                      <span className="text-white text-4xl font-black italic tracking-tighter">+{moreCount}</span>
-                      <span className="text-white/60 text-[10px] font-bold tracking-[0.3em] uppercase mt-1">More</span>
+                  {isLastShown && moreCount > 0 && (
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-[6px]">
+                       <span className="text-white text-5xl font-black tracking-tighter tabular-nums drop-shadow-2xl">+{moreCount}</span>
+                       <span className="text-white/60 text-[10px] font-bold tracking-[0.4em] uppercase mt-2 drop-shadow-md">Photos</span>
                     </div>
                   )}
                 </div>
@@ -251,6 +251,8 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
           </div>
         );
       })()}
+
+      <div className="w-full h-px bg-white/5 mt-4 mb-2" />
 
       {/* Interactions */}
       <div className="px-4 py-3 mt-1">
@@ -312,32 +314,29 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
             onClick={() => setShowDeleteConfirm(false)}
           >
             <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-xs bg-[#1c1c1c] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl p-8 text-center"
+              className="w-full max-w-xs bg-[#1A1A1A] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl p-8 text-center"
             >
-              <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                <Trash size={32} className="text-red-500" />
-              </div>
-              <h3 className="text-white text-xl font-bold mb-2">Delete post?</h3>
-              <p className="text-white/50 text-sm mb-8 leading-relaxed">
-                This action cannot be undone. Permanent deletion removes this moment from your timeline.
+              <h3 className="text-white text-lg font-bold mb-3 tracking-tight">Are you sure you want to remove this moment?</h3>
+              <p className="text-white/40 text-sm mb-8 leading-relaxed px-2 font-medium">
+                This action cannot be reverted.
               </p>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <button 
                   onClick={() => {
                     onDelete?.(post.id);
                     setShowDeleteConfirm(false);
                   }}
-                  className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl active:scale-95 transition-transform"
+                  className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110"
                 >
                   Delete
                 </button>
                 <button 
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="w-full bg-white/5 text-white/50 font-bold py-4 rounded-2xl active:scale-95 transition-transform"
+                  className="w-full bg-white/5 text-white/50 font-bold py-4 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/10"
                 >
                   Cancel
                 </button>
@@ -449,11 +448,18 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
               minScale={1}
               maxScale={4}
               centerOnInit={true}
-              wheel={{ disabled: true }}
-              doubleTap={{ disabled: true }}
+              wheel={{ disabled: false }}
+              doubleTap={{ step: 0.5 }}
+              panning={{ disabled: false }}
             >
               <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
-                <div className="relative w-full h-full flex items-center justify-center">
+                <div 
+                  className="relative w-full h-full flex items-center justify-center"
+                  onClick={(e) => {
+                    // Prevent single tap closing if it might be a zoom intent
+                    // but we'll stick to a simple click listener for now
+                  }}
+                >
                    {loading && (
                     <div className="absolute inset-0 flex items-center justify-center z-10">
                       <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -462,15 +468,15 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
                   <motion.img 
                     drag="x"
                     dragConstraints={{ left: 0, right: 0 }}
-                    dragElastic={0.2}
+                    dragElastic={0.1}
                     onDragEnd={(_, info) => {
-                      if (info.offset.x > 80) prev();
-                      else if (info.offset.x < -80) next();
-                      else if (Math.abs(info.offset.y) > 150) onClose();
+                      if (info.offset.x > 60) prev();
+                      else if (info.offset.x < -60) next();
+                      else if (Math.abs(info.offset.y) > 120) onClose();
                     }}
                     src={images[currentIndex].includes('cloudinary') ? images[currentIndex].replace('/upload/', '/upload/q_auto,f_auto/') : images[currentIndex]} 
                     alt="" 
-                    className="max-w-full max-h-full object-contain pointer-events-auto"
+                    className="max-w-full max-h-full object-contain pointer-events-auto shadow-2xl"
                     onLoad={() => setLoading(false)}
                   />
                 </div>
@@ -480,12 +486,12 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
         </AnimatePresence>
 
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center z-[550]">
-          <span className="text-white/40 text-[10px] font-black tracking-[0.4em] italic uppercase mb-3">
+          <span className="text-white/40 text-[10px] font-black tracking-[0.4em] italic uppercase mb-3 drop-shadow-md">
             {currentIndex + 1} / {images.length}
           </span>
           <div className="flex space-x-2">
             {images.map((_, i) => (
-              <div key={i} className={cn("h-1 rounded-full transition-all duration-500", i === currentIndex ? "w-8 bg-white shadow-[0_0_10px_rgba(255,255,255,0.5)]" : "w-1.5 bg-white/20")} />
+              <div key={i} className={cn("h-1 rounded-full transition-all duration-700", i === currentIndex ? "w-8 bg-white shadow-[0_0_15px_rgba(255,255,255,0.7)]" : "w-1.5 bg-white/20")} />
             ))}
           </div>
         </div>

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle } from 'lucide-react';
+import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { formatDate } from '@/src/lib/utils';
 import UserSearchModal from './UserSearchModal';
 import ImageCropperModal from './ImageCropperModal';
@@ -289,10 +290,43 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black flex items-center justify-center p-4"
+            className="fixed inset-0 z-[500] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 overflow-hidden"
             onClick={() => setViewingImage(null)}
           >
-            <img src={viewingImage} alt="Profile" className="max-w-full max-h-full object-contain rounded-xl" />
+            <button 
+              className="absolute top-6 right-6 z-[510] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all border border-white/10 shadow-2xl"
+              onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+            >
+              <X size={24} />
+            </button>
+
+            <TransformWrapper
+              initialScale={1}
+              minScale={1}
+              maxScale={4}
+              centerOnInit={true}
+            >
+              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
+                <motion.div
+                  drag="y"
+                  dragConstraints={{ top: 0, bottom: 0 }}
+                  onDragEnd={(_, info) => {
+                    if (Math.abs(info.offset.y) > 100) setViewingImage(null);
+                  }}
+                  className="w-full h-full flex items-center justify-center pointer-events-auto"
+                >
+                  <motion.img 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    src={viewingImage} 
+                    alt="Profile" 
+                    className="max-w-[90vw] max-h-[85vh] object-contain rounded-[40px] shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-white/10"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </motion.div>
+              </TransformComponent>
+            </TransformWrapper>
           </motion.div>
         )}
       </AnimatePresence>
@@ -562,9 +596,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/10 to-transparent mb-8" />
 
       {/* Posts */}
-      <div className="w-full">
+      <div className="w-full space-y-0">
         {posts.map((post) => (
-          <div key={post.id} className="min-h-[250px]">
+          <div key={post.id} className="relative">
             <PostCard 
               post={post} 
               currentUserId={currentUserId as string}
@@ -573,6 +607,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
               onLike={onLikePost}
               onRefetch={onRefetch}
             />
+            <div className="w-full h-px bg-white/5 opacity-50" />
           </div>
         ))}
         {posts.length === 0 && (
