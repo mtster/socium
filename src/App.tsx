@@ -14,8 +14,9 @@ import { Bell } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<any>(undefined);
   const [activeTab, setActiveTab] = useState('feed');
+  const [isProfileError, setIsProfileError] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
@@ -266,6 +267,7 @@ export default function App() {
 
   async function fetchProfile(userId: string) {
     try {
+      setIsProfileError(false);
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -277,6 +279,7 @@ export default function App() {
         if (error.code === '42P01') {
            // PostgreSQL relation does not exist
            alert('DATABASE ERROR: The "profiles" table does not exist in your Supabase database!\n\nPlease go to Supabase -> SQL Editor and paste the contents of SCHEMA.sql to create the tables.');
+           setIsProfileError(true);
         } else {
            await createInitialProfile(userId);
         }
@@ -286,6 +289,7 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
+      setIsProfileError(true);
     }
   }
 
@@ -389,6 +393,20 @@ export default function App() {
       fetchUserPosts(viewingProfileId || session.user.id);
     }
   };
+
+  if (session === undefined) {
+    return (
+      <div className="fixed inset-0 bg-black flex flex-col items-center justify-center p-8 text-center animate-pulse">
+        <div className="w-16 h-16 bg-white text-black rounded-2xl flex items-center justify-center font-black text-3xl mb-6 shadow-[0_0_30px_rgba(255,255,255,0.1)]">S</div>
+        <h1 className="text-xl font-bold tracking-tighter uppercase italic text-white/90">Socium</h1>
+        <div className="mt-8 flex gap-1">
+          <div className="w-1 h-1 bg-white/20 rounded-full animate-bounce [animation-delay:-0.3s]" />
+          <div className="w-1 h-1 bg-white/20 rounded-full animate-bounce [animation-delay:-0.15s]" />
+          <div className="w-1 h-1 bg-white/20 rounded-full animate-bounce" />
+        </div>
+      </div>
+    );
+  }
 
   if (!session) {
     return (

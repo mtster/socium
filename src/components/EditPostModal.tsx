@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Image as ImageIcon, Search } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Camera, Image as ImageIcon, X, Send, Search } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { Post, Profile } from '@/src/types';
@@ -12,12 +12,13 @@ interface EditPostModalProps {
 
 export default function EditPostModal({ post, onClose, onSuccess }: EditPostModalProps) {
   const [caption, setCaption] = useState(post.caption || '');
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(post.image_url || null);
+  const [existingImages, setExistingImages] = useState<string[]>(post.image_url ? post.image_url.split(',').filter(Boolean) : []);
+  const [newImages, setNewImages] = useState<File[]>([]);
+  const [newPreviews, setNewPreviews] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const [visibleTo, setVisibleTo] = useState<string[]>(post.visible_to || []);
+  const [visibleTo, setVisibleTo] = useState<string[]>(Array.isArray(post.visible_to) ? post.visible_to : []);
   const [showVisibilityModal, setShowVisibilityModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [connections, setConnections] = useState<Profile[]>([]);
@@ -36,73 +37,86 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setImageFile(file);
-      const url = URL.createObjectURL(file);
-      setImageUrl(url);
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length > 0) {
+      setNewImages(prev => [...prev, ...files]);
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setNewPreviews(prev => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
     }
   };
 
-  const handleRemoveImage = () => {
-    setImageFile(null);
-    setImageUrl(null);
+  const removeExistingImage = (index: number) => {
+    setExistingImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeNewImage = (index: number) => {
+    setNewImages(prev => prev.filter((_, i) => i !== index));
+    setNewPreviews(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSave = async () => {
-    if (!caption.trim() && !imageUrl) {
+    if (!caption.trim() && existingImages.length === 0 && newImages.length === 0) {
       alert("Post must contain text or an image.");
       return;
     }
 
     try {
       setIsUploading(true);
-      let finalImageUrl = post.image_url;
 
-      // Handle new image upload
-      if (imageFile) {
+      // Upload new images
+      let uploadedUrls: string[] = [];
+      if (newImages.length > 0) {
         // @ts-ignore
         const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
         // @ts-ignore
         const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
 
         if (!uploadPreset || !cloudName) {
-           alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
-           setIsUploading(false);
-           return;
+           throw new Error('Cloudinary configuration missing');
         }
 
-        const formData = new FormData();
-        formData.append('file', imageFile);
-        formData.append('upload_preset', uploadPreset);
-        
-        const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!cloudRes.ok) {
-          const errData = await cloudRes.json();
-          throw new Error(errData.error?.message || 'Cloudinary upload failed');
-        }
-        const cloudData = await cloudRes.json();
-        finalImageUrl = cloudData.secure_url;
-      } else if (!imageUrl && post.image_url) {
-        // User removed the image
-        finalImageUrl = null;
+        uploadedUrls = await Promise.all(newImages.map(async (img) => {
+          const formData = new FormData();
+          formData.append('file', img);
+          formData.append('upload_preset', uploadPreset);
+          const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (!cloudRes.ok) throw new Error('Cloudinary upload failed');
+          const cloudData = await cloudRes.json();
+          return cloudData.secure_url;
+        }));
       }
 
-      const { error: updateError } = await supabase.from('posts').update({
-        caption: caption.trim() || null,
-        image_url: finalImageUrl || '',
-        visible_to: visibleTo.length > 0 ? visibleTo : null
-      }).eq('id', post.id);
+      const finalImages = [...existingImages, ...uploadedUrls].join(',');
 
-      if (updateError) throw new Error(updateError.message);
+      const payload: any = {
+        caption: caption.trim() || null,
+        image_url: finalImages || '',
+        visible_to: visibleTo.length > 0 ? visibleTo : null
+      };
+
+      const { error: updateError } = await supabase.from('posts').update(payload).eq('id', post.id);
+
+      if (updateError) {
+        if (updateError.message.includes('column "visible_to"')) {
+           delete payload.visible_to;
+           const { error: retryError } = await supabase.from('posts').update(payload).eq('id', post.id);
+           if (retryError) throw new Error(retryError.message);
+        } else {
+           throw new Error(updateError.message);
+        }
+      }
 
       onSuccess();
     } catch (e: any) {
-      alert(`Failed to save: ${e.message}`);
+      alert(`Upload Failed:\n${e.message}\n\nMake sure your SCHEMA.sql is updated.`);
     } finally {
       setIsUploading(false);
     }
@@ -122,44 +136,75 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
         <h2 className="text-sm font-bold uppercase tracking-widest text-white/70">Edit Post</h2>
         <button 
           onClick={handleSave}
-          disabled={isUploading || (!caption.trim() && !imageUrl)}
+          disabled={isUploading || (!caption.trim() && existingImages.length === 0 && newImages.length === 0)}
           className="text-white font-bold active:scale-95 disabled:opacity-50 transition-all p-2"
         >
           {isUploading ? 'Saving...' : 'Save'}
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <textarea
-          className="w-full bg-transparent text-sm leading-relaxed outline-none resize-none placeholder:text-white/20 text-white/90 mb-6 min-h-[150px]"
-          placeholder="What's going on?"
-          value={caption}
-          onChange={(e) => setCaption(e.target.value)}
+      <div className="flex-1 overflow-y-auto px-4 py-8 flex flex-col">
+        <div className="space-y-2 mb-6">
+          <label className="text-[10px] uppercase tracking-widest font-bold text-white/30 px-1">Update the vibe</label>
+          <textarea
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+            placeholder="Write a caption..."
+            className="w-full bg-transparent p-2 text-lg text-white focus:outline-none min-h-[80px] resize-none placeholder:text-white/20"
+          />
+        </div>
+
+        <div className="flex space-x-4 overflow-x-auto pb-6 snap-x no-scrollbar">
+          {/* Existing Images */}
+          {existingImages.map((url, i) => (
+            <div key={`existing-${i}`} className="relative aspect-[4/5] h-64 rounded-3xl bg-white/5 border border-white/10 overflow-hidden shrink-0 shadow-xl snap-center transition-all">
+               <img src={url} alt="" className="w-full h-full object-cover" />
+               <button 
+                 className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 shadow-lg border border-white/20 flex items-center justify-center text-white backdrop-blur-md active:scale-95"
+                 onClick={() => removeExistingImage(i)}
+               >
+                 <X size={16} />
+               </button>
+            </div>
+          ))}
+          
+          {/* New Previews */}
+          {newPreviews.map((previewStr, i) => (
+            <div key={`new-${i}`} className="relative aspect-[4/5] h-64 rounded-3xl bg-white/5 border border-white/10 overflow-hidden shrink-0 shadow-xl snap-center transition-all">
+               <img src={previewStr} alt="" className="w-full h-full object-cover" />
+               <div className="absolute top-3 left-3 bg-white text-black text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-widest">New</div>
+               <button 
+                 className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 shadow-lg border border-white/20 flex items-center justify-center text-white backdrop-blur-md active:scale-95"
+                 onClick={() => removeNewImage(i)}
+               >
+                 <X size={16} />
+               </button>
+            </div>
+          ))}
+          
+          <div 
+            className="relative aspect-[4/5] h-64 rounded-3xl bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0 shadow-xl snap-center cursor-pointer active:scale-95 transition-transform"
+            onClick={() => document.getElementById('edit-image-input')?.click()}
+          >
+            <div className="text-center group">
+              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3 border border-white/10 shadow-lg">
+                <Camera size={32} className="text-white/50" />
+              </div>
+              <p className="text-[10px] uppercase tracking-widest font-medium text-white/40">Add more photos</p>
+            </div>
+          </div>
+        </div>
+        
+        <input 
+          type="file" 
+          id="edit-image-input" 
+          className="hidden" 
+          onChange={handleFileChange} 
+          accept="image/*" 
+          multiple
         />
 
-        {imageUrl ? (
-          <div className="relative rounded-2xl overflow-hidden border border-white/10 mb-6 bg-white/5 inline-block max-w-full">
-            <img src={imageUrl} alt="Upload preview" className="w-full max-h-[400px] object-contain" />
-            <button
-              onClick={handleRemoveImage}
-              className="absolute top-2 right-2 w-8 h-8 bg-black/50 backdrop-blur border border-white/10 rounded-full flex items-center justify-center text-white active:scale-90 transition-transform"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        ) : (
-          <div className="w-full flex justify-center mb-6">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full aspect-square max-h-[80vh] flex flex-col items-center justify-center space-y-3 bg-white/[0.02] hover:bg-white/[0.05] border border-dashed border-white/10 rounded-2xl active:scale-95 transition-all text-sm font-bold text-white/40"
-            >
-              <ImageIcon size={32} />
-              <span className="uppercase tracking-widest text-[10px]">Add Image</span>
-            </button>
-          </div>
-        )}
-
-        <div className="mb-4">
+        <div className="mb-4 mt-auto pt-4">
            <label className="text-[10px] uppercase tracking-widest font-bold text-white/30 px-1 block mb-2">Visible to</label>
            <button 
              onClick={() => setShowVisibilityModal(true)}
@@ -184,66 +229,55 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
                <button onClick={() => setShowVisibilityModal(false)} className="text-white/60">
                  <X size={24} />
                </button>
-               <h2 className="text-sm font-bold tracking-widest uppercase">Visible To</h2>
-               <button onClick={() => setShowVisibilityModal(false)} className="text-white text-sm font-bold">Done</button>
+               <h2 className="text-sm font-bold uppercase tracking-widest">Select Audience</h2>
+               <button onClick={() => setShowVisibilityModal(false)} className="text-white font-bold text-sm">
+                 Done
+               </button>
              </div>
-             <div className="p-4">
-                <div className="relative mb-6">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={18} />
-                  <input 
-                    type="text" 
-                    placeholder="Search connections..." 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
-                  />
-                </div>
-                
-                <div className="mb-4 flex items-center justify-between px-2">
-                  <span className="text-sm font-medium text-white/90">All Connections</span>
-                  <div 
-                    className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-colors ${visibleTo.length === 0 ? 'bg-white' : 'bg-white/20'}`}
-                    onClick={() => setVisibleTo([])}
+             
+             <div className="p-4 border-b border-white/10">
+               <input 
+                 type="text" 
+                 placeholder="Search connections..." 
+                 value={searchQuery}
+                 onChange={e => setSearchQuery(e.target.value)}
+                 className="w-full bg-white/10 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all"
+               />
+             </div>
+             
+             <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                <button 
+                  onClick={() => setVisibleTo([])}
+                  className="w-full flex items-center justify-between p-3 rounded-xl bg-white/5 active:bg-white/10 transition-colors"
+                >
+                  <span className="font-bold text-white text-sm">All Connections</span>
+                  {visibleTo.length === 0 && <div className="w-3 h-3 rounded-full bg-white" />}
+                </button>
+                {connections.filter(c => (c.full_name || c.username)?.toLowerCase().includes(searchQuery.toLowerCase())).map(c => (
+                  <button 
+                    key={c.id} 
+                    onClick={() => {
+                      if (visibleTo.includes(c.id)) {
+                        setVisibleTo(visibleTo.filter(id => id !== c.id));
+                      } else {
+                        setVisibleTo([...visibleTo, c.id]);
+                      }
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-xl bg-white/5 active:bg-white/10 transition-colors"
                   >
-                    <div className={`w-4 h-4 rounded-full bg-black transition-transform ${visibleTo.length === 0 ? 'translate-x-6' : 'translate-x-0'}`} />
-                  </div>
-                </div>
-
-                <div className="space-y-1 h-[60vh] overflow-y-auto">
-                   {connections.filter(c => c.username.toLowerCase().includes(searchQuery.toLowerCase()) || (c.full_name && c.full_name.toLowerCase().includes(searchQuery.toLowerCase()))).map(connection => {
-                     const isSelected = visibleTo.length > 0 && visibleTo.includes(connection.id);
-                     return (
-                       <div 
-                         key={connection.id}
-                         onClick={() => {
-                           if (visibleTo.includes(connection.id)) {
-                             setVisibleTo(prev => prev.filter(id => id !== connection.id));
-                           } else {
-                             setVisibleTo(prev => [...prev, connection.id]);
-                           }
-                         }}
-                         className="flex items-center space-x-3 p-3 rounded-xl hover:bg-white/5 cursor-pointer transition-colors"
-                       >
-                         <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden shrink-0">
-                           {connection.avatar_url ? (
-                             <img src={connection.avatar_url} alt="" className="w-full h-full object-cover" />
-                           ) : (
-                             <div className="w-full h-full flex items-center justify-center text-white/40 font-bold">
-                               {connection.username[0].toUpperCase()}
-                             </div>
-                           )}
-                         </div>
-                         <div className="flex-1 min-w-0">
-                           <p className="font-bold text-white text-sm truncate">{connection.full_name || connection.username}</p>
-                           <p className="text-xs text-white/50 truncate">@{connection.username}</p>
-                         </div>
-                         <div className={`w-6 h-6 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-white border-white' : 'border-white/20'}`}>
-                            {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-black" />}
-                         </div>
-                       </div>
-                     );
-                   })}
-                </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
+                        {c.avatar_url ? (
+                          <img src={c.avatar_url} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                           <div className="w-full h-full flex items-center justify-center text-[10px] text-white/50">{c.username?.charAt(0).toUpperCase()}</div>
+                        )}
+                      </div>
+                      <span className="font-bold text-white/80 text-sm">{c.full_name || c.username}</span>
+                    </div>
+                    {visibleTo.includes(c.id) && <div className="w-3 h-3 rounded-full bg-white" />}
+                  </button>
+                ))}
              </div>
           </motion.div>
         )}

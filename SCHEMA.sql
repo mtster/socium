@@ -24,12 +24,19 @@ CREATE TABLE IF NOT EXISTS posts (
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   image_url TEXT, -- Made optional for text-only posts
   caption TEXT,
+  visible_to UUID[], -- Restricted audience
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Safely alter image_url if table already exists
-ALTER TABLE posts ALTER COLUMN image_url DROP NOT NULL;
+-- Safely alter columns if table already exists
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='visible_to') THEN 
+    ALTER TABLE posts ADD COLUMN visible_to UUID[];
+  END IF;
+  ALTER TABLE posts ALTER COLUMN image_url DROP NOT NULL;
+END $$;
 
 -- Likes table
 CREATE TABLE IF NOT EXISTS likes (
@@ -99,7 +106,11 @@ CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.
 
 -- Posts Policies
 DROP POLICY IF EXISTS "Posts are viewable by everyone" ON posts;
-CREATE POLICY "Posts are viewable by everyone" ON posts FOR SELECT USING (true);
+CREATE POLICY "Posts are viewable by authorized audience" ON posts FOR SELECT USING (
+  auth.uid() = user_id OR 
+  visible_to IS NULL OR 
+  auth.uid() = ANY(visible_to)
+);
 
 DROP POLICY IF EXISTS "Users can insert own posts" ON posts;
 CREATE POLICY "Users can insert own posts" ON posts FOR INSERT WITH CHECK (auth.uid() = user_id);
@@ -179,9 +190,17 @@ begin
   if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then 
     create publication supabase_realtime; 
   end if; 
+  
+  -- Prevent "already member of publication" error
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+    and schemaname = 'public' 
+    and tablename = 'messages'
+  ) then
+    alter publication supabase_realtime add table messages;
+  end if;
 end $$;
-
-ALTER PUBLICATION supabase_realtime ADD TABLE messages;
 
 -- ==========================================
 -- SUPABASE STORAGE SETUP

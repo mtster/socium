@@ -160,6 +160,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [page, setPage] = useState(0);
+  const [pullProgress, setPullProgress] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   
@@ -341,8 +343,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
   const fetchMessages = async (otherUserId: string, loadOld = false) => {
     if (loadOld) setLoadingMessages(true);
-    const limit = loadOld ? 10 : 20;
-    const offset = loadOld ? 20 + ((page - 1) * 10) : 0;
+    const limit = loadOld ? 15 : 20;
+    const offset = loadOld ? messages.length : 0;
     
     // We fetch in descending order to get the latest messages first, then reverse them
     const { data } = await supabase
@@ -355,11 +357,27 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     if (data) {
       const orderedData = data.reverse();
       if (loadOld) {
+        // Record scroll height before adding messages
+        const container = document.getElementById('chat-messages-container');
+        const oldScrollHeight = container?.scrollHeight || 0;
+
         setMessages(prev => {
-          const newMsgs = [...orderedData, ...prev];
+          // Prepend only if not already present
+          const existingIds = new Set(prev.map(m => m.id));
+          const filteredNew = orderedData.filter(m => !existingIds.has(m.id));
+          const newMsgs = [...filteredNew, ...prev];
           chatMessagesCache[otherUserId] = newMsgs;
           return newMsgs;
         });
+
+        // After state update, adjust scroll
+        requestAnimationFrame(() => {
+          if (container) {
+            const newScrollHeight = container.scrollHeight;
+            container.scrollTop = newScrollHeight - oldScrollHeight;
+          }
+        });
+
         setPage(p => p + 1);
         setHasMoreMessages(data.length === limit);
       } else {
@@ -769,17 +787,72 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
             {/* Messages Area */}
             <div 
-              className="flex-1 overflow-y-auto p-4 space-y-1 relative"
+              id="chat-messages-container"
+              className="flex-1 overflow-y-auto p-4 space-y-1 relative no-scrollbar"
               onScroll={(e) => {
                 const target = e.target as HTMLDivElement;
-                if (target.scrollTop <= 5 && hasMoreMessages && !loadingMessages && messages.length >= 20) {
-                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
-                    navigator.vibrate(50);
-                  }
-                  fetchMessages(activeChat.id, true);
+                // Detect if at top for potential pull interaction start
+                if (target.scrollTop === 0) {
+                   // Pull logic is handled by drag gestures if we were to implement a custom component 
+                   // but here we'll stick to a robust scroll-based touch interaction
                 }
               }}
+              onTouchStart={(e) => {
+                const target = e.currentTarget;
+                if (target.scrollTop <= 5) {
+                  setIsPulling(true);
+                }
+              }}
+              onTouchMove={(e) => {
+                if (!isPulling || !hasMoreMessages || loadingMessages) return;
+                const target = e.currentTarget;
+                if (target.scrollTop > 5) {
+                  setIsPulling(false);
+                  setPullProgress(0);
+                  return;
+                }
+                
+                // Calculate pull distance for feedback
+                const touch = e.touches[0];
+                const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
+                if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
+                
+                const diff = touch.clientY - startY;
+                if (diff > 0) {
+                  const progress = Math.min(diff / 100, 1);
+                  setPullProgress(progress);
+                  if (progress >= 1 && pullProgress < 1) {
+                    if (navigator.vibrate) navigator.vibrate(10);
+                  }
+                }
+              }}
+              onTouchEnd={(e) => {
+                if (isPulling && pullProgress >= 1) {
+                  fetchMessages(activeChat.id, true);
+                }
+                setIsPulling(false);
+                setPullProgress(0);
+                (e.currentTarget as any)._pullStartY = null;
+              }}
             >
+               <AnimatePresence>
+                {pullProgress > 0 && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: pullProgress * 40, opacity: pullProgress }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="flex justify-center items-center overflow-hidden"
+                  >
+                    <div className={cn(
+                      "text-[10px] uppercase tracking-widest font-bold transition-all",
+                      pullProgress >= 1 ? "text-white" : "text-white/30"
+                    )}>
+                      {pullProgress >= 1 ? "Release to load" : "Pull for history"}
+                    </div>
+                  </motion.div>
+                )}
+               </AnimatePresence>
+
                {loadingMessages && (
                  <div className="flex justify-center mb-4 transition-all">
                    <div className="bg-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center justify-center gap-2">
@@ -1111,15 +1184,19 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} />
             <motion.div initial={{ opacity: 0, scale: 0.9, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 10 }} className="fixed z-[160] w-48 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
                {contextMenu.message.content && (
-                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}>
-                    <span>Copy Text</span>
-                    <Copy size={16} />
+                  <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}>
+                    <div className="flex items-center gap-3">
+                      <Copy size={16} className="text-white/40" />
+                      <span>Copy Text</span>
+                    </div>
                   </button>
                )}
                {contextMenu.message.media_url && (
-                  <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}>
-                    <span>Save {contextMenu.message.media_type === 'image' ? 'Photo' : 'Audio'}</span>
-                    <Download size={16} />
+                  <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}>
+                    <div className="flex items-center gap-3">
+                      <Download size={16} className="text-white/40" />
+                      <span>Save {contextMenu.message.media_type === 'image' ? 'Photo' : 'Audio'}</span>
+                    </div>
                   </button>
                )}
                {(()=>{
@@ -1136,27 +1213,35 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
                  return isLocContext && (
                    <>
-                     <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { 
-                       window.location.href = `https://maps.google.com/?q=${latContext},${lngContext}`;
+                     <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { 
+                       const url = `https://www.google.com/maps/search/?api=1&query=${latContext},${lngContext}`;
+                       window.open(url, '_blank');
                        setContextMenu(null); 
                      }}>
-                       <span>Open in Google Maps</span>
-                       <MapPin size={16} />
+                       <div className="flex items-center gap-3">
+                         <MapPin size={16} className="text-white/40" />
+                         <span>Google Maps</span>
+                       </div>
                      </button>
-                     <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors" onClick={() => { 
-                       window.location.href = `https://maps.apple.com/?ll=${latContext},${lngContext}`;
+                     <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { 
+                       const url = `http://maps.apple.com/?ll=${latContext},${lngContext}`;
+                       window.open(url, '_blank');
                        setContextMenu(null); 
                      }}>
-                       <span>Open in Maps</span>
-                       <MapPin size={16} />
+                       <div className="flex items-center gap-3">
+                         <MapPin size={16} className="text-white/40" />
+                         <span>Apple Maps</span>
+                       </div>
                      </button>
                    </>
                  );
                })()}
                {contextMenu.message.sender_id === currentUserId && (
-                 <button className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-500 hover:bg-white/5 rounded-xl transition-colors mt-1" onClick={handleDeleteMessage}>
-                   <span>Delete</span>
-                   <Trash2 size={16} />
+                 <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-red-500 hover:bg-white/5 rounded-xl transition-colors mt-1 text-left" onClick={handleDeleteMessage}>
+                   <div className="flex items-center gap-3">
+                     <Trash2 size={16} />
+                     <span>Delete</span>
+                   </div>
                  </button>
                )}
             </motion.div>

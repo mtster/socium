@@ -80,20 +80,37 @@ self.addEventListener('notificationclick', function(event) {
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
+      // 1. Try to find a client that is already open and focused
+      for (let i = 0; i < windowClients.length; i++) {
+        const client = windowClients[i];
+        if (client.visibilityState === 'visible' && 'focus' in client) {
+          if (senderId) {
+            client.postMessage({ type: 'OPEN_CHAT', senderId });
+          }
+          return client.focus();
+        }
+      }
+      
+      // 2. If app is open but not focused, focus it and send message
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
           if (senderId) {
             client.postMessage({ type: 'OPEN_CHAT', senderId });
-            setTimeout(() => client.postMessage({ type: 'OPEN_CHAT', senderId }), 500);
-            setTimeout(() => client.postMessage({ type: 'OPEN_CHAT', senderId }), 1500);
           }
           return client.focus();
         }
       }
+      
+      // 3. Fallback: open a new window with deep link param
       if (clients.openWindow) {
          let targetUrl = urlToOpen;
-         if (senderId) targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'chat_with=' + senderId;
+         if (senderId) {
+           const baseUrl = targetUrl.split('?')[0];
+           const params = new URLSearchParams(targetUrl.split('?')[1] || '');
+           params.set('chat_with', senderId);
+           targetUrl = `${baseUrl}?${params.toString()}`;
+         }
          return clients.openWindow(targetUrl);
       }
     })

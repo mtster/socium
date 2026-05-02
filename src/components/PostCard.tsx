@@ -19,6 +19,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   const [showMenu, setShowMenu] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [viewingImages, setViewingImages] = useState<{ images: string[], startIndex: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -104,7 +105,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                     <button 
                       onClick={() => {
                         setShowMenu(false);
-                        onDelete?.(post.id);
+                        setShowDeleteConfirm(true);
                       }}
                       className="w-full flex items-center px-4 py-3 text-sm text-red-500 hover:bg-white/5 active:bg-white/10 transition-colors font-medium"
                     >
@@ -137,36 +138,60 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
 
       {/* Image Content (Optional) */}
       {post.image_url && (() => {
-        const images = post.image_url.split(',');
+        const images = [...new Set(post.image_url.split(',').filter(Boolean))];
+        if (images.length === 0) return null;
+        
+        if (images.length === 1) {
+          return (
+            <div className="relative w-full bg-white/5 overflow-hidden mb-2">
+              <img 
+                src={getOptimizedUrl(images[0])} 
+                alt="Post content" 
+                className="w-full h-auto max-h-[80vh] object-cover cursor-pointer hover:brightness-95 transition-all"
+                onClick={() => setViewingImages({ images, startIndex: 0 })}
+                loading="lazy"
+              />
+            </div>
+          );
+        }
+
         return (
-          <div className={cn("relative w-full bg-white/5 overflow-hidden", images.length > 1 && "grid gap-1", images.length === 2 ? "grid-cols-2" : "", images.length > 2 ? "grid-cols-2" : "")}>
-            {images.slice(0, 2).map((img, index) => {
-              const isLastShown = index === 1;
-              const hasMore = images.length > 2;
+          <div className={cn(
+            "relative w-full bg-white/5 overflow-hidden grid gap-1 mb-2",
+            images.length === 2 ? "grid-cols-2 h-[350px]" : "grid-cols-2 h-[450px]"
+          )}>
+            {images.slice(0, 4).map((img, index) => {
+              // Show 2 or 4 images in grid
+              const showCount = images.length === 2 ? 2 : 4;
+              const isLastShown = index === showCount - 1;
+              const hasMore = images.length > showCount;
+              
+              if (index >= showCount) return null;
+
               return (
-                <div key={index} className="relative w-full h-[400px]" onClick={() => setViewingImages({ images, startIndex: index })}>
+                <div 
+                  key={index} 
+                  className={cn(
+                    "relative w-full h-full cursor-pointer hover:brightness-90 transition-all",
+                    images.length === 3 && index === 0 ? "row-span-2 h-full" : ""
+                  )} 
+                  onClick={() => setViewingImages({ images, startIndex: index })}
+                >
                   <img 
                     src={getOptimizedUrl(img)} 
                     alt={`Post content ${index}`} 
                     className="w-full h-full object-cover"
-                    fetchPriority="high"
+                    loading="lazy"
                   />
                   {isLastShown && hasMore && (
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                      <span className="text-white text-3xl font-light">+{images.length - 2}</span>
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
+                      <span className="text-white text-3xl font-bold">+{images.length - showCount}</span>
+                      <span className="text-white/60 text-[10px] font-bold tracking-widest uppercase mt-1">Photos</span>
                     </div>
                   )}
                 </div>
               );
             })}
-            {images.length === 1 && (
-              <img 
-                src={getOptimizedUrl(images[0])} 
-                alt="Post content" 
-                className="w-full h-auto max-h-[80vh] object-contain"
-                onClick={() => setViewingImages({ images, startIndex: 0 })}
-              />
-            )}
           </div>
         );
       })()}
@@ -222,50 +247,162 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       </AnimatePresence>
 
       <AnimatePresence>
-        {viewingImages && (
+        {showDeleteConfirm && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+            onClick={() => setShowDeleteConfirm(false)}
           >
-            <button 
-              className="absolute top-4 right-4 z-50 p-2 bg-white/10 rounded-full text-white hover:bg-white/20 transition-colors"
-              onClick={() => setViewingImages(null)}
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-xs bg-[#1c1c1c] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl p-8 text-center"
             >
-              <X size={24} />
-            </button>
-            <div className="relative w-full h-full max-w-4xl flex items-center justify-center">
-              {viewingImages.images.length > 1 && viewingImages.startIndex > 0 && (
+              <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash size={32} className="text-red-500" />
+              </div>
+              <h3 className="text-white text-xl font-bold mb-2">Delete post?</h3>
+              <p className="text-white/50 text-sm mb-8 leading-relaxed">
+                This action cannot be undone. Permanent deletion removes this moment from your timeline.
+              </p>
+              <div className="space-y-3">
                 <button 
-                  className="absolute left-4 z-50 p-3 bg-black/50 rounded-full text-white hover:bg-black/80 transition-colors"
-                  onClick={(e) => { e.stopPropagation(); setViewingImages({ ...viewingImages, startIndex: viewingImages.startIndex - 1 }); }}
+                  onClick={() => {
+                    onDelete?.(post.id);
+                    setShowDeleteConfirm(false);
+                  }}
+                  className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl active:scale-95 transition-transform"
                 >
-                  <ChevronLeft size={24} />
+                  Delete
                 </button>
-              )}
-              <img 
-                src={getOptimizedUrl(viewingImages.images[viewingImages.startIndex])?.replace('q_auto:eco,f_auto,w_600,c_limit/', '')} 
-                alt="Full view" 
-                className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl"
-              />
-              {viewingImages.images.length > 1 && viewingImages.startIndex < viewingImages.images.length - 1 && (
                 <button 
-                  className="absolute right-4 z-50 p-3 bg-black/50 rounded-full text-white hover:bg-black/80 transition-colors"
-                  onClick={(e) => { e.stopPropagation(); setViewingImages({ ...viewingImages, startIndex: viewingImages.startIndex + 1 }); }}
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="w-full bg-white/5 text-white/50 font-bold py-4 rounded-2xl active:scale-95 transition-transform"
                 >
-                  <ChevronRight size={24} />
+                  Cancel
                 </button>
-              )}
-              {viewingImages.images.length > 1 && (
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/50 px-4 py-2 rounded-full text-white font-medium text-sm tracking-widest uppercase">
-                   {viewingImages.startIndex + 1} / {viewingImages.images.length}
-                </div>
-              )}
-            </div>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {viewingImages && (
+          <ImageDetailView 
+            images={viewingImages.images}
+            initialIndex={viewingImages.startIndex}
+            onClose={() => setViewingImages(null)}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function ImageDetailView({ images, initialIndex, onClose }: { images: string[], initialIndex: number, onClose: () => void }) {
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [loading, setLoading] = useState(true);
+  const [isZooming, setIsZooming] = useState(false);
+
+  const next = () => {
+    if (currentIndex < images.length - 1) {
+      setLoading(true);
+      setCurrentIndex(prev => prev + 1);
+    }
+  };
+
+  const prev = () => {
+    if (currentIndex > 0) {
+      setLoading(true);
+      setCurrentIndex(prev => prev - 1);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[500] bg-black flex flex-col items-center justify-center"
+    >
+      <button 
+        className="absolute top-6 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md"
+        onClick={onClose}
+      >
+        <X size={24} />
+      </button>
+
+      <div className="relative w-full h-full flex items-center justify-center touch-none">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentIndex}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="w-full h-full flex items-center justify-center overflow-hidden"
+          >
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center z-10">
+                <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+            
+            <motion.img 
+              drag={!isZooming}
+              dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+              onDragEnd={(_, info) => {
+                if (info.offset.x > 100) prev();
+                if (info.offset.x < -100) next();
+                if (info.offset.y > 200 || info.offset.y < -200) onClose();
+              }}
+              src={images[currentIndex].includes('cloudinary') ? images[currentIndex].replace('/upload/', '/upload/q_auto,f_auto/') : images[currentIndex]} 
+              alt="" 
+              className={cn(
+                "max-w-full max-h-full object-contain transition-transform duration-300",
+                isZooming ? "scale-150 cursor-zoom-out" : "cursor-zoom-in"
+              )}
+              onLoad={() => setLoading(false)}
+              onClick={() => setIsZooming(!isZooming)}
+            />
+          </motion.div>
+        </AnimatePresence>
+
+        {!isZooming && (
+          <>
+            {currentIndex > 0 && (
+              <button 
+                className="absolute left-6 z-[550] p-4 bg-black/40 rounded-full text-white active:scale-95 transition-all"
+                onClick={(e) => { e.stopPropagation(); prev(); }}
+              >
+                <ChevronLeft size={28} />
+              </button>
+            )}
+            {currentIndex < images.length - 1 && (
+              <button 
+                className="absolute right-6 z-[550] p-4 bg-black/40 rounded-full text-white active:scale-95 transition-all"
+                onClick={(e) => { e.stopPropagation(); next(); }}
+              >
+                <ChevronRight size={28} />
+              </button>
+            )}
+            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center">
+              <span className="text-white/40 text-[10px] font-bold tracking-[0.2em] uppercase mb-2">
+                {currentIndex + 1} / {images.length}
+              </span>
+              <div className="flex space-x-1.5">
+                {images.map((_, i) => (
+                  <div key={i} className={cn("h-1 rounded-full transition-all duration-300", i === currentIndex ? "w-6 bg-white" : "w-1.5 bg-white/20")} />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </motion.div>
   );
 }

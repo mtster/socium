@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Send, User } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
-import { formatDate } from '@/src/lib/utils';
+import { formatDate, cn } from '@/src/lib/utils';
 import { Profile, Post } from '@/src/types';
 
 interface CommentsModalProps {
@@ -133,11 +133,20 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
                   {post.profiles?.full_name || post.profiles?.username}
                 </p>
                 {post.caption && <p className="text-sm text-white/80 mt-1 leading-relaxed">{post.caption}</p>}
-                {post.image_url && (
-                  <div className="mt-3 rounded-2xl overflow-hidden bg-white/5 border border-white/10 w-full max-w-xs">
-                     <img src={post.image_url} alt="Post content" className="w-full h-auto object-cover max-h-48" />
-                  </div>
-                )}
+                {post.image_url && (() => {
+                  const images = post.image_url.split(',').filter(Boolean);
+                  if (images.length === 0) return null;
+                  return (
+                    <div className={cn(
+                      "mt-3 rounded-2xl overflow-hidden bg-white/5 border border-white/10 w-full max-w-xs",
+                      images.length > 1 ? "grid grid-cols-2 gap-0.5" : ""
+                    )}>
+                       {images.slice(0, 4).map((img, i) => (
+                         <img key={i} src={img} alt="" className={cn("w-full h-auto object-cover", images.length > 1 ? "aspect-square" : "max-h-48")} />
+                       ))}
+                    </div>
+                  );
+                })()}
              </div>
           </div>
 
