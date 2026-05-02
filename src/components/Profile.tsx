@@ -28,6 +28,9 @@ async function getAdminProfile() {
   return data;
 }
 
+let profileConnectionsCache: Record<string, any[]> = {};
+let profileConnectionsTime: Record<string, number> = {};
+
 export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -45,13 +48,15 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   }, [profile.avatar_url]);
 
   // Connections Query State
-  const [connections, setConnections] = useState<any[]>([]);
+  const [connections, setConnections] = useState<any[]>(profileConnectionsCache[profile.id] || []);
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<string | null>(null); // 'none', 'pending_sent', 'pending_received', 'accepted'
   const [connectionId, setConnectionId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchConnections();
+    if (!profileConnectionsCache[profile.id] || Date.now() - (profileConnectionsTime[profile.id] || 0) > 60000) {
+      fetchConnections();
+    }
   }, [profile.id, currentUserId]);
 
   const fetchConnections = async () => {
@@ -72,7 +77,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         combined.unshift(adminProf);
       }
       
-      setConnections(combined.filter(c => c.id !== profile.id && c.id !== currentUserId));
+      const filteredConnections = combined.filter(c => c.id !== profile.id && c.id !== currentUserId);
+      profileConnectionsCache[profile.id] = filteredConnections;
+      profileConnectionsTime[profile.id] = Date.now();
+      setConnections(filteredConnections);
 
       // Fetch pending requests we received
       const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');

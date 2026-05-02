@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Heart, MessageCircle, Send, MoreHorizontal, Trash, Edit2 } from 'lucide-react';
+import { Heart, MessageCircle, Send, MoreHorizontal, Trash, Edit2, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { Post } from '@/src/types';
 import { formatDate, cn } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -19,6 +19,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   const [showMenu, setShowMenu] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [viewingImages, setViewingImages] = useState<{ images: string[], startIndex: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -135,16 +136,40 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       )}
 
       {/* Image Content (Optional) */}
-      {post.image_url && (
-        <div className="relative w-full bg-white/5 overflow-hidden">
-          <img 
-            src={getOptimizedUrl(post.image_url)} 
-            alt="Post content" 
-            className="w-full h-auto max-h-[80vh] object-contain"
-            fetchPriority="high"
-          />
-        </div>
-      )}
+      {post.image_url && (() => {
+        const images = post.image_url.split(',');
+        return (
+          <div className={cn("relative w-full bg-white/5 overflow-hidden", images.length > 1 && "grid gap-1", images.length === 2 ? "grid-cols-2" : "", images.length > 2 ? "grid-cols-2" : "")}>
+            {images.slice(0, 2).map((img, index) => {
+              const isLastShown = index === 1;
+              const hasMore = images.length > 2;
+              return (
+                <div key={index} className="relative w-full h-[400px]" onClick={() => setViewingImages({ images, startIndex: index })}>
+                  <img 
+                    src={getOptimizedUrl(img)} 
+                    alt={`Post content ${index}`} 
+                    className="w-full h-full object-cover"
+                    fetchPriority="high"
+                  />
+                  {isLastShown && hasMore && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <span className="text-white text-3xl font-light">+{images.length - 2}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {images.length === 1 && (
+              <img 
+                src={getOptimizedUrl(images[0])} 
+                alt="Post content" 
+                className="w-full h-auto max-h-[80vh] object-contain"
+                onClick={() => setViewingImages({ images, startIndex: 0 })}
+              />
+            )}
+          </div>
+        );
+      })()}
 
       {/* Interactions */}
       <div className="px-4 py-3 mt-1">
@@ -193,6 +218,52 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
               onRefetch?.();
             }}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {viewingImages && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4 backdrop-blur-sm"
+          >
+            <button 
+              className="absolute top-4 right-4 z-50 p-2 bg-white/10 rounded-full text-white hover:bg-white/20 transition-colors"
+              onClick={() => setViewingImages(null)}
+            >
+              <X size={24} />
+            </button>
+            <div className="relative w-full h-full max-w-4xl flex items-center justify-center">
+              {viewingImages.images.length > 1 && viewingImages.startIndex > 0 && (
+                <button 
+                  className="absolute left-4 z-50 p-3 bg-black/50 rounded-full text-white hover:bg-black/80 transition-colors"
+                  onClick={(e) => { e.stopPropagation(); setViewingImages({ ...viewingImages, startIndex: viewingImages.startIndex - 1 }); }}
+                >
+                  <ChevronLeft size={24} />
+                </button>
+              )}
+              <img 
+                src={getOptimizedUrl(viewingImages.images[viewingImages.startIndex])?.replace('q_auto:eco,f_auto,w_600,c_limit/', '')} 
+                alt="Full view" 
+                className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl"
+              />
+              {viewingImages.images.length > 1 && viewingImages.startIndex < viewingImages.images.length - 1 && (
+                <button 
+                  className="absolute right-4 z-50 p-3 bg-black/50 rounded-full text-white hover:bg-black/80 transition-colors"
+                  onClick={(e) => { e.stopPropagation(); setViewingImages({ ...viewingImages, startIndex: viewingImages.startIndex + 1 }); }}
+                >
+                  <ChevronRight size={24} />
+                </button>
+              )}
+              {viewingImages.images.length > 1 && (
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/50 px-4 py-2 rounded-full text-white font-medium text-sm tracking-widest uppercase">
+                   {viewingImages.startIndex + 1} / {viewingImages.images.length}
+                </div>
+              )}
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </motion.div>

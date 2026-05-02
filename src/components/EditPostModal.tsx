@@ -1,8 +1,8 @@
-import React, { useState, useRef } from 'react';
-import { X, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Image as ImageIcon, Search } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
-import { Post } from '@/src/types';
+import { Post, Profile } from '@/src/types';
 
 interface EditPostModalProps {
   post: Post;
@@ -16,6 +16,24 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
   const [imageUrl, setImageUrl] = useState<string | null>(post.image_url || null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [visibleTo, setVisibleTo] = useState<string[]>(post.visible_to || []);
+  const [showVisibilityModal, setShowVisibilityModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [connections, setConnections] = useState<Profile[]>([]);
+
+  useEffect(() => {
+    fetchConnections();
+  }, [post.user_id]);
+
+  const fetchConnections = async () => {
+    const { data: rel1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', post.user_id).eq('status', 'accepted');
+    const { data: rel2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', post.user_id).eq('status', 'accepted');
+    
+    // @ts-ignore
+    const combined = [...(rel1?.map(c => c.profiles) || []), ...(rel2?.map(c => c.profiles) || [])].filter(Boolean);
+    setConnections(combined);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -43,21 +61,32 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
 
       // Handle new image upload
       if (imageFile) {
-        const fileExt = imageFile.name.split('.').pop() || 'jpg';
-        const fileName = `${post.user_id}-${Math.random()}.${fileExt}`;
-        const filePath = `${post.user_id}/${fileName}`;
+        // @ts-ignore
+        const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
+        // @ts-ignore
+        const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
 
-        const { error: uploadError } = await supabase.storage
-          .from('avatars') // Resusing avatars storage bucket as public bucket
-          .upload(filePath, imageFile);
+        if (!uploadPreset || !cloudName) {
+           alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
+           setIsUploading(false);
+           return;
+        }
 
-        if (uploadError) throw new Error(uploadError.message);
+        const formData = new FormData();
+        formData.append('file', imageFile);
+        formData.append('upload_preset', uploadPreset);
+        
+        const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+          method: 'POST',
+          body: formData,
+        });
 
-        const { data: publicUrlData } = supabase.storage
-          .from('avatars')
-          .getPublicUrl(filePath);
-
-        finalImageUrl = publicUrlData.publicUrl;
+        if (!cloudRes.ok) {
+          const errData = await cloudRes.json();
+          throw new Error(errData.error?.message || 'Cloudinary upload failed');
+        }
+        const cloudData = await cloudRes.json();
+        finalImageUrl = cloudData.secure_url;
       } else if (!imageUrl && post.image_url) {
         // User removed the image
         finalImageUrl = null;
@@ -66,6 +95,7 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
       const { error: updateError } = await supabase.from('posts').update({
         caption: caption.trim() || null,
         image_url: finalImageUrl || '',
+        visible_to: visibleTo.length > 0 ? visibleTo : null
       }).eq('id', post.id);
 
       if (updateError) throw new Error(updateError.message);
@@ -128,7 +158,96 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
             </button>
           </div>
         )}
+
+        <div className="mb-4">
+           <label className="text-[10px] uppercase tracking-widest font-bold text-white/30 px-1 block mb-2">Visible to</label>
+           <button 
+             onClick={() => setShowVisibilityModal(true)}
+             className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 flex justify-between items-center active:scale-95 transition-all text-sm font-medium"
+           >
+             <span className="text-white/80">{visibleTo.length === 0 ? 'All Connections' : `${visibleTo.length} Selected`}</span>
+             <span className="text-[10px] uppercase tracking-widest text-white/30 px-2 py-1 bg-white/5 rounded-full">Change</span>
+           </button>
+        </div>
       </div>
+
+      <AnimatePresence>
+        {showVisibilityModal && (
+          <motion.div 
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="fixed inset-0 bg-black z-[110] flex flex-col"
+          >
+             <div className="flex items-center justify-between px-4 h-16 border-b border-white/10">
+               <button onClick={() => setShowVisibilityModal(false)} className="text-white/60">
+                 <X size={24} />
+               </button>
+               <h2 className="text-sm font-bold tracking-widest uppercase">Visible To</h2>
+               <button onClick={() => setShowVisibilityModal(false)} className="text-white text-sm font-bold">Done</button>
+             </div>
+             <div className="p-4">
+                <div className="relative mb-6">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={18} />
+                  <input 
+                    type="text" 
+                    placeholder="Search connections..." 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
+                  />
+                </div>
+                
+                <div className="mb-4 flex items-center justify-between px-2">
+                  <span className="text-sm font-medium text-white/90">All Connections</span>
+                  <div 
+                    className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-colors ${visibleTo.length === 0 ? 'bg-white' : 'bg-white/20'}`}
+                    onClick={() => setVisibleTo([])}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-black transition-transform ${visibleTo.length === 0 ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+
+                <div className="space-y-1 h-[60vh] overflow-y-auto">
+                   {connections.filter(c => c.username.toLowerCase().includes(searchQuery.toLowerCase()) || (c.full_name && c.full_name.toLowerCase().includes(searchQuery.toLowerCase()))).map(connection => {
+                     const isSelected = visibleTo.length > 0 && visibleTo.includes(connection.id);
+                     return (
+                       <div 
+                         key={connection.id}
+                         onClick={() => {
+                           if (visibleTo.includes(connection.id)) {
+                             setVisibleTo(prev => prev.filter(id => id !== connection.id));
+                           } else {
+                             setVisibleTo(prev => [...prev, connection.id]);
+                           }
+                         }}
+                         className="flex items-center space-x-3 p-3 rounded-xl hover:bg-white/5 cursor-pointer transition-colors"
+                       >
+                         <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden shrink-0">
+                           {connection.avatar_url ? (
+                             <img src={connection.avatar_url} alt="" className="w-full h-full object-cover" />
+                           ) : (
+                             <div className="w-full h-full flex items-center justify-center text-white/40 font-bold">
+                               {connection.username[0].toUpperCase()}
+                             </div>
+                           )}
+                         </div>
+                         <div className="flex-1 min-w-0">
+                           <p className="font-bold text-white text-sm truncate">{connection.full_name || connection.username}</p>
+                           <p className="text-xs text-white/50 truncate">@{connection.username}</p>
+                         </div>
+                         <div className={`w-6 h-6 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-white border-white' : 'border-white/20'}`}>
+                            {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-black" />}
+                         </div>
+                       </div>
+                     );
+                   })}
+                </div>
+             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <input 
         type="file" 

@@ -17,6 +17,7 @@ export interface Post {
   likes_count?: number;
   has_liked?: boolean;
   comments_count?: number;
+  visible_to?: string[] | null;
 }
 
 export interface Comment {

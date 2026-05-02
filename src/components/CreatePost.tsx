@@ -12,8 +12,8 @@ interface CreatePostProps {
 
 export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostProps) {
   const [caption, setCaption] = useState('');
-  const [image, setImage] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [images, setImages] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   
   const [visibleTo, setVisibleTo] = useState<string[]>([]);
@@ -35,64 +35,73 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setImage(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      setImages(prev => [...prev, ...files]);
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setPreviews(prev => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
     }
   };
 
+  const removeImage = (index: number) => {
+    setImages(prev => prev.filter((_, i) => i !== index));
+    setPreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSubmit = async () => {
-    if (!image && !caption.trim()) return;
+    if (images.length === 0 && !caption.trim()) return;
 
     try {
       setUploading(true);
 
-      let imageUrl = null;
+      let imageUrls: string[] = [];
       
-      // 1. Upload to Cloudinary (ONLY if image exists)
-      if (image) {
+      // 1. Upload to Cloudinary (ONLY if images exist)
+      if (images.length > 0) {
         // @ts-ignore
         const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
         // @ts-ignore
         const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
 
         if (!uploadPreset || !cloudName) {
-          alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
-          setUploading(false);
-          return;
+           alert('Cloudinary Error: Missing configuration.\nPlease add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to your Vercel Environment Variables.');
+           setUploading(false);
+           return;
         }
 
-        const formData = new FormData();
-        formData.append('file', image);
-        formData.append('upload_preset', uploadPreset);
-        
-        try {
-          const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-            method: 'POST',
-            body: formData,
-          });
+        imageUrls = await Promise.all(images.map(async (img) => {
+          const formData = new FormData();
+          formData.append('file', img);
+          formData.append('upload_preset', uploadPreset);
+          
+          try {
+            const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+              method: 'POST',
+              body: formData,
+            });
 
-          if (!cloudRes.ok) {
-            const errData = await cloudRes.json();
-            throw new Error(errData.error?.message || 'Cloudinary upload failed');
+            if (!cloudRes.ok) {
+              const errData = await cloudRes.json();
+              throw new Error(errData.error?.message || 'Cloudinary upload failed');
+            }
+            const cloudData = await cloudRes.json();
+            return cloudData.secure_url;
+          } catch (cloudinaryError: any) {
+            throw new Error(`Cloudinary Error: ${cloudinaryError.message}`);
           }
-          const cloudData = await cloudRes.json();
-          imageUrl = cloudData.secure_url;
-        } catch (cloudinaryError: any) {
-          throw new Error(`Cloudinary Error: ${cloudinaryError.message}`);
-        }
+        }));
       }
 
       // 2. Save to Supabase
       try {
         const payload: any = {
           user_id: userId,
-          image_url: imageUrl || '',
+          image_url: imageUrls.join(',') || '',
           caption: caption.trim() || null,
         };
 
@@ -140,7 +149,7 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
         <h2 className="text-sm font-bold uppercase tracking-widest">New Moment</h2>
         <button 
           onClick={handleSubmit} 
-          disabled={uploading || (!image && !caption.trim())}
+          disabled={uploading || (images.length === 0 && !caption.trim())}
           className="text-white font-bold disabled:opacity-30 flex items-center space-x-1"
         >
           {uploading ? (
@@ -166,30 +175,40 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
           />
         </div>
 
-        <div 
-          className="relative aspect-[4/5] rounded-3xl bg-white/5 border border-white/10 overflow-hidden mb-6 flex items-center justify-center shrink-0 shadow-xl"
-          onClick={() => document.getElementById('imageInput')?.click()}
-        >
-          {preview ? (
-            <img src={preview} alt="Preview" className="w-full h-full object-cover" />
-          ) : (
-            <div className="text-center group cursor-pointer">
-              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3 group-active:scale-95 transition-transform border border-white/10 shadow-lg">
+        <div className="flex space-x-4 overflow-x-auto pb-4 snap-x">
+          {previews.map((previewStr, i) => (
+            <div key={i} className="relative aspect-[4/5] h-64 rounded-3xl bg-white/5 border border-white/10 overflow-hidden shrink-0 shadow-xl snap-center shrink-0">
+               <img src={previewStr} alt={`Preview ${i}`} className="w-full h-full object-cover" />
+               <button 
+                 className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 shadow-lg border border-white/20 flex items-center justify-center text-white backdrop-blur-md active:scale-95"
+                 onClick={(e) => { e.stopPropagation(); removeImage(i); }}
+               >
+                 <X size={16} />
+               </button>
+            </div>
+          ))}
+          <div 
+            className="relative aspect-[4/5] h-64 rounded-3xl bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0 shadow-xl snap-center cursor-pointer active:scale-95 transition-transform"
+            onClick={() => document.getElementById('imageInput')?.click()}
+          >
+            <div className="text-center group">
+              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3 border border-white/10 shadow-lg">
                 <Camera size={32} className="text-white/50" />
               </div>
-              <p className="text-[10px] uppercase tracking-widest font-medium text-white/40">Capture or Upload</p>
+              <p className="text-[10px] uppercase tracking-widest font-medium text-white/40">{previews.length > 0 ? 'Add more' : 'Capture / Upload'}</p>
             </div>
-          )}
+          </div>
+        </div>
           <input 
             type="file" 
             id="imageInput" 
             className="hidden" 
             onChange={handleImageChange} 
             accept="image/*" 
+            multiple
           />
-        </div>
 
-        <div className="mb-4">
+        <div className="mb-4 mt-auto pt-4">
            <label className="text-[10px] uppercase tracking-widest font-bold text-white/30 px-1 block mb-2">Visible to</label>
            <button 
              onClick={() => setShowVisibilityModal(true)}

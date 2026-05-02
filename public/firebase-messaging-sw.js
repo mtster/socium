@@ -37,18 +37,19 @@ messaging.onBackgroundMessage(function(payload) {
     // Try pinging if optimistic check failed (for iOS reliability)
     if (!isVisible && clientList.length > 0) {
       isVisible = await new Promise((resolve) => {
-        const channel = new MessageChannel();
         let answered = false;
         
-        channel.port1.onmessage = (event) => {
-          if (event.data === 'VISIBLE') {
-            answered = true;
-            resolve(true);
-          }
-        };
-        
         for (const client of clientList) {
-          client.postMessage('PING_VISIBILITY', [channel.port2]);
+          try {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = (event) => {
+              if (event.data === 'VISIBLE') {
+                answered = true;
+                resolve(true);
+              }
+            };
+            client.postMessage('PING_VISIBILITY', [channel.port2]);
+          } catch(e) { console.error('Ping failed for a client'); }
         }
         
         setTimeout(() => {
@@ -73,16 +74,20 @@ self.addEventListener('notificationclick', function(event) {
   const urlToOpen = event.notification.data?.url || '/';
   const senderId = event.notification.data?.senderId;
 
-  if (navigator.clearAppBadge) {
-    navigator.clearAppBadge();
-  }
+  // if (navigator.clearAppBadge) {
+  //   navigator.clearAppBadge();
+  // }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
-          if (senderId) client.postMessage({ type: 'OPEN_CHAT', senderId });
+          if (senderId) {
+            client.postMessage({ type: 'OPEN_CHAT', senderId });
+            setTimeout(() => client.postMessage({ type: 'OPEN_CHAT', senderId }), 500);
+            setTimeout(() => client.postMessage({ type: 'OPEN_CHAT', senderId }), 1500);
+          }
           return client.focus();
         }
       }

@@ -1,8 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { supabase } from './lib/supabase';
 import BottomNav from './components/BottomNav';
-import Feed from './components/Feed';
-import ProfileView from './components/Profile';
 import AuthView from './components/Auth';
 import CreatePost from './components/CreatePost';
 import { Profile, Post } from './types';
@@ -11,11 +9,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 
 import CompleteProfileModal from './components/CompleteProfileModal';
-import Chat from './components/Chat';
 
 import { Bell } from 'lucide-react';
 
 import toast, { Toaster } from 'react-hot-toast';
+
+const Feed = lazy(() => import('./components/Feed'));
+const ProfileView = lazy(() => import('./components/Profile'));
+const Chat = lazy(() => import('./components/Chat'));
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -82,11 +83,16 @@ export default function App() {
         if (data) {
           const unreadCount = new Set(data.map(d => d.sender_id)).size;
           setTotalUnread(unreadCount);
-          if ('setAppBadge' in navigator) {
-            (navigator as any).setAppBadge(unreadCount).catch(console.error);
+          if (unreadCount === 0 && 'clearAppBadge' in navigator) {
+             (navigator as any).clearAppBadge().catch(console.error);
+          } else if ('setAppBadge' in navigator) {
+             (navigator as any).setAppBadge(unreadCount).catch(console.error);
           }
         }
       };
+
+      const handleForceGetUnread = () => getUnread();
+      window.addEventListener('forceGetUnread', handleForceGetUnread);
 
       getUnread();
 
@@ -131,6 +137,7 @@ export default function App() {
     }
 
     return () => {
+      window.removeEventListener('forceGetUnread', handleForceGetUnread);
       if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
     };
   }, [session?.user?.id]);
@@ -172,6 +179,8 @@ export default function App() {
     }
   }, []);
 
+  const [notifPermission, setNotifPermission] = useState(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+
   const registerPush = async (userId: string, isUserAction = false) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.warn("Push unsupported");
@@ -183,6 +192,8 @@ export default function App() {
       
       const { requestFirebaseNotificationPermission } = await import('./lib/firebase');
       const token = await requestFirebaseNotificationPermission();
+      
+      setNotifPermission(Notification.permission);
       
       if (!token) {
         console.warn("Could not get Firebase FCM token.");
@@ -403,14 +414,15 @@ export default function App() {
           {activeTab === 'chat' && !initialActiveChat && (
             <button 
               onClick={() => {
-                if ('Notification' in window && Notification.permission !== 'granted') {
+                setShowNotifPromoPopup(false);
+                if ('Notification' in window && notifPermission !== 'granted') {
                   registerPush(session.user.id, true);
                 }
               }}
               className="text-white hover:text-white/80 transition-colors relative"
             >
               <Bell size={24} />
-              {('Notification' in window) && Notification.permission === 'granted' && (
+              {notifPermission === 'granted' && (
                 <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
               )}
             </button>
@@ -460,7 +472,9 @@ export default function App() {
                exit={{ opacity: 0, x: 20 }}
                className="page-transition"
              >
-               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
+               <Suspense fallback={<div className="flex-1 flex items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
+                 <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
+               </Suspense>
              </motion.div>
            )}
            
@@ -473,16 +487,18 @@ export default function App() {
                className="page-transition min-h-screen"
              >
                {profile ? (
-                 <ProfileView 
-                   profile={profile} 
-                   posts={userPosts} 
-                   isOwnProfile={true}
-                   currentUserId={session.user.id}
-                   onUserClick={handleUserClick}
-                   onDeletePost={handleDeletePost}
-                   onLikePost={handleLikeProfilePost}
-                   onRefetch={() => { fetchUserPosts(session.user.id); }}
-                 />
+                 <Suspense fallback={<div className="flex flex-col items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
+                   <ProfileView 
+                     profile={profile} 
+                     posts={userPosts} 
+                     isOwnProfile={true}
+                     currentUserId={session.user.id}
+                     onUserClick={handleUserClick}
+                     onDeletePost={handleDeletePost}
+                     onLikePost={handleLikeProfilePost}
+                     onRefetch={() => { fetchUserPosts(session.user.id); }}
+                   />
+                 </Suspense>
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
@@ -501,34 +517,36 @@ export default function App() {
                className="page-transition min-h-screen"
              >
                {viewingProfileData ? (
-                 <ProfileView 
-                   profile={viewingProfileData.profile} 
-                   posts={viewingProfileData.posts} 
-                   isOwnProfile={false}
-                   currentUserId={session.user.id}
-                   onUserClick={handleUserClick}
-                   onDeletePost={handleDeletePost}
-                   onLikePost={async (id, isLiked) => {
-                     // Optimistic Update inside viewingProfileData
-                     setViewingProfileData(prev => {
-                       if (!prev) return prev;
-                       return {
-                         ...prev,
-                         posts: prev.posts.map(p => {
-                           if (p.id === id) {
-                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
-                           }
-                           return p;
-                         })
-                       };
-                     });
-                     try {
-                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
-                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
-                     } catch(e) {}
-                   }}
-                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
-                 />
+                 <Suspense fallback={<div className="flex-1 flex items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
+                   <ProfileView 
+                     profile={viewingProfileData.profile} 
+                     posts={viewingProfileData.posts} 
+                     isOwnProfile={false}
+                     currentUserId={session.user.id}
+                     onUserClick={handleUserClick}
+                     onDeletePost={handleDeletePost}
+                     onLikePost={async (id, isLiked) => {
+                       // Optimistic Update inside viewingProfileData
+                       setViewingProfileData(prev => {
+                         if (!prev) return prev;
+                         return {
+                           ...prev,
+                           posts: prev.posts.map(p => {
+                             if (p.id === id) {
+                               return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
+                             }
+                             return p;
+                           })
+                         };
+                       });
+                       try {
+                          if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+                          else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                       } catch(e) {}
+                     }}
+                     onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
+                   />
+                 </Suspense>
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
@@ -557,11 +575,13 @@ export default function App() {
                exit={{ opacity: 0, x: -20 }}
                className="page-transition min-h-screen"
              >
-               <Chat 
-                 currentUserId={session.user.id} 
-                 initialActiveChat={initialActiveChat}
-                 onCloseChat={() => setInitialActiveChat(null)}
-               />
+               <Suspense fallback={<div className="flex-1 flex items-center justify-center pt-40 px-4 text-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" /></div>}>
+                 <Chat 
+                   currentUserId={session.user.id} 
+                   initialActiveChat={initialActiveChat}
+                   onCloseChat={() => setInitialActiveChat(null)}
+                 />
+               </Suspense>
              </motion.div>
            )}
         </AnimatePresence>
