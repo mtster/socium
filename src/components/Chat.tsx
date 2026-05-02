@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, MoreHorizontal, Play, Pause, SendHorizonal } from 'lucide-react';
 
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
@@ -240,13 +239,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<any>(null);
 
-  const virtualizer = useVirtualizer({
-    count: messages.length,
-    getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 70, // rough height of a message
-    overscan: 10,
-  });
-
   const handleDeleteMessage = async () => {
     if (!contextMenu?.message) return;
     const msgId = contextMenu.message.id;
@@ -461,11 +453,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           const newMsgs = [...filteredNew, ...prev];
           chatMessagesCache[otherUserId] = newMsgs;
 
-          // After state update, adjust scroll using virtualizer
-          requestAnimationFrame(() => {
-            virtualizer.scrollToIndex(filteredNew.length, { align: 'start' });
-          });
-          
           return newMsgs;
         });
 
@@ -954,27 +941,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                    </div>
                  </div>
                )}
-               <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-                 {virtualizer.getVirtualItems().map((virtualItem) => {
-                   const i = virtualItem.index;
-                   const msg = messages[i];
+                <div className="flex flex-col-reverse">
+                 {messages.slice().reverse().map((msg, idx, arr) => {
                    const isMine = msg.sender_id === currentUserId;
-                   const nextMsg = messages[i + 1];
-                   const prevMsg = messages[i - 1];
+                   const nextMsg = arr[idx - 1]; // next in time, so index - 1 since we reversed
+                   const prevMsg = arr[idx + 1]; // previous in time
 
                    return (
-                      <div
-                        key={virtualItem.key}
-                        data-index={virtualItem.index}
-                        ref={virtualizer.measureElement}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          transform: `translateY(${virtualItem.start}px)`,
-                        }}
-                      >
+                      <div key={msg.id}>
                          <MessageBubble 
                            msg={msg}
                            isMine={isMine}

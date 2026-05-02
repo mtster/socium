@@ -279,7 +279,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         </div>
       </div>
 
-      <div className="w-full h-px bg-white/5 my-8" />
+      <div className="w-full h-px bg-white/[0.08] my-8" />
 
       <AnimatePresence>
         {showComments && (
