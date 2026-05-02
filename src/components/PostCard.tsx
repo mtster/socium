@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Heart, MessageCircle, Send, MoreHorizontal, Trash, Edit2, X, ChevronRight, ChevronLeft } from 'lucide-react';
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { Post } from '@/src/types';
 import { formatDate, cn } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -34,6 +35,18 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   }, []);
 
   const isOwner = post.user_id === currentUserId;
+  const images = [...new Set(post.image_url?.split(',').filter(Boolean) || [])];
+  const [firstImgAspect, setFirstImgAspect] = useState<'portrait' | 'landscape' | null>(null);
+
+  useEffect(() => {
+    if (images.length === 3 && images[0]) {
+      const img = new Image();
+      img.src = images[0];
+      img.onload = () => {
+        setFirstImgAspect(img.height > img.width ? 'portrait' : 'landscape');
+      };
+    }
+  }, [post.image_url]);
 
   const getOptimizedUrl = (url: string) => {
     if (!url) return url;
@@ -137,10 +150,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       )}
 
       {/* Image Content (Optional) */}
-      {post.image_url && (() => {
-        const images = [...new Set(post.image_url.split(',').filter(Boolean))];
-        if (images.length === 0) return null;
-        
+      {images.length > 0 && (() => {
         if (images.length === 1) {
           return (
             <div className="relative w-full bg-white/5 overflow-hidden mb-2">
@@ -155,38 +165,84 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
           );
         }
 
-        return (
-          <div className={cn(
-            "relative w-full bg-white/5 overflow-hidden grid gap-1 mb-2",
-            images.length === 2 ? "grid-cols-2 h-[350px]" : "grid-cols-2 h-[450px]"
-          )}>
-            {images.slice(0, 4).map((img, index) => {
-              // Show 2 or 4 images in grid
-              const showCount = images.length === 2 ? 2 : 4;
-              const isLastShown = index === showCount - 1;
-              const hasMore = images.length > showCount;
-              
-              if (index >= showCount) return null;
+        if (images.length === 2) {
+          return (
+            <div className="relative w-full bg-white/5 overflow-hidden grid grid-cols-2 gap-1 mb-2 h-[350px]">
+              {images.map((img, index) => (
+                <div 
+                  key={index} 
+                  className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all"
+                  onClick={() => setViewingImages({ images, startIndex: index })}
+                >
+                  <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" loading="lazy" />
+                </div>
+              ))}
+            </div>
+          );
+        }
 
+        if (images.length === 3) {
+          const isPortrait = firstImgAspect === 'portrait' || !firstImgAspect; // Default to portrait if not loaded
+          return (
+            <div className="relative w-full bg-white/5 overflow-hidden gap-1 mb-2 h-[450px] grid grid-cols-2 grid-rows-2">
+              {isPortrait ? (
+                <>
+                  <div 
+                    className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all row-span-2"
+                    onClick={() => setViewingImages({ images, startIndex: 0 })}
+                  >
+                    <img src={getOptimizedUrl(images[0])} alt="" className="w-full h-full object-cover" />
+                  </div>
+                  {images.slice(1, 3).map((img, index) => (
+                    <div 
+                      key={index + 1} 
+                      className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all"
+                      onClick={() => setViewingImages({ images, startIndex: index + 1 })}
+                    >
+                      <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <div 
+                    className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all col-span-2"
+                    onClick={() => setViewingImages({ images, startIndex: 0 })}
+                  >
+                    <img src={getOptimizedUrl(images[0])} alt="" className="w-full h-full object-cover" />
+                  </div>
+                  {images.slice(1, 3).map((img, index) => (
+                    <div 
+                      key={index + 1} 
+                      className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all"
+                      onClick={() => setViewingImages({ images, startIndex: index + 1 })}
+                    >
+                      <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          );
+        }
+
+        // 4 or more photos
+        return (
+          <div className="relative w-full bg-white/5 overflow-hidden grid grid-cols-2 gap-1 mb-2 h-[350px]">
+            {images.slice(0, 2).map((img, index) => {
+              const isLast = index === 1;
+              const moreCount = images.length - 2;
               return (
                 <div 
                   key={index} 
-                  className={cn(
-                    "relative w-full h-full cursor-pointer hover:brightness-90 transition-all",
-                    images.length === 3 && index === 0 ? "row-span-2 h-full" : ""
-                  )} 
+                  className="relative w-full h-full cursor-pointer hover:brightness-90 transition-all"
                   onClick={() => setViewingImages({ images, startIndex: index })}
                 >
-                  <img 
-                    src={getOptimizedUrl(img)} 
-                    alt={`Post content ${index}`} 
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                  {isLastShown && hasMore && (
-                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
-                      <span className="text-white text-3xl font-bold">+{images.length - showCount}</span>
-                      <span className="text-white/60 text-[10px] font-bold tracking-widest uppercase mt-1">Photos</span>
+                  <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" loading="lazy" />
+                  {isLast && moreCount > 0 && (
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-[2px]">
+                      <span className="text-white text-4xl font-black italic tracking-tighter">+{moreCount}</span>
+                      <span className="text-white/60 text-[10px] font-bold tracking-[0.3em] uppercase mt-1">More</span>
                     </div>
                   )}
                 </div>
@@ -307,10 +363,19 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
 function ImageDetailView({ images, initialIndex, onClose }: { images: string[], initialIndex: number, onClose: () => void }) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [loading, setLoading] = useState(true);
-  const [isZooming, setIsZooming] = useState(false);
+  const [direction, setDirection] = useState(0);
+
+  // Preload all images for instant display
+  useEffect(() => {
+    images.forEach(src => {
+      const img = new Image();
+      img.src = src.includes('cloudinary') ? src.replace('/upload/', '/upload/q_auto,f_auto/') : src;
+    });
+  }, [images]);
 
   const next = () => {
     if (currentIndex < images.length - 1) {
+      setDirection(1);
       setLoading(true);
       setCurrentIndex(prev => prev + 1);
     }
@@ -318,9 +383,40 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
 
   const prev = () => {
     if (currentIndex > 0) {
+      setDirection(-1);
       setLoading(true);
       setCurrentIndex(prev => prev - 1);
     }
+  };
+
+  const variants = {
+    enter: (direction: number) => ({
+      x: direction > 0 ? 300 : -300,
+      opacity: 0,
+      scale: 0.9
+    }),
+    center: {
+      zIndex: 1,
+      x: 0,
+      opacity: 1,
+      scale: 1,
+      transition: {
+        x: { type: "spring", stiffness: 300, damping: 30 },
+        opacity: { duration: 0.2 },
+        scale: { duration: 0.3 }
+      }
+    },
+    exit: (direction: number) => ({
+      zIndex: 0,
+      x: direction < 0 ? 300 : -300,
+      opacity: 0,
+      scale: 0.9,
+      transition: {
+        x: { type: "spring", stiffness: 300, damping: 30 },
+        opacity: { duration: 0.2 },
+        scale: { duration: 0.3 }
+      }
+    })
   };
 
   return (
@@ -328,80 +424,71 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[500] bg-black flex flex-col items-center justify-center"
+      className="fixed inset-0 z-[500] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center"
     >
       <button 
-        className="absolute top-6 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md"
+        className="absolute top-6 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10"
         onClick={onClose}
       >
         <X size={24} />
       </button>
 
-      <div className="relative w-full h-full flex items-center justify-center touch-none">
-        <AnimatePresence mode="wait">
+      <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+        <AnimatePresence initial={false} custom={direction} mode="popLayout">
           <motion.div
             key={currentIndex}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="w-full h-full flex items-center justify-center overflow-hidden"
+            custom={direction}
+            variants={variants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="w-full h-full flex items-center justify-center px-4"
           >
-            {loading && (
-              <div className="absolute inset-0 flex items-center justify-center z-10">
-                <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-              </div>
-            )}
-            
-            <motion.img 
-              drag={!isZooming}
-              dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-              onDragEnd={(_, info) => {
-                if (info.offset.x > 100) prev();
-                if (info.offset.x < -100) next();
-                if (info.offset.y > 200 || info.offset.y < -200) onClose();
-              }}
-              src={images[currentIndex].includes('cloudinary') ? images[currentIndex].replace('/upload/', '/upload/q_auto,f_auto/') : images[currentIndex]} 
-              alt="" 
-              className={cn(
-                "max-w-full max-h-full object-contain transition-transform duration-300",
-                isZooming ? "scale-150 cursor-zoom-out" : "cursor-zoom-in"
-              )}
-              onLoad={() => setLoading(false)}
-              onClick={() => setIsZooming(!isZooming)}
-            />
+            <TransformWrapper
+              initialScale={1}
+              minScale={1}
+              maxScale={4}
+              centerOnInit={true}
+              wheel={{ disabled: true }}
+              doubleTap={{ disabled: true }}
+            >
+              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
+                <div className="relative w-full h-full flex items-center justify-center">
+                   {loading && (
+                    <div className="absolute inset-0 flex items-center justify-center z-10">
+                      <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    </div>
+                  )}
+                  <motion.img 
+                    drag="x"
+                    dragConstraints={{ left: 0, right: 0 }}
+                    dragElastic={0.2}
+                    onDragEnd={(_, info) => {
+                      if (info.offset.x > 80) prev();
+                      else if (info.offset.x < -80) next();
+                      else if (Math.abs(info.offset.y) > 150) onClose();
+                    }}
+                    src={images[currentIndex].includes('cloudinary') ? images[currentIndex].replace('/upload/', '/upload/q_auto,f_auto/') : images[currentIndex]} 
+                    alt="" 
+                    className="max-w-full max-h-full object-contain pointer-events-auto"
+                    onLoad={() => setLoading(false)}
+                  />
+                </div>
+              </TransformComponent>
+            </TransformWrapper>
           </motion.div>
         </AnimatePresence>
 
-        {!isZooming && (
-          <>
-            {currentIndex > 0 && (
-              <button 
-                className="absolute left-6 z-[550] p-4 bg-black/40 rounded-full text-white active:scale-95 transition-all"
-                onClick={(e) => { e.stopPropagation(); prev(); }}
-              >
-                <ChevronLeft size={28} />
-              </button>
-            )}
-            {currentIndex < images.length - 1 && (
-              <button 
-                className="absolute right-6 z-[550] p-4 bg-black/40 rounded-full text-white active:scale-95 transition-all"
-                onClick={(e) => { e.stopPropagation(); next(); }}
-              >
-                <ChevronRight size={28} />
-              </button>
-            )}
-            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center">
-              <span className="text-white/40 text-[10px] font-bold tracking-[0.2em] uppercase mb-2">
-                {currentIndex + 1} / {images.length}
-              </span>
-              <div className="flex space-x-1.5">
-                {images.map((_, i) => (
-                  <div key={i} className={cn("h-1 rounded-full transition-all duration-300", i === currentIndex ? "w-6 bg-white" : "w-1.5 bg-white/20")} />
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center z-[550]">
+          <span className="text-white/40 text-[10px] font-black tracking-[0.4em] italic uppercase mb-3">
+            {currentIndex + 1} / {images.length}
+          </span>
+          <div className="flex space-x-2">
+            {images.map((_, i) => (
+              <div key={i} className={cn("h-1 rounded-full transition-all duration-500", i === currentIndex ? "w-8 bg-white shadow-[0_0_10px_rgba(255,255,255,0.5)]" : "w-1.5 bg-white/20")} />
+            ))}
+          </div>
+        </div>
       </div>
     </motion.div>
   );

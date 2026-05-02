@@ -209,14 +209,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       (window as any).currentChatUserId = activeChat.id;
       
       const cached = chatMessagesCache[activeChat.id];
-      if (cached && (Date.now() - (lastChatMessagesFetch[activeChat.id] || 0) < 60000)) {
+      if (cached) {
          setMessages(cached);
          setHasMoreMessages(cached.length >= 20);
          scrollToBottom(false);
          markMessagesAsRead(activeChat.id);
-      } else {
-         fetchMessages(activeChat.id);
       }
+      
+      // Always fetch latest to ensure we didn't miss messages while offline/away
+      fetchMessages(activeChat.id);
       
       const channel = supabase
         .channel(`chat_${activeChat.id}`)
@@ -1214,8 +1215,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  return isLocContext && (
                    <>
                      <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { 
-                       const url = `https://www.google.com/maps/search/?api=1&query=${latContext},${lngContext}`;
-                       window.open(url, '_blank');
+                       const dest = `${latContext},${lngContext}`;
+                       const iosUrl = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
+                       const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
+
+                       window.location.href = iosUrl;
+                       setTimeout(() => {
+                         window.open(webUrl, '_blank');
+                       }, 500);
                        setContextMenu(null); 
                      }}>
                        <div className="flex items-center gap-3">
@@ -1225,7 +1232,11 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                      </button>
                      <button className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-white hover:bg-white/10 rounded-xl transition-colors text-left" onClick={() => { 
                        const url = `http://maps.apple.com/?ll=${latContext},${lngContext}`;
-                       window.open(url, '_blank');
+                       window.open(url, '_system'); // _system is often used for native openers in PWAs
+                       // Fallback for standard browsers
+                       setTimeout(() => {
+                         window.open(url, '_blank');
+                       }, 100);
                        setContextMenu(null); 
                      }}>
                        <div className="flex items-center gap-3">
