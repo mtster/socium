@@ -393,6 +393,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   const handleLongPress = (e: any, msg: any) => {
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    // Prevent default context menu on iOS
+    e.preventDefault();
+    
     if (navigator.vibrate) navigator.vibrate(10);
     const el = document.getElementById(`msg-inner-${msg.id}`);
     let x = clientX, y = clientY;
@@ -414,7 +418,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
   const sendSpecialMessage = async (mediaUrl: string | null, mediaType: 'image' | 'audio' | 'location', contentStr: string = '') => {
     if (!activeChat) return;
-    const temp = { id: crypto.randomUUID(), sender_id: currentUserId, receiver_id: activeChat.id, content: contentStr, media_url: mediaUrl, media_type: mediaType, created_at: new Date().toISOString() };
+    const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+    const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.id, content: contentStr, media_url: mediaUrl, media_type: mediaType, created_at: new Date().toISOString() };
     setMessages(prev => { const nm = [...prev, temp]; chatMessagesCache[activeChat.id] = nm; return nm; });
     scrollToBottom();
     try {
@@ -427,7 +432,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !activeChat) return;
-    const temp = { id: crypto.randomUUID(), sender_id: currentUserId, receiver_id: activeChat.id, content: newMessage.trim(), created_at: new Date().toISOString() };
+    const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+    const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.id, content: newMessage.trim(), created_at: new Date().toISOString() };
     setMessages(prev => { const nm = [...prev, temp]; chatMessagesCache[activeChat.id] = nm; return nm; });
     setNewMessage('');
     scrollToBottom();
@@ -464,7 +470,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
           </motion.div>
         ) : (
-          <motion.div key="chat-room" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: "spring", stiffness: 350, damping: 35 }} className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden">
+          <motion.div key="chat-room" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: "tween", ease: "easeOut", duration: 0.25 }} className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden">
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
                <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: activeChat.id } })); onCloseChat?.(); }}>
@@ -554,9 +560,30 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </AnimatePresence>
 
       <AnimatePresence>
-        {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-48 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
+        {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-56 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
             {contextMenu.message.content && <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}><Copy size={16} className="text-white/40" />Copy Text</button>}
+            
             {contextMenu.message.media_url && <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}><Download size={16} className="text-white/40" />Save {contextMenu.message.media_type}</button>}
+            
+            {(contextMenu.message.media_type === 'location' || (contextMenu.message.content && contextMenu.message.content.includes('google.com/maps'))) && (
+              <>
+                <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3 items-center" onClick={() => { 
+                  const { lat, lng } = parseLocation(contextMenu.message.content || '');
+                  if (lat && lng) window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+                  setContextMenu(null);
+                }}>
+                  <MapPin size={16} className="text-white/40" /> Open in Google Maps
+                </button>
+                <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3 items-center" onClick={() => { 
+                  const { lat, lng } = parseLocation(contextMenu.message.content || '');
+                  if (lat && lng) window.open(`http://maps.apple.com/?daddr=${lat},${lng}`, '_blank');
+                  setContextMenu(null);
+                }}>
+                  <MapPin size={16} className="text-white/40" /> Open in Apple Maps
+                </button>
+              </>
+            )}
+
             {contextMenu.message.sender_id === currentUserId && <button className="w-full flex px-4 py-3 text-sm text-red-500 hover:bg-white/5 rounded-xl gap-3" onClick={handleDeleteMessage}><Trash2 size={16} />Delete</button>}
           </motion.div></>)}
       </AnimatePresence>
@@ -568,20 +595,74 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, s
   const isConsecutive = nextMsg?.sender_id === msg.sender_id;
   const isPrevConsecutive = prevMsg?.sender_id === msg.sender_id;
   const showAvatar = !isMine && !isConsecutive;
-  let rounded = 'rounded-[18px]';
-  if (isMine) rounded = isConsecutive ? (isPrevConsecutive ? 'rounded-[18px] rounded-tr-[4px] rounded-br-[4px]' : 'rounded-[18px] rounded-br-[4px]') : (isPrevConsecutive ? 'rounded-[18px] rounded-tr-[4px]' : 'rounded-[18px] rounded-br-[4px]');
-  else rounded = isConsecutive ? (isPrevConsecutive ? 'rounded-[18px] rounded-tl-[4px] rounded-bl-[4px]' : 'rounded-[18px] rounded-bl-[4px]') : (isPrevConsecutive ? 'rounded-[18px] rounded-tl-[4px]' : 'rounded-[18px] rounded-bl-[4px]');
+  let rounded = 'rounded-[20px]';
+  if (isMine) {
+    rounded = isConsecutive 
+      ? (isPrevConsecutive ? 'rounded-[20px] rounded-tr-[4px] rounded-br-[4px]' : 'rounded-[20px] rounded-br-[4px]') 
+      : (isPrevConsecutive ? 'rounded-[20px] rounded-tr-[4px]' : 'rounded-[20px]');
+  } else {
+    rounded = isConsecutive 
+      ? (isPrevConsecutive ? 'rounded-[20px] rounded-tl-[4px] rounded-bl-[4px]' : 'rounded-[20px] rounded-bl-[4px]') 
+      : (isPrevConsecutive ? 'rounded-[20px] rounded-tl-[4px]' : 'rounded-[20px]');
+  }
   const locMatch = msg.content?.match(/(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/);
   const isLoc = msg.media_type === 'location' || !!locMatch;
   const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
+  
   return (
-    <div className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : "mb-3")}>
-       {!isMine && <div className="w-8 shrink-0 flex items-end">{showAvatar ? <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10" onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } })); onCloseChat?.(); }}>{activeChat.avatar_url ? <img src={activeChat.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full items-center justify-center flex text-[10px] text-white/50">{(activeChat.username?.charAt(0) || '?').toUpperCase()}</div>}</div> : <div className="w-8" />}</div>}
-       <motion.div id={`msg-inner-${msg.id}`} onTouchStart={(e: any) => onTouchStart(e, msg)} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} className={cn("max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-all duration-300", rounded, !isMediaOnly && (isMine ? "bg-white text-black" : "bg-white/15 text-white"), !msg.media_type && !isLoc && "px-4 py-2.5", (msg.media_type === 'image' || isLoc) && "p-0 rounded-2xl overflow-hidden")}>
-         {msg.media_type === 'image' && msg.media_url && <img src={msg.media_url} className="w-full h-auto max-h-[450px] object-cover rounded-inherit block" onClick={() => setViewingImage(msg.media_url)} />}
+    <div className={cn("flex w-full gap-2 relative select-none touch-none", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : "mb-3")}>
+       {!isMine && (
+         <div className="w-8 shrink-0 flex items-end mb-0.5">
+           {showAvatar ? (
+             <div 
+               className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 active:scale-95 transition-transform" 
+               onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } })); onCloseChat?.(); }}
+             >
+               {activeChat.avatar_url ? <img src={activeChat.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full items-center justify-center flex text-[10px] text-white/50">{(activeChat.username?.charAt(0) || '?').toUpperCase()}</div>}
+             </div>
+           ) : <div className="w-8" />}
+         </div>
+       )}
+       <motion.div 
+         id={`msg-inner-${msg.id}`} 
+         onContextMenu={(e) => e.preventDefault()}
+         onTouchStart={(e: any) => onTouchStart(e, msg)} 
+         onTouchMove={onTouchMove} 
+         onTouchEnd={onTouchEnd} 
+         className={cn(
+           "max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-all duration-300 relative select-none", 
+           rounded, 
+           !isMediaOnly && (isMine ? "bg-white text-black shadow-sm" : "bg-[#262626] text-white shadow-sm"), 
+           !msg.media_type && !isLoc && "px-3.5 py-2", 
+           (msg.media_type === 'image' || isLoc) && "p-0 rounded-[22px] overflow-hidden"
+         )}
+       >
+         {msg.media_type === 'image' && msg.media_url && (
+           <div className="relative group">
+             <img 
+               src={msg.media_url} 
+               className="w-full h-auto max-h-[400px] object-cover block cursor-pointer" 
+               onClick={() => setViewingImage(msg.media_url)} 
+               loading="lazy"
+             />
+           </div>
+         )}
          {msg.media_type === 'audio' && msg.media_url && <AudioPlayer src={msg.media_url} isMine={isMine} />}
-         {isLoc && <div className="p-4 bg-white/10 flex items-center gap-2" onClick={() => { const { lat, lng } = parseLocation(msg.content); if(lat && lng) openInNativeMaps(lat, lng); }}><MapPin size={20} />Location</div>}
-         {msg.content && !isMediaOnly && <div className="px-4 py-2.5"><Linkify text={msg.content} /></div>}
+         {isLoc && (
+           <div className="p-3 bg-white/5 flex items-center gap-3 active:bg-white/10 transition-colors" onClick={() => { 
+             const { lat, lng } = parseLocation(msg.content); 
+             if(lat && lng) openInNativeMaps(lat, lng); 
+           }}>
+             <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center shrink-0">
+               <MapPin size={20} className="text-white" />
+             </div>
+             <div className="flex-1 min-w-0">
+               <span className="text-[13px] font-bold block">Current Location</span>
+               <span className="text-[11px] opacity-40 block truncate">Tap to open maps</span>
+             </div>
+           </div>
+         )}
+         {msg.content && !isMediaOnly && <div className={cn("px-1", isMine ? "text-black" : "text-white")}><Linkify text={msg.content} /></div>}
        </motion.div>
     </div>
   );

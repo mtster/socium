@@ -88,7 +88,7 @@ export default function App() {
         registerPush(session.user.id);
 
         const params = new URLSearchParams(window.location.search);
-        const chatId = params.get('chatId');
+        const chatId = params.get('chatId') || params.get('chat_with');
         if (chatId) {
            const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatId).single();
            if (senderProfile) {

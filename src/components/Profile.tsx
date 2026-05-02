@@ -301,43 +301,50 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1000] bg-black flex items-center justify-center p-4 overflow-hidden"
+            className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
             onClick={() => setViewingImage(null)}
           >
-            <button 
-              className="absolute top-10 right-6 z-[1010] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all border border-white/10 shadow-2xl"
-              onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
-            >
-              <X size={24} />
-            </button>
-
-            <TransformWrapper
-              initialScale={1}
-              minScale={1}
-              maxScale={4}
-              centerOnInit={true}
-            >
-              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
-                <motion.div
-                  drag="y"
-                  dragConstraints={{ top: 0, bottom: 0 }}
-                  onDragEnd={(_, info) => {
-                    if (Math.abs(info.offset.y) > 100) setViewingImage(null);
-                  }}
-                  className="w-full h-full flex items-center justify-center pointer-events-auto"
-                >
-                  <motion.img 
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.9, opacity: 0 }}
-                    src={viewingImage} 
-                    alt="Profile" 
-                    className="max-w-[95vw] max-h-[90vh] object-contain rounded-[40px] shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-white/10"
+            <div className="absolute top-0 left-0 w-full p-6 pt-[env(safe-area-inset-top,24px)] flex justify-end z-[1010]">
+              <button 
+                className="w-12 h-12 bg-white/10 rounded-full text-white flex items-center justify-center active:scale-90 transition-all border border-white/10"
+                onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+              >
+                <X size={28} />
+              </button>
+            </div>
+            
+            <div className="w-full h-full flex items-center justify-center p-4">
+              <TransformWrapper
+                initialScale={1}
+                minScale={1}
+                maxScale={4}
+                centerOnInit={true}
+              >
+                <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
+                  <motion.div
+                    drag="y"
+                    dragConstraints={{ top: 0, bottom: 0 }}
+                    dragElastic={0.6}
+                    onDragEnd={(_, info) => {
+                      if (Math.abs(info.offset.y) > 80) setViewingImage(null);
+                    }}
+                    className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
                     onClick={(e) => e.stopPropagation()}
-                  />
-                </motion.div>
-              </TransformComponent>
-            </TransformWrapper>
+                  >
+                    <motion.img 
+                      layoutId="profile-pfp"
+                      src={viewingImage} 
+                      alt="Profile" 
+                      className="max-w-[95vw] max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/5"
+                    />
+                  </motion.div>
+                </TransformComponent>
+              </TransformWrapper>
+            </div>
+            
+            <div className="absolute bottom-10 left-0 w-full flex justify-center pointer-events-none opacity-30 select-none">
+              <p className="text-white text-[10px] uppercase tracking-[0.3em]">Swipe up or down to close</p>
+            </div>
           </motion.div>,
           document.body
         )}
