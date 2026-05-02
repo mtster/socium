@@ -42,11 +42,16 @@ export default function App() {
       setViewingProfileId(null);
       setActiveTab('chat');
     };
+    const handleOpenProfile = (e: any) => {
+      setInitialActiveChat(null);
+      handleUserClick(e.detail.userId);
+    };
     const handleViewerState = (e: any) => {
       setIsImageViewerOpen(e.detail.isOpen);
     };
 
     window.addEventListener('openChat', handleOpenChat);
+    window.addEventListener('openProfile', handleOpenProfile);
     window.addEventListener('viewerState', handleViewerState);
 
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
@@ -99,6 +104,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('openChat', handleOpenChat);
+      window.removeEventListener('openProfile', handleOpenProfile);
       window.removeEventListener('viewerState', handleViewerState);
     };
   }, []);
@@ -558,7 +564,7 @@ export default function App() {
                initial={{ opacity: 0, x: 20 }} 
                animate={{ opacity: 1, x: 0 }} 
                exit={{ opacity: 0, x: -20 }}
-               className="flex-1 flex flex-col min-h-0 relative z-10 w-full max-w-lg mx-auto border-x border-white/5 bg-black"
+               className="absolute inset-0 z-10 flex flex-col bg-black"
              >
                <Chat 
                  currentUserId={session.user.id} 
