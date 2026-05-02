@@ -116,7 +116,7 @@ serve(async (req) => {
       if (message.media_type === 'image') {
         bodyText = 'Sent you an image';
       } else if (message.media_type === 'audio') {
-        bodyText = 'Sent you a voice message';
+        bodyText = 'Sent you voice message';
       } else if (message.media_type === 'location') {
         bodyText = 'Sent you a location';
       } else {

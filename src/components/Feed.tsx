@@ -9,17 +9,22 @@ interface FeedProps {
   onUserClick: (userId: string) => void;
 }
 
+let cachedPosts: Post[] | null = null;
+let lastFetchTime = 0;
+
 export default function Feed({ currentUserId, onUserClick }: FeedProps) {
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [posts, setPosts] = useState<Post[]>(cachedPosts || []);
+  const [loading, setLoading] = useState(!cachedPosts);
 
   useEffect(() => {
-    fetchPosts();
+    if (!cachedPosts || Date.now() - lastFetchTime > 60000) {
+      fetchPosts();
+    }
   }, []);
 
   async function fetchPosts() {
     try {
-      setLoading(true);
+      if (!cachedPosts) setLoading(true);
       
       // Get connections
       const { data: connectionsData } = await supabase
@@ -67,6 +72,8 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
          return true; // Empty array or null means visible to all connections
       });
 
+      cachedPosts = processed as any;
+      lastFetchTime = Date.now();
       setPosts(processed as any);
     } catch (error) {
       console.error('Error fetching posts:', error);
@@ -87,6 +94,15 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       }
       return p;
     }));
+    
+    if (cachedPosts) {
+      cachedPosts = cachedPosts.map(p => {
+        if (p.id === postId) {
+          return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1) };
+        }
+        return p;
+      });
+    }
 
     try {
       if (isLiked) {
@@ -108,7 +124,9 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
     try {
       const { error } = await supabase.from('posts').delete().eq('id', postId);
       if (error) throw error;
-      setPosts(posts.filter(p => p.id !== postId));
+      const newPosts = posts.filter(p => p.id !== postId);
+      setPosts(newPosts);
+      cachedPosts = newPosts;
     } catch (error: any) {
       alert(`Failed to delete: ${error.message}`);
     }

@@ -73,15 +73,40 @@ export default function App() {
 
     if (session?.user?.id) {
       const getUnread = async () => {
-        const { count } = await supabase
+        const { data } = await supabase
           .from('messages')
-          .select('*', { count: 'exact', head: true })
+          .select('sender_id')
           .eq('receiver_id', session.user.id)
           .is('read_at', null);
-        setTotalUnread(count || 0);
+          
+        if (data) {
+          const unreadCount = new Set(data.map(d => d.sender_id)).size;
+          setTotalUnread(unreadCount);
+          if ('setAppBadge' in navigator) {
+            (navigator as any).setAppBadge(unreadCount).catch(console.error);
+          }
+        }
       };
 
       getUnread();
+
+      // Check url param
+      if (typeof window !== 'undefined') {
+         const urlParams = new URLSearchParams(window.location.search);
+         const chatWith = urlParams.get('chat_with');
+         if (chatWith) {
+           setTimeout(async () => {
+             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatWith).single();
+             if (senderProfile) {
+               window.history.replaceState({}, document.title, window.location.pathname);
+               setFloatingAvatar(null);
+               setInitialActiveChat(senderProfile);
+               setViewingProfileId(null);
+               setActiveTab('chat');
+             }
+           }, 500);
+         }
+      }
 
       globalUnreadChannel = supabase.channel('global_unread')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, async (payload) => {
@@ -126,6 +151,23 @@ export default function App() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((err) => {
         console.error('SW registration failed:', err);
+      });
+
+      navigator.serviceWorker.addEventListener('message', async (event) => {
+        if (event.data === 'PING_VISIBILITY' && event.ports[0]) {
+          if (document.visibilityState === 'visible') {
+            event.ports[0].postMessage('VISIBLE');
+          }
+        }
+        if (event.data && event.data.type === 'OPEN_CHAT' && event.data.senderId) {
+          const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', event.data.senderId).single();
+          if (senderProfile) {
+             setFloatingAvatar(null);
+             setInitialActiveChat(senderProfile);
+             setViewingProfileId(null);
+             setActiveTab('chat');
+          }
+        }
       });
     }
   }, []);
@@ -260,11 +302,18 @@ export default function App() {
     }
   }
 
+  const postsCache = React.useRef<Record<string, { time: number, data: Post[] }>>({});
+
   // Reload posts when switching back to profile tab
   useEffect(() => {
     (window as any).currentActiveTab = activeTab;
     if (session?.user?.id && activeTab === 'profile') {
-      fetchUserPosts(session.user.id);
+      const cached = postsCache.current[session.user.id];
+      if (!cached || Date.now() - cached.time > 60000) {
+        fetchUserPosts(session.user.id);
+      } else if (cached) {
+        setUserPosts(cached.data);
+      }
     }
     if (activeTab === 'chat' && !hasSeenPromo && session?.user) {
       setHasSeenPromo(true);
@@ -301,6 +350,7 @@ export default function App() {
         });
       }
 
+      postsCache.current[userId] = { time: Date.now(), data: processed as any };
       setUserPosts(processed as any);
     }
   }

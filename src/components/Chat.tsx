@@ -25,17 +25,91 @@ const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
-  const audioRef = useRef<HTMLAudioElement>(null);
+  
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const bufferRef = useRef<AudioBuffer | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const pauseTimeRef = useRef<number>(0);
+  const rafRef = useRef<number>(0);
 
-  const toggle = () => {
-    if (playing) audioRef.current?.pause();
-    else audioRef.current?.play();
-    setPlaying(!playing);
+  useEffect(() => {
+    let active = true;
+    const fetchAudio = async () => {
+      try {
+        const response = await fetch(src);
+        const arrayBuffer = await response.arrayBuffer();
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current.decodeAudioData(arrayBuffer, (buffer) => {
+          if (active) {
+            bufferRef.current = buffer;
+            setDuration(buffer.duration);
+          }
+        });
+      } catch (e) {
+        console.error("AudioPlayer decode error:", e);
+      }
+    };
+    fetchAudio();
+
+    return () => {
+      active = false;
+      if (sourceRef.current) sourceRef.current.stop();
+      if (audioCtxRef.current) audioCtxRef.current.close();
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [src]);
+
+  const updateProgress = () => {
+    if (!audioCtxRef.current || !bufferRef.current || !playing) return;
+    const currentTime = audioCtxRef.current.currentTime - startTimeRef.current;
+    if (currentTime >= bufferRef.current.duration) {
+      setPlaying(false);
+      setProgress(100);
+      pauseTimeRef.current = 0;
+      return;
+    }
+    setProgress((currentTime / bufferRef.current.duration) * 100);
+    rafRef.current = requestAnimationFrame(updateProgress);
   };
 
-  const onTimeUpdate = () => {
-    if (audioRef.current) {
-      setProgress((audioRef.current.currentTime / audioRef.current.duration) * 100);
+  useEffect(() => {
+    if (playing) {
+      rafRef.current = requestAnimationFrame(updateProgress);
+    } else {
+      cancelAnimationFrame(rafRef.current);
+    }
+  }, [playing]);
+
+  const toggle = () => {
+    if (!audioCtxRef.current) return;
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+    
+    if (playing) {
+      if (sourceRef.current) {
+        sourceRef.current.stop();
+        sourceRef.current.disconnect();
+      }
+      pauseTimeRef.current = audioCtxRef.current.currentTime - startTimeRef.current;
+      setPlaying(false);
+    } else {
+      if (!bufferRef.current) return;
+      const source = audioCtxRef.current.createBufferSource();
+      source.buffer = bufferRef.current;
+      source.connect(audioCtxRef.current.destination);
+      
+      const offset = pauseTimeRef.current >= bufferRef.current.duration ? 0 : pauseTimeRef.current;
+      if (offset === 0) setProgress(0);
+      
+      startTimeRef.current = audioCtxRef.current.currentTime - offset;
+      source.start(0, offset);
+      source.onended = () => {
+         // managed by raf logic mostly to stop at 100
+      };
+      sourceRef.current = source;
+      setPlaying(true);
     }
   };
 
@@ -44,14 +118,6 @@ const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
       "flex items-center gap-3 px-3 py-2 rounded-[24px] min-w-[180px] backdrop-blur-md transition-all duration-300",
       isMine ? "bg-white text-black" : "bg-white/20 text-white"
     )}>
-      <audio 
-        ref={audioRef} 
-        src={src} 
-        onTimeUpdate={onTimeUpdate} 
-        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
-        onEnded={() => setPlaying(false)} 
-        className="hidden" 
-      />
       <button 
         onClick={toggle}
         className={cn(
@@ -65,11 +131,12 @@ const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
         <motion.div 
           initial={false}
           animate={{ width: `${progress}%` }}
+          transition={{ duration: 0.1 }}
           className="h-full bg-current" 
         />
       </div>
       <span className="text-[10px] font-medium opacity-50 w-8">
-        {duration > 0 || audioRef.current?.duration ? `${Math.floor(duration || audioRef.current?.duration || 0)}s` : '...'}
+        {duration > 0 ? `${Math.floor(duration)}s` : '...'}
       </span>
     </div>
   );
@@ -82,13 +149,20 @@ interface ChatProps {
   onCloseChat?: () => void;
 }
 
+let chatConnectionsCache: any[] | null = null;
+let lastChatListFetch = 0;
+let chatMessagesCache: Record<string, any[]> = {};
+let lastChatMessagesFetch: Record<string, number> = {};
+
 export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: ChatProps) {
-  const [connections, setConnections] = useState<(Profile & { lastMessage?: any, unreadCount?: number })[]>([]);
+  const [connections, setConnections] = useState<(Profile & { lastMessage?: any, unreadCount?: number })[]>(chatConnectionsCache || []);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeChat, setActiveChat] = useState<Profile | null>(initialActiveChat || null);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!chatConnectionsCache);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [showFeatures, setShowFeatures] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   
@@ -126,13 +200,24 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   }, [initialActiveChat]);
 
   useEffect(() => {
-    fetchConnectionsAndRecentMessages();
+    if (!chatConnectionsCache || Date.now() - lastChatListFetch > 60000) {
+      fetchConnectionsAndRecentMessages();
+    }
   }, [currentUserId]);
 
   useEffect(() => {
     if (activeChat) {
       (window as any).currentChatUserId = activeChat.id;
-      fetchMessages(activeChat.id);
+      
+      const cached = chatMessagesCache[activeChat.id];
+      if (cached && (Date.now() - (lastChatMessagesFetch[activeChat.id] || 0) < 60000)) {
+         setMessages(cached);
+         setHasMoreMessages(cached.length >= 50);
+         scrollToBottom();
+         markMessagesAsRead(activeChat.id);
+      } else {
+         fetchMessages(activeChat.id);
+      }
       
       const channel = supabase
         .channel(`chat_${activeChat.id}`)
@@ -146,7 +231,11 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
           },
           (payload) => {
             if (payload.new.receiver_id === currentUserId) {
-              setMessages((prev) => [...prev, payload.new]);
+              setMessages((prev) => {
+                const newMsgs = [...prev, payload.new];
+                chatMessagesCache[activeChat.id] = newMsgs;
+                return newMsgs;
+              });
               markMessagesAsRead(activeChat.id);
               scrollToBottom();
             }
@@ -243,6 +332,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
         return new Date(b.lastMessage.created_at).getTime() - new Date(a.lastMessage.created_at).getTime();
       });
 
+      chatConnectionsCache = connectionsWithMessages;
+      lastChatListFetch = Date.now();
       setConnections(connectionsWithMessages);
     } catch (error) {
       console.error(error);
@@ -251,18 +342,39 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     }
   };
 
-  const fetchMessages = async (otherUserId: string) => {
+  const fetchMessages = async (otherUserId: string, loadOld = false) => {
+    if (loadOld) setLoadingMessages(true);
+    const offset = loadOld ? page * 50 : 0;
+    
+    // We fetch in descending order to get the latest messages first, then reverse them
     const { data } = await supabase
       .from('messages')
       .select('*')
       .or(`sender_id.eq.${otherUserId},receiver_id.eq.${otherUserId}`)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .range(offset, offset + 49);
     
     if (data) {
-      setMessages(data);
-      scrollToBottom();
-      markMessagesAsRead(otherUserId);
+      const orderedData = data.reverse();
+      if (loadOld) {
+        setMessages(prev => {
+          const newMsgs = [...orderedData, ...prev];
+          chatMessagesCache[otherUserId] = newMsgs;
+          return newMsgs;
+        });
+        setPage(p => p + 1);
+        setHasMoreMessages(data.length === 50);
+      } else {
+        setMessages(orderedData);
+        chatMessagesCache[otherUserId] = orderedData;
+        lastChatMessagesFetch[otherUserId] = Date.now();
+        scrollToBottom();
+        markMessagesAsRead(otherUserId);
+        setPage(1);
+        setHasMoreMessages(data.length === 50);
+      }
     }
+    if (loadOld) setLoadingMessages(false);
   };
 
   const markMessagesAsRead = async (senderId: string) => {
@@ -323,7 +435,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/mp4' });
         const dataUrl = URL.createObjectURL(audioBlob);
         setPendingMedia({ file: audioBlob, type: 'audio', dataUrl });
         stream.getTracks().forEach(track => track.stop());
@@ -480,7 +592,11 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       created_at: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, tempMessage]);
+    setMessages(prev => {
+        const newMsgs = [...prev, tempMessage];
+        chatMessagesCache[activeChat.id] = newMsgs;
+        return newMsgs;
+    });
     scrollToBottom();
 
     setConnections(prev => {
@@ -520,7 +636,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
       created_at: new Date().toISOString(),
     };
 
-    setMessages([...messages, tempMessage]);
+    const tempMsgs = [...messages, tempMessage];
+    setMessages(tempMsgs);
+    chatMessagesCache[activeChat.id] = tempMsgs;
     setNewMessage('');
     scrollToBottom();
 
@@ -643,6 +761,17 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-1">
+               {hasMoreMessages && messages.length >= 50 && (
+                 <div className="flex justify-center mb-4">
+                   <button 
+                     onClick={() => fetchMessages(activeChat.id, true)}
+                     disabled={loadingMessages}
+                     className="bg-white/10 text-white text-xs font-bold px-4 py-2 rounded-full active:scale-95 transition-transform"
+                   >
+                     {loadingMessages ? 'Loading...' : 'Load Previous Messages'}
+                   </button>
+                 </div>
+               )}
                {messages.map((msg, i) => {
                  const isMine = msg.sender_id === currentUserId;
                  const nextMsg = messages[i + 1];
@@ -671,9 +800,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                     <div 
                       key={msg.id} 
                       className={cn("flex w-full gap-2 relative select-none", isMine ? "justify-end" : "justify-start", marginClass)}
-                      onContextMenu={(e) => { e.preventDefault(); handleLongPress(e, msg); }}
-                      onTouchStart={(e) => onTouchStart(e, msg)}
-                      onTouchEnd={onTouchEnd}
                     >
                        {!isMine && (
                            <div className="w-8 shrink-0 flex items-end">
@@ -701,6 +827,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                          id={`msg-inner-${msg.id}`}
                          initial={false}
                          whileTap={{ scale: contextMenu?.message?.id === msg.id ? 1.05 : 0.98 }}
+                         onContextMenu={(e: any) => { e.preventDefault(); handleLongPress(e, msg); }}
+                         onTouchStart={(e: any) => onTouchStart(e, msg)}
+                         onTouchEnd={onTouchEnd}
                          className={cn(
                            "max-w-[75%] min-w-[2rem] text-[15px] leading-[1.3] whitespace-pre-wrap break-words overflow-hidden transition-all duration-300",
                            roundedClass,

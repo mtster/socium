@@ -26,16 +26,42 @@ messaging.onBackgroundMessage(function(payload) {
     }
   };
 
-  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async function(clientList) {
     let isVisible = false;
-    for (let i = 0; i < clientList.length; i++) {
-      if (clientList[i].visibilityState === 'visible') {
-        isVisible = true;
-        break;
-      }
+
+    // Check basic properties
+    if (clientList.some(c => c.visibilityState === 'visible' || c.focused)) {
+      isVisible = true;
     }
+
+    // Try pinging if optimistic check failed (for iOS reliability)
+    if (!isVisible && clientList.length > 0) {
+      isVisible = await new Promise((resolve) => {
+        const channel = new MessageChannel();
+        let answered = false;
+        
+        channel.port1.onmessage = (event) => {
+          if (event.data === 'VISIBLE') {
+            answered = true;
+            resolve(true);
+          }
+        };
+        
+        for (const client of clientList) {
+          client.postMessage('PING_VISIBILITY', [channel.port2]);
+        }
+        
+        setTimeout(() => {
+          if (!answered) resolve(false);
+        }, 1500); // give it 1.5 seconds to reply
+      });
+    }
+
     if (!isVisible) {
       self.registration.showNotification(notificationTitle, notificationOptions);
+      if (navigator.setAppBadge) {
+        navigator.setAppBadge(); // set a dot badge or number if available
+      }
     }
   });
 });
@@ -45,17 +71,25 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   const urlToOpen = event.notification.data?.url || '/';
+  const senderId = event.notification.data?.senderId;
+
+  if (navigator.clearAppBadge) {
+    navigator.clearAppBadge();
+  }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
-        if (client.url.indexOf(urlToOpen) !== -1 && 'focus' in client) {
+        if ('focus' in client) {
+          if (senderId) client.postMessage({ type: 'OPEN_CHAT', senderId });
           return client.focus();
         }
       }
       if (clients.openWindow) {
-        return clients.openWindow(urlToOpen);
+         let targetUrl = urlToOpen;
+         if (senderId) targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'chat_with=' + senderId;
+         return clients.openWindow(targetUrl);
       }
     })
   );
