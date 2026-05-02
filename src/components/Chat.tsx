@@ -8,7 +8,10 @@ import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 
 const parseLocation = (content: string) => {
   if (!content) return { lat: null, lng: null };
-  const locMatch = content.match(/query=([-0-9.]+),([-0-9.]+)/) || content.match(/([-0-9.]+),([-0-9.]+)/);
+  const locMatch = content.match(/query=([-0-9.]+),([-0-9.]+)/) || 
+                   content.match(/ll=([-0-9.]+),([-0-9.]+)/) ||
+                   content.match(/([-0-9.]+),([-0-9.]+)/) ||
+                   content.match(/google\.com\/maps\/search\/([-0-9.]+),([-0-9.]+)/);
   if (locMatch) return { lat: parseFloat(locMatch[1]), lng: parseFloat(locMatch[2]) };
   return { lat: null, lng: null };
 };
@@ -16,27 +19,17 @@ const parseLocation = (content: string) => {
 const openInNativeMaps = (lat: number, lng: number) => {
   const dest = `${lat},${lng}`;
   const iosUrl = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
-  const appleUrl = `http://maps.apple.com/?ll=${lat},${lng}`;
   const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
 
   // Try Google Maps native scheme first
-  const tryOpen = (url: string) => {
-    window.location.href = url;
-  };
-
-  tryOpen(iosUrl);
+  window.location.href = iosUrl;
   
-  // Fallback chain
+  // Fallback to web maps after a longer delay to avoid double triggering if app opened
   setTimeout(() => {
-    // If google maps failed, try apple maps for iOS device
-    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
-      window.open(appleUrl, '_system');
-    }
-    // Final fallback to web maps
-    setTimeout(() => {
-       window.open(webUrl, '_blank');
-    }, 100);
-  }, 500);
+     // We check if the page is still visible. If the app opened, document.hidden might be true or we just don't open the fallback.
+     // However, simpler is just to open web if native failed.
+     window.open(webUrl, '_blank');
+  }, 1000);
 };
 
 const Linkify = ({ text }: { text: string }) => {
@@ -56,10 +49,11 @@ const Linkify = ({ text }: { text: string }) => {
               className="underline underline-offset-2 break-all opacity-80 hover:opacity-100 transition-opacity"
               onClick={(e) => {
                 if (isMapUrl) {
-                  e.preventDefault();
                   const { lat, lng } = parseLocation(part);
-                  if (lat && lng) openInNativeMaps(lat, lng);
-                  else window.open(part, '_blank');
+                  if (lat !== null && lng !== null) {
+                    e.preventDefault();
+                    openInNativeMaps(lat, lng);
+                  }
                 }
               }}
             >
@@ -936,18 +930,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                    else { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-3'; }
                  }
                  
-                 let isLoc = msg.media_type === 'location';
-                 let lat = '', lng = '';
-                 const locMatch = msg.content?.match(/https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=([-0-9.]+),([-0-9.]+)/);
-                 if (locMatch) {
-                   isLoc = true;
-                   lat = locMatch[1];
-                   lng = locMatch[2];
-                 } else if (msg.media_type === 'location' && msg.content) {
-                   [lat, lng] = msg.content.split(',');
-                 }
+                 const isLocDirect = msg.media_type === 'location';
+                 const locUrlRegex = /(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/;
+                 const locMatch = msg.content?.match(locUrlRegex);
+                 const parsedLoc = locMatch ? parseLocation(locMatch[0]) : (isLocDirect && msg.content ? parseLocation(msg.content) : { lat: null, lng: null });
+                 const isLoc = isLocDirect || (parsedLoc.lat !== null && parsedLoc.lng !== null);
+                 const { lat, lng } = parsedLoc;
                  
-                 const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || locMatch);
+                 const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
 
                  return (
                     <div 
@@ -1005,16 +995,18 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                          {msg.media_type === 'audio' && msg.media_url && (
                            <AudioPlayer src={msg.media_url} isMine={isMine} />
                          )}
-                         {isLoc && lat && lng && (
+                         {isLoc && lat !== null && lng !== null && (
                            <div 
-                             className="w-full aspect-square bg-[#121212] overflow-hidden relative shadow-2xl flex flex-col items-center justify-center border border-white/10 cursor-pointer active:brightness-90 transition-all block group"
-                             onClick={() => openInNativeMaps(parseFloat(lat), parseFloat(lng))}
+                             className="w-full aspect-square bg-[#121212] overflow-hidden relative shadow-2xl flex flex-col items-center justify-center border border-white/10 cursor-pointer active:scale-95 transition-all block group"
+                             onClick={() => openInNativeMaps(lat, lng)}
                            >
-                             <div className="w-14 h-14 bg-white/5 rounded-full flex items-center justify-center mb-3 border border-white/10 shadow-inner group-active:scale-95 transition-transform">
-                               <MapPin size={28} className="text-white/80" />
+                             <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/10 shadow-[inset_0_4px_12px_rgba(255,255,255,0.05)] group-active:scale-90 transition-transform">
+                               <MapPin size={32} className="text-white/90 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]" />
                              </div>
-                             <span className="text-white font-black text-sm tracking-tight uppercase italic underline underline-offset-4 decoration-white/20">Location</span>
-                             <span className="text-white/30 text-[9px] font-black tracking-[0.4em] uppercase mt-3">Navigate</span>
+                             <div className="flex flex-col items-center text-center px-4">
+                               <span className="text-white font-bold text-base tracking-tight mb-1">Shared Location</span>
+                               <span className="text-white/30 text-[10px] font-black tracking-[0.2em] uppercase">Click to open in Google Maps</span>
+                             </div>
                            </div>
                          )}
                          {msg.content && !isMediaOnly && (

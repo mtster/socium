@@ -256,12 +256,16 @@ export default function App() {
   };
 
   const handleDeletePost = async (postId: string) => {
-    if (!confirm('Are you sure you want to delete this post?')) return;
-    
     try {
       const { error } = await supabase.from('posts').delete().eq('id', postId);
       if (error) throw error;
       setUserPosts(userPosts.filter(p => p.id !== postId));
+      if (viewingProfileData) {
+        setViewingProfileData({
+          ...viewingProfileData,
+          posts: viewingProfileData.posts.filter(p => p.id !== postId)
+        });
+      }
     } catch (error: any) {
       alert(`Failed to delete: ${error.message}`);
     }
