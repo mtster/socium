@@ -71,7 +71,14 @@ self.addEventListener('notificationclick', function(event) {
   console.log('[firebase-messaging-sw.js] Notification click Received.', event);
   event.notification.close();
 
-  const urlToOpen = event.notification.data?.url || '/';
+  let urlToOpen = event.notification.data?.url || '/';
+  if (event.notification.data?.senderId) {
+    if (urlToOpen === '/') {
+        urlToOpen = `/?chatId=${event.notification.data.senderId}`;
+    } else {
+        urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${event.notification.data.senderId}`;
+    }
+  }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
@@ -79,6 +86,9 @@ self.addEventListener('notificationclick', function(event) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
+          if (event.notification.data?.senderId) {
+            client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
+          }
           return client.focus();
         }
       }

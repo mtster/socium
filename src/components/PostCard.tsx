@@ -458,16 +458,23 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
               <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
                 <motion.div 
                   className="relative w-full h-full flex items-center justify-center touch-none"
-                  drag={scale === 1 ? "both" : false}
+                  drag={scale <= 1.05 ? "both" : false}
                   dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
                   dragElastic={0.4}
+                  dragDirectionLock
                   onDragEnd={(_, info) => {
-                    if (scale > 1) return;
-                    const xThreshold = 30; // Reduced threshold for better feel
-                    const yThreshold = 80;
-                    if (info.offset.x > xThreshold) prev();
-                    else if (info.offset.x < -xThreshold) next();
-                    else if (Math.abs(info.offset.y) > yThreshold) onClose();
+                    if (scale > 1.05) return;
+                    const xThreshold = 60;
+                    const yThreshold = 100;
+                    
+                    // Prioritize vertical gestures for closing if angle is steep
+                    if (Math.abs(info.offset.y) > yThreshold && Math.abs(info.offset.y) > Math.abs(info.offset.x) * 1.5) {
+                        onClose();
+                    } else if (info.offset.x > xThreshold) {
+                        prev();
+                    } else if (info.offset.x < -xThreshold) {
+                        next();
+                    }
                   }}
                 >
                    {loading && (

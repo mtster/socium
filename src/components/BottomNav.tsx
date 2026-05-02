@@ -22,7 +22,7 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
   ];
 
   return (
-    <nav className="shrink-0 bg-black/90 border-t border-white/10 glass pb-safe relative z-40">
+    <nav className="shrink-0 bg-black/90 border-t border-white/10 glass pb-safe relative z-40 [touch-action:none]">
       <div className="h-[60px] flex items-center justify-around w-full relative">
         {tabs.map((tab) => {
           const Icon = tab.icon;

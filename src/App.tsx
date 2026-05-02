@@ -47,21 +47,45 @@ export default function App() {
       window.history.replaceState({}, document.title, '/');
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       if (session) {
         fetchProfileData(session.user.id);
         registerPush(session.user.id);
+
+        const params = new URLSearchParams(window.location.search);
+        const chatId = params.get('chatId');
+        if (chatId) {
+           const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatId).single();
+           if (senderProfile) {
+              setInitialActiveChat(senderProfile);
+              setActiveTab('chat');
+              // remove the param from url
+              window.history.replaceState({}, document.title, window.location.pathname);
+           }
+        }
       }
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       if (session) {
         fetchProfileData(session.user.id);
         registerPush(session.user.id);
+
+        const params = new URLSearchParams(window.location.search);
+        const chatId = params.get('chatId');
+        if (chatId) {
+           const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatId).single();
+           if (senderProfile) {
+              setInitialActiveChat(senderProfile);
+              setActiveTab('chat');
+              // remove the param from url
+              window.history.replaceState({}, document.title, window.location.pathname);
+           }
+        }
       }
     });
 
@@ -365,7 +389,7 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90">
+      <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
         <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
         <div className="flex space-x-4">
           {activeTab === 'chat' && !initialActiveChat && (
@@ -419,7 +443,7 @@ export default function App() {
       <AddToHomeScreenModal />
 
       {/* Main View Area */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden relative">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
         <AnimatePresence mode="wait">
            {activeTab === 'feed' && (
              <motion.div 

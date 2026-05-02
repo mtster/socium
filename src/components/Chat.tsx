@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, MoreHorizontal, Play, Pause, SendHorizonal } from 'lucide-react';
 
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
@@ -225,6 +226,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const [longPressTimer, setLongPressTimer] = useState<any>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -774,6 +776,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     (c.full_name || c.username)?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 70, // rough height of a message
+    overscan: 10,
+  });
+
   return (
     <div className="flex flex-col h-full bg-black overflow-hidden relative">
       <AnimatePresence initial={false}>
@@ -796,7 +805,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  />
                </div>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
               {!loading && filteredConnections.length === 0 ? (
                 <div className="p-8 text-center text-white/40 text-sm">No connections found</div>
               ) : (
@@ -867,8 +876,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
 
             {/* Messages Area */}
             <div 
+              ref={scrollContainerRef}
               id="chat-messages-container"
-              className="flex-1 overflow-y-auto p-4 space-y-1 relative no-scrollbar"
+              className="flex-1 overflow-y-auto p-4 space-y-1 relative no-scrollbar [-webkit-overflow-scrolling:touch] [will-change:transform]"
               onScroll={(e) => {
                 const target = e.target as HTMLDivElement;
                 // Detect if at top for potential pull interaction start
@@ -941,56 +951,46 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                    </div>
                  </div>
                )}
-               {messages.map((msg, i) => {
-                 const isMine = msg.sender_id === currentUserId;
-                 const nextMsg = messages[i + 1];
-                 const prevMsg = messages[i - 1];
-                 const isConsecutive = nextMsg && nextMsg.sender_id === msg.sender_id;
-                 const isPrevConsecutive = prevMsg && prevMsg.sender_id === msg.sender_id;
-                 const showAvatar = !isMine && !isConsecutive;
+               <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                 {virtualizer.getVirtualItems().map((virtualItem) => {
+                   const i = virtualItem.index;
+                   const msg = messages[i];
+                   const isMine = msg.sender_id === currentUserId;
+                   const nextMsg = messages[i + 1];
+                   const prevMsg = messages[i - 1];
 
-                 let roundedClass = 'rounded-[18px]';
-                 let marginClass = 'mb-3';
-                 if (isMine) {
-                   if (isConsecutive && isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tr-[4px] rounded-br-[4px]'; marginClass = 'mb-[2px]'; }
-                   else if (isConsecutive) { roundedClass = 'rounded-[18px] rounded-br-[4px]'; marginClass = 'mb-[2px]'; }
-                   else if (isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tr-[4px]'; marginClass = 'mb-3'; }
-                   else { roundedClass = 'rounded-[18px] rounded-br-[4px]'; marginClass = 'mb-3'; }
-                 } else {
-                   if (isConsecutive && isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tl-[4px] rounded-bl-[4px]'; marginClass = 'mb-[2px]'; }
-                   else if (isConsecutive) { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-[2px]'; }
-                   else if (isPrevConsecutive) { roundedClass = 'rounded-[18px] rounded-tl-[4px]'; marginClass = 'mb-3'; }
-                   else { roundedClass = 'rounded-[18px] rounded-bl-[4px]'; marginClass = 'mb-3'; }
-                 }
-                 
-                 const isLocDirect = msg.media_type === 'location';
-                 const locUrlRegex = /(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/;
-                 const locMatch = msg.content?.match(locUrlRegex);
-                 const parsedLoc = locMatch ? parseLocation(locMatch[0]) : (isLocDirect && msg.content ? parseLocation(msg.content) : { lat: null, lng: null });
-                 const isLoc = isLocDirect || (parsedLoc.lat !== null && parsedLoc.lng !== null);
-                 const { lat, lng } = parsedLoc;
-                 
-                 const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
-
-                 return (
-                    <MessageBubble 
-                      key={msg.id}
-                      msg={msg}
-                      isMine={isMine}
-                      nextMsg={nextMsg}
-                      prevMsg={prevMsg}
-                      activeChat={activeChat}
-                      currentUserId={currentUserId}
-                      setViewingImage={setViewingImage}
-                      handleLongPress={handleLongPress}
-                      contextMenu={contextMenu}
-                      onTouchStart={onTouchStart}
-                      onTouchMove={onTouchMove}
-                      onTouchEnd={onTouchEnd}
-                      onCloseChat={onCloseChat}
-                    />
-                  );
-               })}
+                   return (
+                      <div
+                        key={virtualItem.key}
+                        data-index={virtualItem.index}
+                        ref={virtualizer.measureElement}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualItem.start}px)`,
+                        }}
+                      >
+                         <MessageBubble 
+                           msg={msg}
+                           isMine={isMine}
+                           nextMsg={nextMsg}
+                           prevMsg={prevMsg}
+                           activeChat={activeChat}
+                           currentUserId={currentUserId}
+                           setViewingImage={setViewingImage}
+                           handleLongPress={handleLongPress}
+                           contextMenu={contextMenu}
+                           onTouchStart={onTouchStart}
+                           onTouchMove={onTouchMove}
+                           onTouchEnd={onTouchEnd}
+                           onCloseChat={onCloseChat}
+                         />
+                      </div>
+                    );
+                 })}
+               </div>
                <div ref={messagesEndRef} className="h-4" />
             </div>
 
