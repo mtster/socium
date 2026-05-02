@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Camera, Image as ImageIcon, X, Send, Search } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
@@ -122,12 +123,12 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
     }
   };
 
-  return (
+  return createPortal(
     <motion.div 
       initial={{ opacity: 0, y: 50 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 50 }}
-      className="fixed inset-0 z-50 bg-black flex flex-col"
+      className="fixed inset-0 z-50 bg-black flex flex-col w-full max-w-lg mx-auto border-x border-white/5"
     >
       <div className="flex items-center justify-between px-4 h-16 border-b border-white/10 shrink-0">
         <button onClick={onClose} className="text-white/60 active:scale-95 transition-transform p-2">
@@ -290,6 +291,7 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
         className="hidden" 
         accept="image/*" 
       />
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }

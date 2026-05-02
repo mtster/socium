@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Heart, MessageCircle, Send, MoreHorizontal, Trash, Edit2, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { Post } from '@/src/types';
@@ -278,7 +279,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         </div>
       </div>
 
-      <div className="w-full h-px bg-white/5 my-6" />
+      <div className="w-full max-w-[90%] mx-auto h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent my-8" />
 
       <AnimatePresence>
         {showComments && (
@@ -420,7 +421,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
     })
   };
 
-  return (
+  return createPortal(
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -443,7 +444,24 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
             initial="enter"
             animate="center"
             exit="exit"
-            className="w-full h-full flex items-center justify-center"
+            className="w-full h-full flex items-center justify-center touch-none"
+            drag={scale <= 1.05 ? "both" : false}
+            dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+            dragElastic={0.4}
+            dragDirectionLock
+            onDragEnd={(_, info) => {
+              if (scale > 1.05) return;
+              const xThreshold = 60;
+              const yThreshold = 100;
+              
+              if (Math.abs(info.offset.y) > yThreshold && Math.abs(info.offset.y) > Math.abs(info.offset.x) * 1.5) {
+                  onClose();
+              } else if (info.offset.x > xThreshold) {
+                  prev();
+              } else if (info.offset.x < -xThreshold) {
+                  next();
+              }
+            }}
           >
             <TransformWrapper
               initialScale={1}
@@ -452,31 +470,11 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
               centerOnInit={true}
               wheel={{ disabled: false }}
               doubleTap={{ step: 0.5 }}
-              panning={{ disabled: scale === 1, velocityDisabled: false }}
+              panning={{ disabled: scale <= 1.05, velocityDisabled: false }}
               onTransformed={(ref) => setScale(ref.state.scale)}
             >
               <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
-                <motion.div 
-                  className="relative w-full h-full flex items-center justify-center touch-none"
-                  drag={scale <= 1.05 ? "both" : false}
-                  dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-                  dragElastic={0.4}
-                  dragDirectionLock
-                  onDragEnd={(_, info) => {
-                    if (scale > 1.05) return;
-                    const xThreshold = 60;
-                    const yThreshold = 100;
-                    
-                    // Prioritize vertical gestures for closing if angle is steep
-                    if (Math.abs(info.offset.y) > yThreshold && Math.abs(info.offset.y) > Math.abs(info.offset.x) * 1.5) {
-                        onClose();
-                    } else if (info.offset.x > xThreshold) {
-                        prev();
-                    } else if (info.offset.x < -xThreshold) {
-                        next();
-                    }
-                  }}
-                >
+                <div className="relative w-full h-full flex items-center justify-center">
                    {loading && (
                     <div className="absolute inset-0 flex items-center justify-center z-10">
                       <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -489,7 +487,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
                     onLoad={() => setLoading(false)}
                     draggable={false}
                   />
-                </motion.div>
+                </div>
               </TransformComponent>
             </TransformWrapper>
           </motion.div>
@@ -512,6 +510,7 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
           </div>
         </div>
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }

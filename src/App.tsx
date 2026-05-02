@@ -30,6 +30,7 @@ export default function App() {
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
+  const [isChatRoomOpen, setIsChatRoomOpen] = useState(false);
   const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
 
@@ -389,27 +390,29 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
-        <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
-        <div className="flex space-x-4">
-          {activeTab === 'chat' && !initialActiveChat && (
-            <button 
-              onClick={() => {
-                setShowNotifPromoPopup(false);
-                if ('Notification' in window && notifPermission !== 'granted') {
-                  registerPush(session.user.id, true);
-                }
-              }}
-              className="text-white hover:text-white/80 transition-colors relative"
-            >
-              <Bell size={24} />
-              {notifPermission === 'granted' && (
-                <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
-              )}
-            </button>
-          )}
-        </div>
-      </header>
+      {(activeTab !== 'create' && !isChatRoomOpen) && (
+        <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
+          <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
+          <div className="flex space-x-4">
+            {activeTab === 'chat' && !initialActiveChat && (
+              <button 
+                onClick={() => {
+                  setShowNotifPromoPopup(false);
+                  if ('Notification' in window && notifPermission !== 'granted') {
+                    registerPush(session.user.id, true);
+                  }
+                }}
+                className="text-white hover:text-white/80 transition-colors relative"
+              >
+                <Bell size={24} />
+                {notifPermission === 'granted' && (
+                  <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
+                )}
+              </button>
+            )}
+          </div>
+        </header>
+      )}
 
       {/* Promo Popup */}
       <AnimatePresence>
@@ -554,6 +557,7 @@ export default function App() {
                  currentUserId={session.user.id} 
                  initialActiveChat={initialActiveChat}
                  onCloseChat={() => setInitialActiveChat(null)}
+                 onChatStateChange={setIsChatRoomOpen}
                />
              </motion.div>
            )}
@@ -561,14 +565,16 @@ export default function App() {
       </main>
 
       {/* Navigation */}
-      <BottomNav 
-         activeTab={activeTab} 
-         setActiveTab={setActiveTab} 
-         unreadCount={totalUnread} 
-         floatingAvatar={floatingAvatar}
-         setFloatingAvatar={setFloatingAvatar}
-         showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
-      />
+      {(activeTab !== 'create' && !isChatRoomOpen) && (
+        <BottomNav 
+           activeTab={activeTab} 
+           setActiveTab={setActiveTab} 
+           unreadCount={totalUnread} 
+           floatingAvatar={floatingAvatar}
+           setFloatingAvatar={setFloatingAvatar}
+           showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
+        />
+      )}
       
     </div>
   );

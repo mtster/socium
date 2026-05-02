@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -195,6 +196,7 @@ interface ChatProps {
   currentUserId: string;
   initialActiveChat?: Profile | null;
   onCloseChat?: () => void;
+  onChatStateChange?: (isOpen: boolean) => void;
 }
 
 let chatConnectionsCache: any[] | null = null;
@@ -202,10 +204,14 @@ let lastChatListFetch = 0;
 let chatMessagesCache: Record<string, any[]> = {};
 let lastChatMessagesFetch: Record<string, number> = {};
 
-export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: ChatProps) {
+export default function Chat({ currentUserId, initialActiveChat, onCloseChat, onChatStateChange }: ChatProps) {
   const [connections, setConnections] = useState<(Profile & { lastMessage?: any, unreadCount?: number })[]>(chatConnectionsCache || []);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeChat, setActiveChat] = useState<Profile | null>(initialActiveChat || null);
+
+  useEffect(() => {
+    onChatStateChange?.(!!activeChat);
+  }, [activeChat, onChatStateChange]);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(!chatConnectionsCache);
@@ -232,6 +238,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<any>(null);
+
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 70, // rough height of a message
+    overscan: 10,
+  });
 
   const handleDeleteMessage = async () => {
     if (!contextMenu?.message) return;
@@ -438,25 +451,21 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     if (data) {
       const orderedData = data.reverse();
       if (loadOld) {
-        // Record scroll height before adding messages
-        const container = document.getElementById('chat-messages-container');
-        const oldScrollHeight = container?.scrollHeight || 0;
-
         setMessages(prev => {
           // Prepend only if not already present
           const existingIds = new Set(prev.map(m => m.id));
           const filteredNew = orderedData.filter(m => !existingIds.has(m.id));
+          if (filteredNew.length === 0) return prev;
+          
           const newMsgs = [...filteredNew, ...prev];
           chatMessagesCache[otherUserId] = newMsgs;
-          return newMsgs;
-        });
 
-        // After state update, adjust scroll
-        requestAnimationFrame(() => {
-          if (container) {
-            const newScrollHeight = container.scrollHeight;
-            container.scrollTop = newScrollHeight - oldScrollHeight;
-          }
+          // After state update, adjust scroll using virtualizer
+          requestAnimationFrame(() => {
+            virtualizer.scrollToIndex(filteredNew.length, { align: 'start' });
+          });
+          
+          return newMsgs;
         });
 
         setPage(p => p + 1);
@@ -776,13 +785,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
     (c.full_name || c.username)?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const virtualizer = useVirtualizer({
-    count: messages.length,
-    getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 70, // rough height of a message
-    overscan: 10,
-  });
-
   return (
     <div className="flex flex-col h-full bg-black overflow-hidden relative">
       <AnimatePresence initial={false}>
@@ -841,14 +843,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
             </div>
           </motion.div>
         ) : (
-          <motion.div
-            key="chat-room"
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            transition={{ type: "spring", stiffness: 350, damping: 35 }}
-            className="flex-1 flex flex-col h-[100dvh] fixed inset-0 z-[100] w-full max-w-lg mx-auto bg-black border-x border-white/5"
-          >
+          createPortal(
+            <motion.div
+              key="chat-room"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: "spring", stiffness: 350, damping: 35 }}
+              className="flex-1 flex flex-col h-[100dvh] fixed inset-0 z-[100] w-full max-w-lg mx-auto bg-black border-x border-white/5"
+            >
             {/* Room Header */}
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 shrink-0 active:scale-90 transition-transform">
@@ -909,7 +912,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                 
                 const diff = touch.clientY - startY;
                 if (diff > 0) {
-                  const progress = Math.min(diff / 100, 1);
+                  const progress = Math.min(diff / 180, 1);
                   setPullProgress(progress);
                   if (progress >= 1 && pullProgress < 1) {
                     if (navigator.vibrate) navigator.vibrate(10);
@@ -928,14 +931,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                <AnimatePresence>
                 {pullProgress > 0 && (
                   <motion.div 
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: pullProgress * 40, opacity: pullProgress }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="flex justify-center items-center overflow-hidden"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: pullProgress }}
+                    exit={{ scale: 0.8, opacity: 0 }}
+                    className="absolute top-4 left-0 w-full flex justify-center items-center z-50 pointer-events-none"
                   >
                     <div className={cn(
-                      "text-[10px] uppercase tracking-widest font-bold transition-all",
-                      pullProgress >= 1 ? "text-white" : "text-white/30"
+                      "text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10 transition-all",
+                      pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50"
                     )}>
                       {pullProgress >= 1 ? "Release to load" : "Pull for history"}
                     </div>
@@ -944,8 +947,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                </AnimatePresence>
 
                {loadingMessages && (
-                 <div className="flex justify-center mb-4 transition-all">
-                   <div className="bg-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center justify-center gap-2">
+                 <div className="absolute top-4 left-0 w-full flex justify-center z-50 pointer-events-none">
+                   <div className="bg-black/60 backdrop-blur-md border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center justify-center gap-2 shadow-xl">
                      <span className="w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                      Loading...
                    </div>
@@ -1107,12 +1110,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                  e.target.value = '';
                }} />
             </form>
-          </motion.div>
+          </motion.div>,
+          document.body
+          )
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {pendingMedia && (
+        {pendingMedia && createPortal(
           <motion.div
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1168,12 +1173,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                 Send <SendHorizonal size={20} className="ml-1" />
               </button>
             </div>
-          </motion.div>
+          </motion.div>,
+          document.body
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {viewingImage && (
+        {viewingImage && createPortal(
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1190,7 +1196,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                 </TransformComponent>
               </TransformWrapper>
             </motion.div>
-          </motion.div>
+          </motion.div>,
+          document.body
         )}
       </AnimatePresence>
 
