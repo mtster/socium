@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
@@ -288,16 +289,16 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     <div className="pb-6 relative">
       {/* Full Screen Image Viewer */}
       <AnimatePresence>
-        {viewingImage && (
+        {viewingImage && createPortal(
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[500] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 overflow-hidden"
+            className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 overflow-hidden"
             onClick={() => setViewingImage(null)}
           >
             <button 
-              className="absolute top-6 right-6 z-[510] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all border border-white/10 shadow-2xl"
+              className="absolute top-safe right-6 mt-6 z-[1010] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all border border-white/10 shadow-2xl"
               onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
             >
               <X size={24} />
@@ -324,13 +325,14 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     exit={{ scale: 0.9, opacity: 0 }}
                     src={viewingImage} 
                     alt="Profile" 
-                    className="max-w-[90vw] max-h-[85vh] object-contain rounded-[40px] shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-white/10"
+                    className="max-w-[95vw] max-h-[90vh] object-contain rounded-[40px] shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-white/10"
                     onClick={(e) => e.stopPropagation()}
                   />
                 </motion.div>
               </TransformComponent>
             </TransformWrapper>
-          </motion.div>
+          </motion.div>,
+          document.body
         )}
       </AnimatePresence>
 
@@ -578,7 +580,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                        <img src={conn.avatar_url} alt={conn.username} className="w-full h-full object-cover" />
                     ) : (
                        <div className="w-full h-full flex items-center justify-center text-white/40 text-xl font-bold">
-                         {conn.username[0].toUpperCase()}
+                         {(conn.username?.[0] || conn.full_name?.[0] || '?').toUpperCase()}
                        </div>
                     )}
                   </div>

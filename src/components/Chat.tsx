@@ -809,7 +809,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                         {c.avatar_url ? (
                           <img src={c.avatar_url} alt="" className="w-full h-full object-cover" />
                         ) : (
-                           <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{c.username?.charAt(0).toUpperCase()}</div>
+                           <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{(c.username?.charAt(0) || c.full_name?.charAt(0) || '?').toUpperCase()}</div>
                         )}
                      </div>
                      <div className="flex-1 text-left overflow-hidden">
@@ -830,14 +830,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
               )}
             </div>
           </motion.div>
-        ) : (
+        ) : createPortal(
           <motion.div
             key="chat-room"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: "spring", stiffness: 350, damping: 35 }}
-            className="absolute inset-0 z-[100] flex flex-col bg-black"
+            className="fixed inset-0 z-[100] flex flex-col bg-black w-full max-w-lg mx-auto border-x border-white/5"
           >
             {/* Room Header */}
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
@@ -855,7 +855,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                     {activeChat.avatar_url ? (
                       <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" />
                     ) : (
-                       <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{activeChat.username?.charAt(0).toUpperCase()}</div>
+                       <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{(activeChat.username?.charAt(0) || activeChat.full_name?.charAt(0) || '?').toUpperCase()}</div>
                     )}
                   </div>
                   <div className="flex flex-col group-active:opacity-70 transition-opacity">
@@ -1084,7 +1084,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                  e.target.value = '';
                }} />
             </form>
-          </motion.div>
+          </motion.div>,
+          document.body
         )}
       </AnimatePresence>
 
@@ -1322,7 +1323,7 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, c
                    {activeChat.avatar_url ? (
                      <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" />
                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-white/50">{activeChat.username?.charAt(0).toUpperCase()}</div>
+                      <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-white/50">{(activeChat.username?.charAt(0) || activeChat.full_name?.charAt(0) || '?').toUpperCase()}</div>
                    )}
                  </div>
                ) : (
