@@ -24,12 +24,12 @@ const openInNativeMaps = (lat: number, lng: number) => {
   // Try Google Maps native scheme first
   window.location.href = iosUrl;
   
-  // Fallback to web maps after a longer delay to avoid double triggering if app opened
+  // Fallback ONLY if the device doesn't have the app installed
   setTimeout(() => {
-     // We check if the page is still visible. If the app opened, document.hidden might be true or we just don't open the fallback.
-     // However, simpler is just to open web if native failed.
-     window.open(webUrl, '_blank');
-  }, 1000);
+     if (!document.hidden) {
+       window.open(webUrl, '_blank');
+     }
+  }, 1500);
 };
 
 const Linkify = ({ text }: { text: string }) => {
@@ -998,14 +998,21 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                          {isLoc && lat !== null && lng !== null && (
                            <div 
                              className="w-full aspect-square bg-[#121212] overflow-hidden relative shadow-2xl flex flex-col items-center justify-center border border-white/10 cursor-pointer active:scale-95 transition-all block group"
-                             onClick={() => openInNativeMaps(lat, lng)}
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               openInNativeMaps(lat, lng);
+                             }}
                            >
-                             <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/10 shadow-[inset_0_4px_12px_rgba(255,255,255,0.05)] group-active:scale-90 transition-transform">
+                             <div className="absolute top-4 left-0 right-0 flex justify-center">
+                               <span className="text-white font-bold text-sm tracking-tight">Shared Location</span>
+                             </div>
+                             
+                             <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center border border-white/10 shadow-[inset_0_4px_12px_rgba(255,255,255,0.05)] group-active:scale-90 transition-transform">
                                <MapPin size={32} className="text-white/90 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]" />
                              </div>
-                             <div className="flex flex-col items-center text-center px-4">
-                               <span className="text-white font-bold text-base tracking-tight mb-1">Shared Location</span>
-                               <span className="text-white/30 text-[10px] font-black tracking-[0.2em] uppercase">Click to open in Google Maps</span>
+
+                             <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                               <span className="text-white/30 text-[10px] font-black tracking-[0.05em] uppercase">Click to open in Google Maps</span>
                              </div>
                            </div>
                          )}
@@ -1170,11 +1177,18 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat }: 
                 </div>
               )}
               {pendingMedia.type === 'location' && pendingMedia.locationString && (
-                <div className="w-full max-w-xs aspect-square border border-white/20 rounded-2xl overflow-hidden relative shadow-2xl bg-[#1c1c1c] flex flex-col items-center justify-center">
-                  <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-3">
-                    <MapPin size={32} className="text-white" />
+                <div className="w-full max-w-xs aspect-square bg-[#121212] overflow-hidden relative shadow-2xl flex flex-col items-center justify-center border border-white/10 rounded-2xl">
+                  <div className="absolute top-6 left-0 right-0 flex justify-center">
+                    <span className="text-white font-bold text-base tracking-tight">Shared Location</span>
                   </div>
-                  <span className="text-white font-bold text-sm">Shared Location</span>
+                  
+                  <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center border border-white/10 shadow-[inset_0_4px_12px_rgba(255,255,255,0.05)]">
+                    <MapPin size={40} className="text-white/90 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]" />
+                  </div>
+
+                  <div className="absolute bottom-6 left-0 right-0 flex justify-center">
+                    <span className="text-white/30 text-[11px] font-black tracking-[0.05em] uppercase">Click to open in Google Maps</span>
+                  </div>
                 </div>
               )}
             </div>

@@ -240,9 +240,9 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                 >
                   <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" loading="lazy" />
                   {isLastShown && moreCount > 0 && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-[2px]">
-                       <div className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg">
-                         <span className="text-white text-sm font-black tabular-nums">+{moreCount}</span>
+                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center backdrop-blur-[1px]">
+                       <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg transform transition-transform group-active:scale-90">
+                         <span className="text-white text-base font-bold tabular-nums">+{moreCount}</span>
                        </div>
                     </div>
                   )}
@@ -323,12 +323,12 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
             >
               <h3 className="text-white text-base font-bold mb-2 tracking-tight">Are you sure you want to remove this moment?</h3>
               <p className="text-white/40 text-[13px] mb-8 leading-relaxed font-medium">
-                This action cannot be undone.
+                This action can't be undone.
               </p>
               <div className="flex gap-3">
                 <button 
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="flex-1 bg-white/5 text-white/50 font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/10 text-sm"
+                  className="flex-1 bg-white/5 text-white/70 font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/10 text-sm"
                 >
                   Cancel
                 </button>
@@ -337,7 +337,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                     onDelete?.(post.id);
                     setShowDeleteConfirm(false);
                   }}
-                  className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.2)]"
+                  className="flex-1 bg-[#ef4444] text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
                 >
                   Delete
                 </button>
@@ -463,10 +463,11 @@ function ImageDetailView({ images, initialIndex, onClose }: { images: string[], 
                   dragElastic={0.4}
                   onDragEnd={(_, info) => {
                     if (scale > 1) return;
-                    const threshold = 100;
-                    if (info.offset.x > threshold) prev();
-                    else if (info.offset.x < -threshold) next();
-                    else if (Math.abs(info.offset.y) > threshold) onClose();
+                    const xThreshold = 40;
+                    const yThreshold = 80;
+                    if (info.offset.x > xThreshold) prev();
+                    else if (info.offset.x < -xThreshold) next();
+                    else if (Math.abs(info.offset.y) > yThreshold) onClose();
                   }}
                 >
                    {loading && (

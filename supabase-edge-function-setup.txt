@@ -124,21 +124,36 @@ serve(async (req) => {
       }
     }
 
-    const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
+    dedupedSubscriptions.forEach(async (sub: any) => {
       const fcmToken = sub.endpoint;
       
+      // Calculate badge count (total unread messages for this user)
+      const { count: unreadCount } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', message.receiver_id)
+        .is('read_at', null);
+
       const payload = {
         token: fcmToken,
-        data: {
+        notification: {
           title: senderName,
-          body: bodyText,
+          body: bodyText
+        },
+        data: {
           url: "/",
           senderId: message.sender_id || ""
         },
         apns: {
           payload: {
             aps: {
-              'content-available': 1 // Enable background update format
+              alert: {
+                title: senderName,
+                body: bodyText
+              },
+              badge: Number(unreadCount || 0), // CRITICAL: APNs requires an INTEGER
+              sound: 'default',
+              'content-available': 1
             }
           }
         }
