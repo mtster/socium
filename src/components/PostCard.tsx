@@ -65,7 +65,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       className="mb-6 bg-black pb-4 relative"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
+      <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div 
           className="flex items-center space-x-3 cursor-pointer group"
           onClick={() => onUserClick?.(post.user_id)}
@@ -240,9 +240,9 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                 >
                   <img src={getOptimizedUrl(img)} alt="" className="w-full h-full object-cover" loading="lazy" />
                   {isLastShown && moreCount > 0 && (
-                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center backdrop-blur-[1px]">
-                       <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg transform transition-transform group-active:scale-90">
-                         <span className="text-white text-base font-bold tabular-nums">+{moreCount}</span>
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center backdrop-blur-[0.5px]">
+                       <div className="w-12 h-12 rounded-full bg-[#1c1c1c]/90 border border-white/10 flex items-center justify-center shadow-2xl transition-transform active:scale-90">
+                         <span className="text-white text-sm font-bold tabular-nums">+{moreCount}</span>
                        </div>
                     </div>
                   )}
@@ -253,11 +253,9 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
         );
       })()}
 
-      <div className="w-full h-px bg-white/5 mt-4 mb-2" />
-
       {/* Interactions */}
-      <div className="px-4 py-3 mt-1">
-        <div className="flex items-center space-x-2.5 mb-3">
+      <div className="px-4 py-1">
+        <div className="flex items-center space-x-2.5">
           <button 
             onClick={() => onLike?.(post.id, !!post.has_liked)}
             className={cn("flex items-center justify-center space-x-2 px-4 py-2 rounded-full border active:scale-95 transition-all text-sm font-medium", post.has_liked ? "bg-red-500/10 border-red-500/20 text-red-500" : "bg-white/5 border-white/10 hover:bg-white/10 text-white/90")}
@@ -279,6 +277,8 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
           </button>
         </div>
       </div>
+
+      <div className="w-full h-[0.5px] bg-white/5 mt-4" />
 
       <AnimatePresence>
         {showComments && (
@@ -337,7 +337,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                     onDelete?.(post.id);
                     setShowDeleteConfirm(false);
                   }}
-                  className="flex-1 bg-[#ef4444] text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
+                  className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
                 >
                   Delete
                 </button>

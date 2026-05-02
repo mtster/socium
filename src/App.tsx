@@ -13,17 +13,23 @@ import CompleteProfileModal from './components/CompleteProfileModal';
 import { Bell } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 
+import { useStore } from './store/useStore';
+
 export default function App() {
+  const { 
+    profile, setProfile, 
+    userPosts, setUserPosts, 
+    totalUnread, setTotalUnread, 
+    floatingAvatar, setFloatingAvatar,
+    fetchProfile, fetchUserPosts, fetchUnreadCount
+  } = useStore();
+
   const [session, setSession] = useState<any>(undefined);
   const [activeTab, setActiveTab] = useState('feed');
   const [isProfileError, setIsProfileError] = useState(false);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
-  const [totalUnread, setTotalUnread] = useState(0);
-  const [floatingAvatar, setFloatingAvatar] = useState<Profile | null>(null);
   const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
 
@@ -44,7 +50,7 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
-        fetchProfile(session.user.id);
+        fetchProfileData(session.user.id);
         registerPush(session.user.id);
       }
     });
@@ -54,7 +60,7 @@ export default function App() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        fetchProfile(session.user.id);
+        fetchProfileData(session.user.id);
         registerPush(session.user.id);
       }
     });
@@ -72,23 +78,7 @@ export default function App() {
 
     if (session?.user?.id) {
       const getUnread = async () => {
-        const { data } = await supabase
-          .from('messages')
-          .select('sender_id')
-          .eq('receiver_id', session.user.id)
-          .is('read_at', null);
-          
-        if (data) {
-          const unreadCount = new Set(data.map(d => d.sender_id)).size;
-          setTotalUnread(unreadCount);
-          
-          // Persistence for PWA badge
-          if (unreadCount > 0 && typeof (navigator as any).setAppBadge === 'function') {
-            (navigator as any).setAppBadge(unreadCount).catch(() => {});
-          } else if (unreadCount === 0 && typeof (navigator as any).clearAppBadge === 'function') {
-            (navigator as any).clearAppBadge().catch(() => {});
-          }
-        }
+        await fetchUnreadCount(session.user.id);
       };
 
       forceGetUnreadHandler = () => getUnread();
@@ -271,28 +261,11 @@ export default function App() {
     }
   };
 
-  async function fetchProfile(userId: string) {
+  async function fetchProfileData(userId: string) {
     try {
       setIsProfileError(false);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        console.warn('Profile not found or error fetching:', error.message);
-        if (error.code === '42P01') {
-           // PostgreSQL relation does not exist
-           alert('DATABASE ERROR: The "profiles" table does not exist in your Supabase database!\n\nPlease go to Supabase -> SQL Editor and paste the contents of SCHEMA.sql to create the tables.');
-           setIsProfileError(true);
-        } else {
-           await createInitialProfile(userId);
-        }
-      } else {
-        setProfile(data);
-        fetchUserPosts(userId);
-      }
+      await fetchProfile(userId);
+      fetchUserPosts(userId, userId);
     } catch (error) {
       console.error('Error fetching profile:', error);
       setIsProfileError(true);
@@ -321,18 +294,11 @@ export default function App() {
     }
   }
 
-  const postsCache = React.useRef<Record<string, { time: number, data: Post[] }>>({});
-
   // Reload posts when switching back to profile tab
   useEffect(() => {
     (window as any).currentActiveTab = activeTab;
     if (session?.user?.id && activeTab === 'profile') {
-      const cached = postsCache.current[session.user.id];
-      if (!cached || Date.now() - cached.time > 60000) {
-        fetchUserPosts(session.user.id);
-      } else if (cached) {
-        setUserPosts(cached.data);
-      }
+      fetchUserPosts(session.user.id, session.user.id);
     }
     if (activeTab === 'chat' && !hasSeenPromo && session?.user) {
       setHasSeenPromo(true);
@@ -341,42 +307,11 @@ export default function App() {
     }
   }, [activeTab, session?.user, hasSeenPromo]);
 
-  async function fetchUserPosts(userId: string) {
-    const { data } = await supabase
-      .from('posts')
-      .select('*, profiles(*), likes(user_id), comments(id)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    
-    if (data) {
-      const viewerId = session?.user?.id;
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
-      let isViewingSelf = viewerId === userId;
-      let processed = data.map((p: any) => ({
-        ...p,
-        likes_count: p.likes?.length || 0,
-        has_liked: p.likes?.some((l: any) => l.user_id === viewerId),
-        comments_count: p.comments?.length || 0
-      }));
-
-      // Filter by visibility if not viewing self
-      if (!isViewingSelf && viewerId !== ADMIN_ID) {
-        processed = processed.filter(post => {
-           if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-              return post.visible_to.includes(viewerId);
-           }
-           return true;
-        });
-      }
-
-      postsCache.current[userId] = { time: Date.now(), data: processed as any };
-      setUserPosts(processed as any);
-    }
-  }
+  // Removed local fetchUserPosts as it's in the store now
 
   const handleLikeProfilePost = async (postId: string, isLiked: boolean) => {
     // Optimistic Update
-    setUserPosts(prev => prev.map(p => {
+    setUserPosts(userPosts.map(p => {
       if (p.id === postId) {
         return {
           ...p,
@@ -396,7 +331,7 @@ export default function App() {
     } catch (e) {
       console.error(e);
       // Revert if error
-      fetchUserPosts(viewingProfileId || session.user.id);
+      fetchUserPosts(viewingProfileId || session.user.id, session.user.id);
     }
   };
 
@@ -479,7 +414,7 @@ export default function App() {
       {/* Modals and Overlays */}
       <CompleteProfileModal 
         profile={profile} 
-        onComplete={() => { if (session?.user?.id) fetchProfile(session.user.id); }} 
+        onComplete={() => { if (session?.user?.id) fetchProfileData(session.user.id); }} 
       />
       <AddToHomeScreenModal />
 
@@ -515,7 +450,7 @@ export default function App() {
                    onUserClick={handleUserClick}
                    onDeletePost={handleDeletePost}
                    onLikePost={handleLikeProfilePost}
-                   onRefetch={() => { fetchUserPosts(session.user.id); }}
+                   onRefetch={() => { fetchUserPosts(session.user.id, session.user.id); }}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
@@ -577,7 +512,7 @@ export default function App() {
                 userId={session.user.id}
                 onSuccess={() => {
                   setActiveTab('feed');
-                  fetchUserPosts(session.user.id);
+                  fetchUserPosts(session.user.id, session.user.id);
                 }}
                 onCancel={() => setActiveTab('feed')}
              />

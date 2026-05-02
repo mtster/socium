@@ -3,88 +3,31 @@ import { supabase } from '@/src/lib/supabase';
 import { Post } from '@/src/types';
 import PostCard from './PostCard';
 import { motion } from 'motion/react';
+import { useStore } from '../store/useStore';
 
 interface FeedProps {
   currentUserId: string;
   onUserClick: (userId: string) => void;
 }
 
-let cachedPosts: Post[] | null = null;
-let lastFetchTime = 0;
-
 export default function Feed({ currentUserId, onUserClick }: FeedProps) {
-  const [posts, setPosts] = useState<Post[]>(cachedPosts || []);
-  const [loading, setLoading] = useState(!cachedPosts);
+  const { feedPosts, fetchFeedPosts } = useStore();
+  const [loading, setLoading] = useState(feedPosts.length === 0);
 
   useEffect(() => {
-    if (!cachedPosts || Date.now() - lastFetchTime > 60000) {
-      fetchPosts();
+    if (feedPosts.length === 0) {
+      fetchFeedPosts(currentUserId).then(() => setLoading(false));
+    } else {
+      setLoading(false);
+      // Background refresh
+      fetchFeedPosts(currentUserId);
     }
   }, []);
 
-  async function fetchPosts() {
-    try {
-      if (!cachedPosts) setLoading(true);
-      
-      // Get connections
-      const { data: connectionsData } = await supabase
-        .from('connections')
-        .select(`requester_id, receiver_id`)
-        .eq('status', 'accepted')
-        .or(`requester_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
-        
-      const connectionIds = [currentUserId, '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2'];
-      if (connectionsData) {
-        connectionsData.forEach(c => {
-          if (c.requester_id !== currentUserId) connectionIds.push(c.requester_id);
-          if (c.receiver_id !== currentUserId) connectionIds.push(c.receiver_id);
-        });
-      }
-
-      const { data, error } = await supabase
-        .from('posts')
-        .select(`
-          *,
-          profiles:user_id (*),
-          likes(user_id),
-          comments(id)
-        `)
-        .in('user_id', connectionIds)
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      if (error) throw error;
-      
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
-      
-      let processed = (data || []).map((p: any) => ({
-        ...p,
-        likes_count: p.likes?.length || 0,
-        has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
-        comments_count: p.comments?.length || 0
-      }));
-
-      processed = processed.filter((post: any) => {
-         if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
-         if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-            return post.visible_to.includes(currentUserId);
-         }
-         return true; // Empty array or null means visible to all connections
-      });
-
-      cachedPosts = processed as any;
-      lastFetchTime = Date.now();
-      setPosts(processed as any);
-    } catch (error) {
-      console.error('Error fetching posts:', error);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   const handleLikePost = async (postId: string, isLiked: boolean) => {
+    const { setFeedPosts } = useStore.getState();
     // Optimistic UI update
-    setPosts(prev => prev.map(p => {
+    setFeedPosts(feedPosts.map(p => {
       if (p.id === postId) {
         return {
           ...p,
@@ -95,15 +38,6 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       return p;
     }));
     
-    if (cachedPosts) {
-      cachedPosts = cachedPosts.map(p => {
-        if (p.id === postId) {
-          return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1) };
-        }
-        return p;
-      });
-    }
-
     try {
       if (isLiked) {
         const { error } = await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', currentUserId);
@@ -114,7 +48,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       }
     } catch (error) {
       // Revert on error
-      fetchPosts();
+      fetchFeedPosts(currentUserId);
     }
   };
 
@@ -124,9 +58,8 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
     try {
       const { error } = await supabase.from('posts').delete().eq('id', postId);
       if (error) throw error;
-      const newPosts = posts.filter(p => p.id !== postId);
-      setPosts(newPosts);
-      cachedPosts = newPosts;
+      const { setFeedPosts } = useStore.getState();
+      setFeedPosts(feedPosts.filter(p => p.id !== postId));
     } catch (error: any) {
       alert(`Failed to delete: ${error.message}`);
     }
@@ -143,8 +76,8 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
 
   return (
     <div className="pb-6">
-      {posts.length > 0 ? (
-        posts.map((post: Post, i) => (
+      {feedPosts.length > 0 ? (
+        feedPosts.map((post: Post) => (
           <div key={post.id}>
             <PostCard 
               post={post} 
@@ -152,11 +85,8 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
               onUserClick={onUserClick}
               onDelete={handleDeletePost}
               onLike={handleLikePost}
-              onRefetch={fetchPosts}
+              onRefetch={() => fetchFeedPosts(currentUserId)}
             />
-            {i < posts.length - 1 && (
-              <div className="mx-0 mb-4 border-t border-white/10" />
-            )}
           </div>
         ))
       ) : (

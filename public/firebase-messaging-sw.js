@@ -60,9 +60,6 @@ messaging.onBackgroundMessage(function(payload) {
 
     if (!isVisible) {
       self.registration.showNotification(notificationTitle, notificationOptions);
-      if (navigator.setAppBadge) {
-        navigator.setAppBadge(); // set a dot badge or number if available
-      }
     }
   });
 });
@@ -72,46 +69,20 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   const urlToOpen = event.notification.data?.url || '/';
-  const senderId = event.notification.data?.senderId;
-
-  // if (navigator.clearAppBadge) {
-  //   navigator.clearAppBadge();
-  // }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
-      // 1. Try to find a client that is already open and focused
-      for (let i = 0; i < windowClients.length; i++) {
-        const client = windowClients[i];
-        if (client.visibilityState === 'visible' && 'focus' in client) {
-          if (senderId) {
-            client.postMessage({ type: 'OPEN_CHAT', senderId });
-          }
-          return client.focus();
-        }
-      }
-      
-      // 2. If app is open but not focused, focus it and send message
+      // 1. Try to find a client that is already open
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
-          if (senderId) {
-            client.postMessage({ type: 'OPEN_CHAT', senderId });
-          }
           return client.focus();
         }
       }
       
-      // 3. Fallback: open a new window with deep link param
+      // 2. Fallback: open a new window
       if (clients.openWindow) {
-         let targetUrl = urlToOpen;
-         if (senderId) {
-           const baseUrl = targetUrl.split('?')[0];
-           const params = new URLSearchParams(targetUrl.split('?')[1] || '');
-           params.set('chat_with', senderId);
-           targetUrl = `${baseUrl}?${params.toString()}`;
-         }
-         return clients.openWindow(targetUrl);
+         return clients.openWindow(urlToOpen);
       }
     })
   );

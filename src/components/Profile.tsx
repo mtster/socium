@@ -32,7 +32,10 @@ async function getAdminProfile() {
 let profileConnectionsCache: Record<string, any[]> = {};
 let profileConnectionsTime: Record<string, number> = {};
 
+import { useStore } from '../store/useStore';
+
 export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
+  const { userPosts, fetchUserPosts } = useStore();
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -597,7 +600,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       {/* Posts */}
       <div className="w-full space-y-0">
-        {posts.map((post) => (
+        {(isOwnProfile ? userPosts : posts).map((post) => (
           <div key={post.id} className="relative">
             <PostCard 
               post={post} 
@@ -607,10 +610,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
               onLike={onLikePost}
               onRefetch={onRefetch}
             />
-            <div className="w-full h-px bg-white/5 opacity-50" />
           </div>
         ))}
-        {posts.length === 0 && (
+        {(isOwnProfile ? userPosts : posts).length === 0 && (
           <div className="py-20 flex flex-col items-center justify-center text-white/20">
              <Camera size={32} className="mb-4 opacity-20" />
              <p className="text-xs uppercase tracking-widest font-medium">No moments captured</p>
