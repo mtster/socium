@@ -361,10 +361,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   const handleMediaMessage = async (file: File | Blob, type: 'image' | 'audio') => {
     setUploadingMedia(true);
     setShowFeatures(false);
+    console.log(`Starting upload for ${type} file:`, file);
     try {
       const url = await uploadToCloudinary(file, type === 'audio' ? 'video' : 'image');
+      console.log('Upload success, URL:', url);
       await sendSpecialMessage(url, type);
-    } catch (e) { alert('Upload failed'); } finally { setUploadingMedia(false); }
+    } catch (e) {
+      console.error('Media upload failed:', e);
+      alert('Upload failed: ' + (e as Error).message);
+    } finally { setUploadingMedia(false); }
   };
 
   const saveToDevice = async (url: string, filename: string, mediaType?: string) => {
@@ -403,10 +408,20 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     if (el) {
       const rect = el.getBoundingClientRect();
       const isMineMsg = msg.sender_id === currentUserId;
-      x = isMineMsg ? Math.max(10, rect.left - 200) : Math.min(window.innerWidth - 202, rect.right + 8);
-      y = Math.min(window.innerHeight - 180, rect.top);
+      
+      // Calculate suggested position
+      let suggestedX = isMineMsg ? rect.left - 200 : rect.right + 10;
+      let suggestedY = rect.top;
+      
+      // Responsive constraints (clamping)
+      const menuWidth = 220;
+      const menuHeight = 240;
+      
+      const x = Math.max(10, Math.min(suggestedX, window.innerWidth - menuWidth - 10));
+      const y = Math.max(10, Math.min(suggestedY, window.innerHeight - menuHeight - 10));
+      
+      setContextMenu({ x, y, message: msg });
     }
-    setContextMenu({ x, y, message: msg });
   };
 
   const onTouchStart = (e: any, msg: any) => {
@@ -560,7 +575,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </AnimatePresence>
 
       <AnimatePresence>
-        {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-56 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
+        {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-auto min-w-[200px] bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
             {contextMenu.message.content && <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}><Copy size={16} className="text-white/40" />Copy Text</button>}
             
             {contextMenu.message.media_url && <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}><Download size={16} className="text-white/40" />Save {contextMenu.message.media_type}</button>}
@@ -569,17 +584,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
               <>
                 <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3 items-center" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
-                  if (lat && lng) window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+                  if (lat && lng) openInNativeMaps(lat, lng);
                   setContextMenu(null);
                 }}>
-                  <MapPin size={16} className="text-white/40" /> Open in Google Maps
-                </button>
-                <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3 items-center" onClick={() => { 
-                  const { lat, lng } = parseLocation(contextMenu.message.content || '');
-                  if (lat && lng) window.open(`http://maps.apple.com/?daddr=${lat},${lng}`, '_blank');
-                  setContextMenu(null);
-                }}>
-                  <MapPin size={16} className="text-white/40" /> Open in Apple Maps
+                  <MapPin size={16} className="text-white/40" /> Open in Maps
                 </button>
               </>
             )}

@@ -304,12 +304,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
             onClick={() => setViewingImage(null)}
           >
-            <div className="absolute top-0 left-0 w-full p-6 pt-[env(safe-area-inset-top,24px)] flex justify-end z-[1010]">
+            <div className="absolute top-0 left-0 w-full p-6 pt-[env(safe-area-inset-top,24px)] flex justify-end z-[2000]">
               <button 
-                className="w-12 h-12 bg-white/10 rounded-full text-white flex items-center justify-center active:scale-90 transition-all border border-white/10"
+                className="w-14 h-14 bg-white/20 rounded-full text-white flex items-center justify-center active:scale-90 transition-all border border-white/20 backdrop-blur-sm"
                 onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
               >
-                <X size={28} />
+                <X size={32} />
               </button>
             </div>
             
