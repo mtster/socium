@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin } from 'lucide-react';
+import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin, Pencil, Users, ArrowLeft } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
@@ -44,6 +44,13 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [showRequestsSlide, setShowRequestsSlide] = useState(false);
+  
+  useEffect(() => {
+    const handleRequestsUI = () => setShowRequestsSlide(true);
+    window.addEventListener('openRequestsUI', handleRequestsUI);
+    return () => window.removeEventListener('openRequestsUI', handleRequestsUI);
+  }, []);
   
   // Local state for immediate avatar update
   const [localAvatar, setLocalAvatar] = useState(profile.avatar_url);
@@ -90,6 +97,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       // Fetch pending requests we received
       const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');
       setPendingRequests(pending || []);
+      
+      // Sync global count if matching
+      if (profile.id === currentUserId && useStore.getState().setPendingRequestsCount) {
+        useStore.getState().setPendingRequestsCount(pending?.length || 0);
+      }
     } else {
       // Viewing someone else: checking our relational status
       const { data: rel1 } = await supabase.from('connections')
@@ -401,7 +413,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 onClick={(e) => { e.stopPropagation(); setShowPfpMenu(!showPfpMenu); }}
                 className="w-10 h-10 bg-white text-black rounded-full flex items-center justify-center border-4 border-black active:scale-95 transition-transform shadow-xl"
               >
-                <Plus size={20} strokeWidth={3} />
+                <Pencil size={18} strokeWidth={2.5} />
               </button>
 
               <AnimatePresence>
@@ -544,39 +556,31 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           </div>
         )}
 
-        {/* Pending Requests for Own Profile */}
-        {isOwnProfile && pendingRequests.length > 0 && (
-          <div className="w-full mb-8 px-2">
-            <h3 className="text-sm font-bold uppercase tracking-widest text-yellow-500 mb-4">Pending Requests</h3>
-            {pendingRequests.map((req) => (
-              <div key={req.id} className="flex items-center justify-between bg-white/5 rounded-xl p-3 mb-2 border border-white/10">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/10">
-                    <img src={req.profiles.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${req.profiles.username}`} alt="" className="w-full h-full object-cover" />
-                  </div>
-                  <p className="text-sm font-bold">{req.profiles.full_name || req.profiles.username}</p>
-                </div>
-                <div className="flex space-x-2">
-                  <button onClick={() => handleAcceptConnection(req.id)} className="bg-white text-black text-xs font-bold px-3 py-1.5 rounded-lg active:scale-95">Accept</button>
-                  <button onClick={() => handleRemoveConnection(req.id, req.profiles.id)} className="bg-white/10 text-white text-xs font-bold px-3 py-1.5 rounded-lg active:scale-95">Reject</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Connections */}
-        <div className="w-full mb-12">
+        <div className="w-full mb-12 mt-4">
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-sm font-bold uppercase tracking-widest text-white/70">Connections <span className="text-white/30 ml-2">{connections.length}</span></h3>
             {isOwnProfile && (
-              <button 
-                onClick={() => setShowSearchModal(true)}
-                className="flex items-center space-x-1 px-3 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-full active:scale-95 transition-all"
-              >
-                <Plus size={14} className="text-white/70" />
-                <span className="text-xs font-bold text-white/70">Find</span>
-              </button>
+              <div className="flex items-center space-x-2">
+                <button 
+                  onClick={() => setShowRequestsSlide(true)}
+                  className={`flex items-center space-x-1 px-3 py-1.5 border rounded-full active:scale-95 transition-all ${
+                    pendingRequests.length > 0 
+                      ? 'bg-white text-black border-white hover:bg-white/90' 
+                      : 'bg-white/5 text-white/50 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  <Users size={14} className={pendingRequests.length > 0 ? 'text-black' : 'text-white/50'} />
+                  <span className="text-xs font-bold">Requests {pendingRequests.length > 0 && `(${pendingRequests.length})`}</span>
+                </button>
+                <button 
+                  onClick={() => setShowSearchModal(true)}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-full active:scale-95 transition-all"
+                >
+                  <Plus size={14} className="text-white/70" />
+                  <span className="text-xs font-bold text-white/70">Find</span>
+                </button>
+              </div>
             )}
           </div>
           
@@ -656,6 +660,101 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         )}
       </AnimatePresence>
 
+      {/* Requests Slide UI */}
+      <AnimatePresence>
+        {showRequestsSlide && (
+          <motion.div
+            initial={{ opacity: 0, x: '100%' }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: '100%' }}
+            transition={{ type: "tween", ease: [0.25, 1, 0.5, 1], duration: 0.4 }}
+            className="fixed inset-0 z-50 bg-black flex flex-col"
+          >
+            <div className="flex items-center px-4 h-14 pt-[env(safe-area-inset-top)] border-b border-white/10 shrink-0 bg-black/90 backdrop-blur-xl">
+              <button 
+                onClick={() => setShowRequestsSlide(false)} 
+                className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform absolute"
+              >
+                <ArrowLeft size={24} />
+              </button>
+              <h1 className="w-full text-center text-sm font-bold tracking-widest uppercase">REQUESTS</h1>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-6">
+              {pendingRequests.length === 0 ? (
+                <div className="flex flex-col items-center justify-center pt-20 text-center">
+                  <p className="text-white/40 text-sm mb-6">No connection requests.</p>
+                  <button 
+                    onClick={() => {
+                      setShowRequestsSlide(false);
+                      setTimeout(() => setShowSearchModal(true), 100);
+                    }}
+                    className="flex items-center space-x-2 px-4 py-2.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-full active:scale-95 transition-all"
+                  >
+                    <Plus size={16} className="text-white" />
+                    <span className="text-sm font-bold text-white">Find Connections</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pendingRequests.map((req) => (
+                    <div key={req.id} className="flex items-center justify-between bg-white/5 rounded-2xl p-4 border border-white/10">
+                      <div 
+                        className="flex items-center space-x-3 flex-1 min-w-0 cursor-pointer active:opacity-70 transition-opacity"
+                        onClick={() => {
+                          setShowRequestsSlide(false);
+                          if (onUserClick) onUserClick(req.profiles.id);
+                        }}
+                      >
+                        <div className="w-12 h-12 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
+                          {req.profiles.avatar_url ? (
+                            <img src={req.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-lg font-bold text-white/40 uppercase">
+                               {req.profiles.username?.[0] || '?'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="truncate pr-2">
+                          <p className="text-sm font-bold text-white truncate">{req.profiles.full_name || req.profiles.username}</p>
+                          <p className="text-xs text-white/50 truncate">@{req.profiles.username}</p>
+                        </div>
+                      </div>
+                      <div className="flex space-x-2 shrink-0">
+                        <button 
+                          onClick={() => handleAcceptConnection(req.id)} 
+                          className="bg-white text-black text-xs font-bold px-4 py-2 rounded-xl active:scale-95 transition-transform"
+                        >
+                          Accept
+                        </button>
+                        <button 
+                          onClick={() => handleRemoveConnection(req.id, req.profiles.id)} 
+                          className="bg-white/10 text-white text-xs font-bold px-4 py-2 rounded-xl active:scale-95 transition-transform"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  <div className="pt-8 flex justify-center">
+                    <button 
+                      onClick={() => {
+                        setShowRequestsSlide(false);
+                        setTimeout(() => setShowSearchModal(true), 100);
+                      }}
+                      className="flex items-center space-x-2 px-4 py-2 bg-white/5 border border-white/10 hover:bg-white/10 rounded-full active:scale-95 transition-all"
+                    >
+                      <Plus size={14} className="text-white/70" />
+                      <span className="text-xs font-bold text-white/70">Find More</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { Home, User, PlusSquare, Search, MessageCircle } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { Profile } from '@/src/types';
 import { motion, AnimatePresence } from 'motion/react';
+import { useStore } from '../store/useStore';
 
 interface BottomNavProps {
   activeTab: string;
@@ -14,6 +15,8 @@ interface BottomNavProps {
 }
 
 const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar, showFirstTimeChatDot = false }: BottomNavProps) => {
+  const { pendingRequestsCount } = useStore();
+
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
     { id: 'create', icon: PlusSquare, label: 'Post' },
@@ -45,6 +48,9 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
               <div className="relative flex flex-col items-center">
                 <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
                 {tab.id === 'chat' && ((unreadCount > 0 && !floatingAvatar) || showFirstTimeChatDot) && (
+                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
+                )}
+                {tab.id === 'profile' && pendingRequestsCount > 0 && (
                   <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
                 )}
                 

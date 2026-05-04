@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Search as SearchIcon, X, User } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
@@ -42,14 +43,14 @@ export default function UserSearchModal({ onClose, onUserClick }: UserSearchModa
     return () => clearTimeout(debounce);
   }, [query]);
 
-  return (
+  return createPortal(
     <motion.div 
       initial={{ opacity: 0, y: 50 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 50 }}
-      className="fixed inset-0 z-50 bg-black flex flex-col"
+      className="fixed inset-0 z-[500] bg-black flex flex-col"
     >
-      <div className="flex items-center px-4 h-16 border-b border-white/10 shrink-0">
+      <div className="flex items-center px-4 h-16 pt-[env(safe-area-inset-top)] border-b border-white/10 shrink-0">
         <div className="flex-1 relative flex items-center">
           <SearchIcon size={18} className="absolute left-3 text-white/40" />
           <input 
@@ -58,11 +59,10 @@ export default function UserSearchModal({ onClose, onUserClick }: UserSearchModa
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search for connections..." 
-            className="w-full bg-white/5 border border-white/10 rounded-full h-10 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-white/20 transition-all font-medium"
+            className="w-full bg-white/5 border border-white/10 rounded-full h-10 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-white/20 transition-all font-medium text-white"
           />
         </div>
         <button onClick={onClose} className="ml-4 text-white/60 active:scale-95 transition-transform p-2">
-          <span className="sr-only">Cancel</span>
           Cancel
         </button>
       </div>
@@ -99,6 +99,7 @@ export default function UserSearchModal({ onClose, onUserClick }: UserSearchModa
           ))}
         </div>
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }

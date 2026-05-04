@@ -7,18 +7,21 @@ interface AppState {
   userPosts: Post[];
   feedPosts: Post[];
   totalUnread: number;
+  pendingRequestsCount: number;
   floatingAvatar: Profile | null;
   
   setProfile: (profile: Profile | null) => void;
   setUserPosts: (posts: Post[]) => void;
   setFeedPosts: (posts: Post[]) => void;
   setTotalUnread: (count: number) => void;
+  setPendingRequestsCount: (count: number) => void;
   setFloatingAvatar: (profile: Profile | null) => void;
   
   fetchProfile: (userId: string) => Promise<void>;
   fetchUserPosts: (userId: string, currentUserId: string) => Promise<void>;
   fetchFeedPosts: (currentUserId: string) => Promise<void>;
   fetchUnreadCount: (userId: string) => Promise<void>;
+  fetchPendingRequestsCount: (userId: string) => Promise<void>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -26,12 +29,14 @@ export const useStore = create<AppState>((set, get) => ({
   userPosts: [],
   feedPosts: [],
   totalUnread: 0,
+  pendingRequestsCount: 0,
   floatingAvatar: null,
 
   setProfile: (profile) => set({ profile }),
   setUserPosts: (userPosts) => set({ userPosts }),
   setFeedPosts: (feedPosts) => set({ feedPosts }),
   setTotalUnread: (totalUnread) => set({ totalUnread }),
+  setPendingRequestsCount: (pendingRequestsCount) => set({ pendingRequestsCount }),
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
 
   fetchProfile: async (userId) => {
@@ -127,6 +132,18 @@ export const useStore = create<AppState>((set, get) => ({
       } else if (unreadCount === 0 && typeof (navigator as any).clearAppBadge === 'function') {
         (navigator as any).clearAppBadge().catch(() => {});
       }
+    }
+  },
+
+  fetchPendingRequestsCount: async (userId) => {
+    const { count } = await supabase
+      .from('connections')
+      .select('*', { count: 'exact', head: true })
+      .eq('receiver_id', userId)
+      .eq('status', 'pending');
+    
+    if (count !== null) {
+      set({ pendingRequestsCount: count });
     }
   }
 }));

@@ -21,7 +21,8 @@ export default function App() {
     userPosts, setUserPosts, 
     totalUnread, setTotalUnread, 
     floatingAvatar, setFloatingAvatar,
-    fetchProfile, fetchUserPosts, fetchUnreadCount
+    fetchProfile, fetchUserPosts, fetchUnreadCount,
+    fetchPendingRequestsCount
   } = useStore();
 
   const [session, setSession] = useState<any>(undefined);
@@ -118,11 +119,16 @@ export default function App() {
       const getUnread = async () => {
         await fetchUnreadCount(session.user.id);
       };
+      
+      const getPending = async () => {
+        await fetchPendingRequestsCount(session.user.id);
+      };
 
       forceGetUnreadHandler = () => getUnread();
       window.addEventListener('forceGetUnread', forceGetUnreadHandler);
 
       getUnread();
+      getPending();
 
       // Check url param
       if (typeof window !== 'undefined') {
@@ -162,6 +168,18 @@ export default function App() {
            getUnread();
         })
         .subscribe();
+
+      const connectionsChannel = supabase.channel('global_connections')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'connections', filter: `receiver_id=eq.${session.user.id}` }, () => {
+           getPending();
+        })
+        .subscribe();
+        
+      return () => {
+        if (forceGetUnreadHandler) window.removeEventListener('forceGetUnread', forceGetUnreadHandler);
+        if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
+        supabase.removeChannel(connectionsChannel);
+      };
     }
 
     return () => {
@@ -202,6 +220,12 @@ export default function App() {
              setViewingProfileId(null);
              setActiveTab('chat');
           }
+        }
+        if (event.data && event.data.type === 'OPEN_REQUESTS') {
+           setActiveTab('profile');
+           setTimeout(() => {
+             window.dispatchEvent(new CustomEvent('openRequestsUI'));
+           }, 100);
         }
       });
     }

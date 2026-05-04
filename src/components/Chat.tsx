@@ -303,24 +303,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
   const scrollToBottom = (smooth = true) => setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' }), 100);
 
-  const uploadToCloudinary = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
-    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-    if (!cloudName || !uploadPreset) throw new Error('Cloudinary config missing');
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', uploadPreset);
-    if (type === 'image') formData.append('folder', 'chat_images');
-    else if (type === 'video') formData.append('folder', 'chat_audio'); 
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, { method: 'POST', body: formData });
-    if (!res.ok) throw new Error('Upload failed');
-    const data = await res.json();
-    let optimizedUrl = data.secure_url;
-    if (type === 'image') {
-       const urlParts = optimizedUrl.split('/upload/');
-       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_auto,w_800/${urlParts[1]}`;
-    }
-    return optimizedUrl;
+  const uploadToStorage = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
+    const fileExt = file.type.split('/')[1] || (type === 'image' ? 'jpg' : 'webm');
+    const fileName = `chat_${currentUserId}_${Date.now()}.${fileExt}`;
+    const filePath = `chat_media/${fileName}`;
+    
+    const { error } = await supabase.storage.from('avatars').upload(filePath, file);
+    if (error) throw error;
+    
+    const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
+    return data.publicUrl;
   };
 
   const startRecording = async () => {
@@ -363,7 +355,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     setShowFeatures(false);
     console.log(`Starting upload for ${type} file:`, file);
     try {
-      const url = await uploadToCloudinary(file, type === 'audio' ? 'video' : 'image');
+      const url = await uploadToStorage(file, type === 'audio' ? 'video' : 'image');
       console.log('Upload success, URL:', url);
       await sendSpecialMessage(url, type);
     } catch (e) {
@@ -414,13 +406,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       let suggestedY = rect.top;
       
       // Responsive constraints (clamping)
-      const menuWidth = 220;
+      const menuWidth = 160;
       const menuHeight = 240;
       
-      const x = Math.max(10, Math.min(suggestedX, window.innerWidth - menuWidth - 10));
-      const y = Math.max(10, Math.min(suggestedY, window.innerHeight - menuHeight - 10));
+      const clampedX = Math.max(10, Math.min(suggestedX, window.innerWidth - menuWidth - 10));
+      const clampedY = Math.max(10, Math.min(suggestedY, window.innerHeight - menuHeight - 10));
       
-      setContextMenu({ x, y, message: msg });
+      setContextMenu({ x: clampedX, y: clampedY, message: msg });
     }
   };
 
@@ -485,7 +477,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
           </motion.div>
         ) : (
-          <motion.div key="chat-room" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: "tween", ease: "easeOut", duration: 0.25 }} className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden">
+          <motion.div key="chat-room" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: "tween", ease: [0.25, 1, 0.5, 1], duration: 0.4 }} className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden">
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
                <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: activeChat.id } })); onCloseChat?.(); }}>
@@ -553,8 +545,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
       <AnimatePresence>
         {pendingMedia && createPortal(
-          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="fixed inset-0 z-[150] bg-black/90 flex flex-col justify-between backdrop-blur-md">
-            <div className="p-4 pt-safe flex items-center justify-between"><button onClick={() => setPendingMedia(null)} className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center"><X size={24} /></button><h2 className="text-white font-bold">Send {pendingMedia.type}</h2><div className="w-10" /></div>
+          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="fixed inset-0 z-[500] bg-black/90 flex flex-col justify-between backdrop-blur-md">
+            <div className="p-4 pt-[env(safe-area-inset-top)] flex items-center justify-between"><button onClick={() => setPendingMedia(null)} className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center"><X size={24} /></button><h2 className="text-white font-bold">Send {pendingMedia.type}</h2><div className="w-10" /></div>
             <div className="flex-1 flex items-center justify-center p-4">
               {pendingMedia.type === 'image' && <img src={pendingMedia.dataUrl} className="max-w-full max-h-full object-contain rounded-2xl" />}
               {pendingMedia.type === 'audio' && <div className="w-full max-w-sm"><AudioPlayer src={pendingMedia.dataUrl!} isMine={true} /></div>}
@@ -575,31 +567,34 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </AnimatePresence>
 
       <AnimatePresence>
-        {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-auto min-w-[200px] bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-1.5" style={{ top: contextMenu.y, left: contextMenu.x }}>
-            {contextMenu.message.content && <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}><Copy size={16} className="text-white/40" />Copy Text</button>}
+        {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => setContextMenu(null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-auto min-w-[160px] bg-[#1c1c1c] border border-white/10 rounded-[18px] shadow-2xl overflow-hidden py-1" style={{ top: contextMenu.y, left: contextMenu.x }}>
+            {contextMenu.message.content && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content); setContextMenu(null); }}><Copy size={16} className="text-white/50" />Copy Text</button>}
             
-            {contextMenu.message.media_url && <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}><Download size={16} className="text-white/40" />Save {contextMenu.message.media_type}</button>}
+            {contextMenu.message.media_url && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url, 'socium', contextMenu.message.media_type); setContextMenu(null); }}><Download size={16} className="text-white/50" />Save {contextMenu.message.media_type}</button>}
             
             {(contextMenu.message.media_type === 'location' || (contextMenu.message.content && contextMenu.message.content.includes('google.com/maps'))) && (
               <>
-                <button className="w-full flex px-4 py-3 text-sm text-white hover:bg-white/10 rounded-xl gap-3 items-center" onClick={() => { 
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
-                  if (lat && lng) openInNativeMaps(lat, lng);
+                  if (lat && lng) {
+                    const dest = `${lat},${lng}`;
+                    window.location.href = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
+                  }
                   setContextMenu(null);
                 }}>
-                  <MapPin size={16} className="text-white/40" /> Open in Maps
+                  <MapPin size={16} className="text-white/50" /> Open in Maps
                 </button>
               </>
             )}
 
-            {contextMenu.message.sender_id === currentUserId && <button className="w-full flex px-4 py-3 text-sm text-red-500 hover:bg-white/5 rounded-xl gap-3" onClick={handleDeleteMessage}><Trash2 size={16} />Delete</button>}
+            {contextMenu.message.sender_id === currentUserId && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-red-500 hover:bg-white/5 gap-3 transition-colors" onClick={handleDeleteMessage}><Trash2 size={16} />Delete</button>}
           </motion.div></>)}
       </AnimatePresence>
     </div>
   );
 }
 
-const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, setViewingImage, onTouchStart, onTouchMove, onTouchEnd, onCloseChat }: any) => {
+const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, setViewingImage, onTouchStart, onTouchMove, onTouchEnd, onCloseChat, contextMenuId }: any) => {
   const isConsecutive = nextMsg?.sender_id === msg.sender_id;
   const isPrevConsecutive = prevMsg?.sender_id === msg.sender_id;
   const showAvatar = !isMine && !isConsecutive;
@@ -618,7 +613,7 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, s
   const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
   
   return (
-    <div className={cn("flex w-full gap-2 relative select-none touch-none", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : "mb-3")}>
+    <div className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : "mb-3")}>
        {!isMine && (
          <div className="w-8 shrink-0 flex items-end mb-0.5">
            {showAvatar ? (
@@ -637,8 +632,10 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, s
          onTouchStart={(e: any) => onTouchStart(e, msg)} 
          onTouchMove={onTouchMove} 
          onTouchEnd={onTouchEnd} 
+         animate={contextMenuId === msg.id ? { scale: 1.05, zIndex: 100 } : { scale: 1, zIndex: 1 }}
+         transition={{ type: "spring", stiffness: 400, damping: 25 }}
          className={cn(
-           "max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-all duration-300 relative select-none", 
+           "max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-colors duration-300 relative select-none", 
            rounded, 
            !isMediaOnly && (isMine ? "bg-white text-black shadow-sm" : "bg-[#262626] text-white shadow-sm"), 
            !msg.media_type && !isLoc && "px-3.5 py-2", 
