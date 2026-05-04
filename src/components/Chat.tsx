@@ -198,7 +198,21 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     await supabase.from('messages').delete().eq('id', msgId);
   };
 
-  useEffect(() => { if (initialActiveChat) setActiveChat(initialActiveChat); }, [initialActiveChat]);
+  useEffect(() => {
+    const handleResetTab = (e: any) => {
+      if (e.detail?.tabId === 'chat' && !activeChat) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('resetTab', handleResetTab);
+    return () => window.removeEventListener('resetTab', handleResetTab);
+  }, [activeChat]);
+
+  useEffect(() => { 
+    if (initialActiveChat !== undefined) {
+      setActiveChat(initialActiveChat); 
+    }
+  }, [initialActiveChat]);
   useEffect(() => { if (!chatConnectionsCache || Date.now() - lastChatListFetch > 60000) fetchConnectionsAndRecentMessages(); }, [currentUserId]);
 
   useEffect(() => {
@@ -303,16 +317,30 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
   const scrollToBottom = (smooth = true) => setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' }), 100);
 
-  const uploadToStorage = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
-    const fileExt = file.type.split('/')[1] || (type === 'image' ? 'jpg' : 'webm');
-    const fileName = `chat_${currentUserId}_${Date.now()}.${fileExt}`;
-    const filePath = `chat_media/${fileName}`;
+  const uploadToCloudinary = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    if (!cloudName || !uploadPreset) throw new Error('Cloudinary config missing');
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', uploadPreset);
+    if (type === 'image') formData.append('folder', 'chat_images');
+    else if (type === 'video') formData.append('folder', 'chat_audio'); 
     
-    const { error } = await supabase.storage.from('avatars').upload(filePath, file);
-    if (error) throw error;
-    
-    const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
-    return data.publicUrl;
+    // For iOS audio (m4a/mp4), force video upload
+    if (type === 'audio' || file.type.includes('mp4') || file.type.includes('m4a')) {
+      type = 'video';
+    }
+
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Upload failed');
+    const data = await res.json();
+    let optimizedUrl = data.secure_url;
+    if (type === 'image') {
+       const urlParts = optimizedUrl.split('/upload/');
+       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_auto,w_800/${urlParts[1]}`;
+    }
+    return optimizedUrl;
   };
 
   const startRecording = async () => {
@@ -355,7 +383,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     setShowFeatures(false);
     console.log(`Starting upload for ${type} file:`, file);
     try {
-      const url = await uploadToStorage(file, type === 'audio' ? 'video' : 'image');
+      const url = await uploadToCloudinary(file, type === 'audio' ? 'video' : 'image');
       console.log('Upload success, URL:', url);
       await sendSpecialMessage(url, type);
     } catch (e) {
@@ -544,25 +572,25 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </AnimatePresence>
 
       <AnimatePresence>
-        {pendingMedia && createPortal(
-          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="fixed inset-0 z-[500] bg-black/90 flex flex-col justify-between backdrop-blur-md">
+        {pendingMedia && (
+          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="absolute inset-0 z-[500] bg-black/90 flex flex-col justify-between backdrop-blur-md">
             <div className="p-4 pt-[env(safe-area-inset-top)] flex items-center justify-between"><button onClick={() => setPendingMedia(null)} className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center"><X size={24} /></button><h2 className="text-white font-bold">Send {pendingMedia.type}</h2><div className="w-10" /></div>
             <div className="flex-1 flex items-center justify-center p-4">
               {pendingMedia.type === 'image' && <img src={pendingMedia.dataUrl} className="max-w-full max-h-full object-contain rounded-2xl" />}
               {pendingMedia.type === 'audio' && <div className="w-full max-w-sm"><AudioPlayer src={pendingMedia.dataUrl!} isMine={true} /></div>}
             </div>
             <div className="p-4 pb-safe flex justify-end"><button onClick={() => { if (pendingMedia.file) handleMediaMessage(pendingMedia.file, pendingMedia.type as any); setPendingMedia(null); }} className="bg-white text-black font-bold px-8 py-3.5 rounded-full shadow-2xl flex items-center gap-2">Send <SendHorizonal size={20} /></button></div>
-          </motion.div>, document.body
+          </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {viewingImage && createPortal(
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black">
-            <button onClick={() => saveToDevice(viewingImage, 'socium')} className="absolute z-[210] top-safe left-4 mt-4 p-3 bg-white/10 text-white rounded-full"><Download size={24} /></button>
-            <button onClick={() => setViewingImage(null)} className="absolute z-[210] top-safe right-4 mt-4 p-3 bg-white/10 text-white rounded-full"><X size={24} /></button>
+        {viewingImage && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[600] bg-black">
+            <button onClick={() => saveToDevice(viewingImage, 'socium')} className="absolute z-[610] top-safe left-4 mt-4 p-3 bg-white/10 text-white rounded-full"><Download size={24} /></button>
+            <button onClick={() => setViewingImage(null)} className="absolute z-[610] top-safe right-4 mt-4 p-3 bg-white/10 text-white rounded-full"><X size={24} /></button>
             <div className="w-full h-full"><TransformWrapper centerOnInit><TransformComponent wrapperStyle={{ width: "100%", height: "100%" }} contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><img src={viewingImage} className="max-w-full max-h-screen object-contain" /></TransformComponent></TransformWrapper></div>
-          </motion.div>, document.body
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -635,7 +663,7 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, s
          animate={contextMenuId === msg.id ? { scale: 1.05, zIndex: 100 } : { scale: 1, zIndex: 1 }}
          transition={{ type: "spring", stiffness: 400, damping: 25 }}
          className={cn(
-           "max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-colors duration-300 relative select-none", 
+           "max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-colors duration-300 relative select-none [user-select:none] [-webkit-user-select:none]", 
            rounded, 
            !isMediaOnly && (isMine ? "bg-white text-black shadow-sm" : "bg-[#262626] text-white shadow-sm"), 
            !msg.media_type && !isLoc && "px-3.5 py-2", 

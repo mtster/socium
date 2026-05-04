@@ -35,6 +35,9 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
             <button
               key={tab.id}
               onClick={() => {
+                if (isActive) {
+                  window.dispatchEvent(new CustomEvent('resetTab', { detail: { tabId: tab.id } }));
+                }
                 if (tab.id === 'chat' && setFloatingAvatar) {
                   setFloatingAvatar(null);
                 }

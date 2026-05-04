@@ -22,6 +22,14 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       // Background refresh
       fetchFeedPosts(currentUserId);
     }
+    
+    const handleResetTab = (e: any) => {
+      if (e.detail?.tabId === 'feed') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('resetTab', handleResetTab);
+    return () => window.removeEventListener('resetTab', handleResetTab);
   }, []);
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {

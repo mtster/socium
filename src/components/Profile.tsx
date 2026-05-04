@@ -48,10 +48,28 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   
   useEffect(() => {
     const handleRequestsUI = () => setShowRequestsSlide(true);
+    const handleResetTab = (e: any) => {
+      if (e.detail?.tabId === 'profile') {
+        setShowRequestsSlide(false);
+        setShowSearchModal(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
     window.addEventListener('openRequestsUI', handleRequestsUI);
-    return () => window.removeEventListener('openRequestsUI', handleRequestsUI);
+    window.addEventListener('resetTab', handleResetTab);
+    return () => {
+      window.removeEventListener('openRequestsUI', handleRequestsUI);
+      window.removeEventListener('resetTab', handleResetTab);
+    };
   }, []);
   
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImage || showRequestsSlide } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
+    };
+  }, [viewingImage, showRequestsSlide]);
+
   // Local state for immediate avatar update
   const [localAvatar, setLocalAvatar] = useState(profile.avatar_url);
 
@@ -89,7 +107,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         combined.unshift(adminProf);
       }
       
-      const filteredConnections = combined.filter(c => c.id !== profile.id && c.id !== currentUserId);
+      const filteredConnections = combined.filter(c => c.id !== profile.id);
       profileConnectionsCache[profile.id] = filteredConnections;
       profileConnectionsTime[profile.id] = Date.now();
       setConnections(filteredConnections);
@@ -147,7 +165,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         combined.unshift(adminProf);
       }
 
-      setConnections(combined.filter(c => c.id !== profile.id && c.id !== currentUserId));
+      setConnections(combined.filter(c => c.id !== profile.id));
     }
   };
 
@@ -297,18 +315,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     }
   };
 
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImage } }));
-    return () => {
-      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
-    };
-  }, [viewingImage]);
-
   return (
-    <div className="pb-6 relative">
+    <div className="pb-6 relative z-10">
       {/* Full Screen Image Viewer */}
       <AnimatePresence>
-        {viewingImage && createPortal(
+        {viewingImage && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -357,8 +368,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             <div className="absolute bottom-10 left-0 w-full flex justify-center pointer-events-none opacity-30 select-none">
               <p className="text-white text-[10px] uppercase tracking-[0.3em]">Swipe up or down to close</p>
             </div>
-          </motion.div>,
-          document.body
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -668,7 +678,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: '100%' }}
             transition={{ type: "tween", ease: [0.25, 1, 0.5, 1], duration: 0.4 }}
-            className="fixed inset-0 z-50 bg-black flex flex-col"
+            className="fixed inset-0 z-[200] bg-black flex flex-col"
           >
             <div className="flex items-center px-4 h-14 pt-[env(safe-area-inset-top)] border-b border-white/10 shrink-0 bg-black/90 backdrop-blur-xl">
               <button 

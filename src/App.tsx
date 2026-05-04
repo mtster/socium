@@ -50,10 +50,20 @@ export default function App() {
     const handleViewerState = (e: any) => {
       setIsImageViewerOpen(e.detail.isOpen);
     };
+    const handleResetTab = (e: any) => {
+      if (e.detail?.tabId === 'chat') {
+        if (initialActiveChat) {
+          setInitialActiveChat(null);
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
+    };
 
     window.addEventListener('openChat', handleOpenChat);
     window.addEventListener('openProfile', handleOpenProfile);
     window.addEventListener('viewerState', handleViewerState);
+    window.addEventListener('resetTab', handleResetTab);
 
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
     if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
@@ -107,6 +117,7 @@ export default function App() {
       window.removeEventListener('openChat', handleOpenChat);
       window.removeEventListener('openProfile', handleOpenProfile);
       window.removeEventListener('viewerState', handleViewerState);
+      window.removeEventListener('resetTab', handleResetTab);
     };
   }, []);
 
@@ -296,7 +307,7 @@ export default function App() {
     }
 
     setViewingProfileId(userId);
-    setActiveTab('other_profile');
+    // Remove the setActiveTab('other_profile') since we'll overlay it
     
     // Fetch other user's profile
     const { data: pData } = await supabase.from('profiles').select('*').eq('id', userId).single();
@@ -525,52 +536,6 @@ export default function App() {
              </motion.div>
            )}
 
-           {activeTab === 'other_profile' && (
-             <motion.div 
-               key="other_profile" 
-               initial={{ opacity: 0, x: 20 }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: -20 }}
-               className="page-transition min-h-screen"
-             >
-               {viewingProfileData ? (
-                 <ProfileView 
-                   profile={viewingProfileData.profile} 
-                   posts={viewingProfileData.posts} 
-                   isOwnProfile={false}
-                   currentUserId={session.user.id}
-                   onUserClick={handleUserClick}
-                   onDeletePost={handleDeletePost}
-                   onLikePost={async (id, isLiked) => {
-                     // Optimistic Update inside viewingProfileData
-                     setViewingProfileData(prev => {
-                       if (!prev) return prev;
-                       return {
-                         ...prev,
-                         posts: prev.posts.map(p => {
-                           if (p.id === id) {
-                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
-                           }
-                           return p;
-                         })
-                       };
-                     });
-                     try {
-                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
-                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
-                     } catch(e) {}
-                   }}
-                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
-                 />
-               ) : (
-                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
-                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
-                    <p className="text-white/50 text-sm">Loading profile...</p>
-                 </div>
-               )}
-             </motion.div>
-           )}
-
            {activeTab === 'create' && (
              <CreatePost 
                 userId={session.user.id}
@@ -596,6 +561,67 @@ export default function App() {
                  onCloseChat={() => setInitialActiveChat(null)}
                  onChatStateChange={setIsChatRoomOpen}
                />
+             </motion.div>
+           )}
+        </AnimatePresence>
+        
+        {/* Full-screen Overlay for Other Profile */}
+        <AnimatePresence>
+           {viewingProfileId !== null && (
+             <motion.div 
+               key="other_profile" 
+               initial={{ opacity: 0, x: '100%' }} 
+               animate={{ opacity: 1, x: 0 }} 
+               exit={{ opacity: 0, x: '100%' }}
+               transition={{ type: "tween", duration: 0.3 }}
+               className="fixed inset-0 z-[100] bg-black overflow-y-auto"
+             >
+               <div className="sticky top-0 left-0 w-full px-4 h-14 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 pt-[env(safe-area-inset-top)]">
+                 <button 
+                   onClick={() => setViewingProfileId(null)} 
+                   className="p-2 -ml-2 text-white/80 active:scale-95 transition-transform absolute"
+                 >
+                   <ArrowLeft size={24} />
+                 </button>
+                 <h1 className="w-full text-center text-sm font-bold tracking-widest uppercase">
+                   {viewingProfileData?.profile?.username || 'PROFILE'}
+                 </h1>
+               </div>
+               
+               {viewingProfileData ? (
+                 <ProfileView 
+                   profile={viewingProfileData.profile} 
+                   posts={viewingProfileData.posts} 
+                   isOwnProfile={false}
+                   currentUserId={session.user.id}
+                   onUserClick={handleUserClick}
+                   onDeletePost={handleDeletePost}
+                   onLikePost={async (id, isLiked) => {
+                     setViewingProfileData(prev => {
+                       if (!prev) return prev;
+                       return {
+                         ...prev,
+                         posts: prev.posts.map(p => {
+                           if (p.id === id) {
+                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
+                           }
+                           return p;
+                         })
+                       };
+                     });
+                     try {
+                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                     } catch(e) {}
+                   }}
+                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
+                 />
+               ) : (
+                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
+                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                    <p className="text-white/50 text-sm">Loading profile...</p>
+                 </div>
+               )}
              </motion.div>
            )}
         </AnimatePresence>
