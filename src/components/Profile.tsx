@@ -327,14 +327,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
             onClick={() => setViewingImage(null)}
           >
-            <div className="absolute top-0 left-0 w-full p-6 pt-[env(safe-area-inset-top,24px)] flex justify-end z-[2000]">
-              <button 
-                className="w-14 h-14 bg-white/20 rounded-full text-white flex items-center justify-center active:scale-90 transition-all border border-white/20 backdrop-blur-sm"
-                onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
-              >
-                <X size={32} />
-              </button>
-            </div>
+            <button 
+              className="absolute top-10 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
+              onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+            >
+              <X size={24} />
+            </button>
             
             <div className="w-full h-full flex items-center justify-center p-4">
               <TransformWrapper
@@ -363,10 +361,6 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   </motion.div>
                 </TransformComponent>
               </TransformWrapper>
-            </div>
-            
-            <div className="absolute bottom-10 left-0 w-full flex justify-center pointer-events-none opacity-30 select-none">
-              <p className="text-white text-[10px] uppercase tracking-[0.3em]">Swipe up or down to close</p>
             </div>
           </motion.div>
         )}

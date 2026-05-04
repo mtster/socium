@@ -35,6 +35,7 @@ export default function App() {
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
+  const mainRef = React.useRef<HTMLElement>(null);
 
   useEffect(() => {
     const handleOpenChat = (e: any) => {
@@ -55,8 +56,10 @@ export default function App() {
         if (initialActiveChat) {
           setInitialActiveChat(null);
         } else {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
         }
+      } else {
+        mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
 
@@ -303,6 +306,7 @@ export default function App() {
     if (userId === session.user.id) {
       setViewingProfileId(null);
       setActiveTab('profile');
+      mainRef.current?.scrollTo(0, 0);
       return;
     }
 
@@ -317,6 +321,11 @@ export default function App() {
       setViewingProfileData({ profile: pData, posts: postsData as any || [] });
     }
   };
+
+  // Ensure scroll is reset when tab changes
+  useEffect(() => {
+    if (activeTab === 'profile') mainRef.current?.scrollTo(0, 0);
+  }, [activeTab]);
 
   const handleDeletePost = async (postId: string) => {
     try {
@@ -494,7 +503,7 @@ export default function App() {
       <AddToHomeScreenModal />
 
       {/* Main View Area */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
         <AnimatePresence mode="wait">
            {activeTab === 'feed' && (
              <motion.div 
@@ -550,9 +559,10 @@ export default function App() {
            {activeTab === 'chat' && (
              <motion.div 
                key="chat" 
-               initial={{ opacity: 0, x: 20 }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: -20 }}
+               initial={{ opacity: 1 }} 
+               animate={{ opacity: 1 }} 
+               exit={{ opacity: 0 }}
+               transition={{ duration: 0 }}
                className="absolute inset-0 z-10 flex flex-col bg-black"
              >
                <Chat 

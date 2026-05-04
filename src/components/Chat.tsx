@@ -485,7 +485,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     <div className="flex flex-col h-full bg-black overflow-hidden relative">
       <AnimatePresence initial={false}>
         {!activeChat ? (
-          <motion.div key="chat-list" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex-1 flex flex-col h-full">
+          <motion.div key="chat-list" initial={{ opacity: 1 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0 }} className="flex-1 flex flex-col h-full select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]">
             <div className="p-4 pt-safe border-b border-white/10 shrink-0">
                <input type="text" placeholder="Search connections..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
             </div>
@@ -505,7 +505,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
           </motion.div>
         ) : (
-          <motion.div key="chat-room" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: "tween", ease: [0.25, 1, 0.5, 1], duration: 0.4 }} className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden">
+          <motion.div key="chat-room" className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]">
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
                <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: activeChat.id } })); onCloseChat?.(); }}>
@@ -605,12 +605,20 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
                   if (lat && lng) {
-                    const dest = `${lat},${lng}`;
-                    window.location.href = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
+                    window.open(`https://maps.apple.com/?q=${lat},${lng}`, '_blank');
                   }
                   setContextMenu(null);
                 }}>
-                  <MapPin size={16} className="text-white/50" /> Open in Maps
+                  <MapPin size={16} className="text-white/50" /> Apple Maps
+                </button>
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
+                  const { lat, lng } = parseLocation(contextMenu.message.content || '');
+                  if (lat && lng) {
+                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+                  }
+                  setContextMenu(null);
+                }}>
+                  <MapPin size={16} className="text-white/50" /> Google Maps
                 </button>
               </>
             )}
