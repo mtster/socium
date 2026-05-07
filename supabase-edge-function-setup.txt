@@ -127,7 +127,7 @@ serve(async (req) => {
       }
     }
 
-    dedupedSubscriptions.forEach(async (sub: any) => {
+    const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
       const fcmToken = sub.endpoint;
       
       // Calculate badge count from Firebase Realtime Database
@@ -146,19 +146,19 @@ serve(async (req) => {
           body: bodyText
         },
         data: {
-          url: "/",
+          url: `/?chatId=${message.sender_id}`,
           senderId: message.sender_id || ""
+        },
+        webpush: {
+          fcmOptions: {
+             link: `/?chatId=${message.sender_id}`
+          }
         },
         apns: {
           payload: {
             aps: {
-              alert: {
-                title: senderName,
-                body: bodyText
-              },
               badge: Number(badgeCount), // CRITICAL: APNs requires an INTEGER
-              sound: 'default',
-              'content-available': 1
+              sound: 'default'
             }
           }
         }

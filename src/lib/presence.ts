@@ -9,14 +9,36 @@ export const initPresence = (userId: string) => {
   const locationRef = ref(rtdb, `location/${userId}`);
   
   // Set presence to true when initialized
-  set(globalPresenceRef, true).catch(e => console.error("Global presence set failed (Check RTDB rules)", e));
+  set(globalPresenceRef, true).catch(e => console.error("Global presence set failed", e));
   
-  // Clean up on disconnect
+  // Clean up on disconnect via RTDB native feature
   try {
     onDisconnect(globalPresenceRef).set(false);
     onDisconnect(locationRef).set('none');
   } catch (e) { console.error("onDisconnect failed", e); }
   
+  // Handle Instant presence updates on visibility change for iOS / mobile browsers
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+       set(globalPresenceRef, true).catch(console.error);
+       // Re-establish chat location if needed (this would normally be handled by the route or component, but default to 'none' if unsure)
+    } else {
+       // Instantly update to offline when app goes to background
+       set(globalPresenceRef, false).catch(console.error);
+       set(locationRef, 'none').catch(console.error);
+    }
+  };
+
+  const handlePageHide = () => {
+       set(globalPresenceRef, false).catch(console.error);
+       set(locationRef, 'none').catch(console.error);
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+  }
+
   // Ensure unseen_chat_count exists and initialized
   const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
   get(countRef).then(snapshot => {
@@ -37,9 +59,13 @@ export const initPresence = (userId: string) => {
   });
 
   return () => {
-    set(globalPresenceRef, false);
-    set(locationRef, 'none');
+    set(globalPresenceRef, false).catch(console.error);
+    set(locationRef, 'none').catch(console.error);
     unsubscribeCount();
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+    }
   };
 };
 

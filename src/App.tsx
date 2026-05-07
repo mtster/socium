@@ -68,6 +68,7 @@ export default function App() {
       setIsImageViewerOpen(e.detail.isOpen);
     };
     const handleResetTab = (e: any) => {
+      setViewingProfileId(null);
       if (e.detail?.tabId === 'chat') {
         if (initialActiveChat) {
           setInitialActiveChat(null);
@@ -626,18 +627,6 @@ export default function App() {
                transition={{ type: "tween", duration: 0.3 }}
                className="fixed inset-0 z-[100] bg-black overflow-y-auto"
              >
-               <div className="sticky top-0 left-0 w-full px-4 h-14 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 pt-[env(safe-area-inset-top)]">
-                 <button 
-                   onClick={() => setViewingProfileId(null)} 
-                   className="p-2 -ml-2 text-white/80 active:scale-95 transition-transform absolute"
-                 >
-                   <ArrowLeft size={24} />
-                 </button>
-                 <h1 className="w-full text-center text-sm font-bold tracking-widest uppercase">
-                   {viewingProfileData?.profile?.username || 'PROFILE'}
-                 </h1>
-               </div>
-               
                {viewingProfileData ? (
                  <ProfileView 
                    profile={viewingProfileData.profile} 
@@ -681,7 +670,10 @@ export default function App() {
       {(activeTab !== 'create' && !isChatRoomOpen && !isImageViewerOpen) && (
         <BottomNav 
            activeTab={activeTab} 
-           setActiveTab={setActiveTab} 
+           setActiveTab={(tab) => {
+             setActiveTab(tab);
+             setViewingProfileId(null);
+           }} 
            unreadCount={totalUnread} 
            floatingAvatar={floatingAvatar}
            setFloatingAvatar={setFloatingAvatar}
