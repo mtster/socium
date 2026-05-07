@@ -2,20 +2,16 @@
 // 
 // 2. Set the Secrets in your Supabase Edge Function settings:
 //    - FIREBASE_SERVICE_ACCOUNT (This should be the raw JSON string of your Firebase Service Account JSON file)
+//    - FIREBASE_DATABASE_URL (This is your Firebase Realtime Database URL)
 //      You can get this from Firebase Console -> Project Settings -> Service Accounts -> "Generate new private key"
 // 
-// 3. IMPORTANT: YOU MUST CREATE A DATABASE WEBHOOK!
+// 3. IMPORTANT: Delete any existing "Send Push on Message" Database Webhooks!
 //    - Go to Supabase Dashboard -> Database -> Webhooks
-//    - Click "Create Webhook"
-//    - Name: "Send Push on Message"
-//    - Table: "messages"
-//    - Events: Check "Insert"
-//    - Type: "Supabase Edge Function" 
-//    - Method: POST
-//    - Edge Function: Select "send-push" (or whatever you named the function)
-//    - Save the Webhook.
+//    - Find the old 'Send Push on Message' webhook.
+//    - DELETE it! The app now invokes the edge function manually from the frontend
+//      client to ensure presence state and badge unread counts sync correctly.
 // 
-// Without the webhook, this file does absolutely nothing because it will never be called when someone sends a message!
+// Without updating the edge function code and deleting the old webhook, the notifications might trigger twice or fail.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -23,13 +19,15 @@ import admin from 'npm:firebase-admin@11'
 
 // Initialize Firebase Admin if not already initialized
 const serviceAccountRaw = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
+const databaseURL = Deno.env.get('FIREBASE_DATABASE_URL');
 
-if (serviceAccountRaw) {
+if (serviceAccountRaw && databaseURL) {
   try {
     const serviceAccount = JSON.parse(serviceAccountRaw);
     if (!admin.apps.length) {
       admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: databaseURL
       });
       console.log("Firebase Admin initialized successfully.");
     }
@@ -37,7 +35,7 @@ if (serviceAccountRaw) {
     console.error("CRITICAL: Failed to parse FIREBASE_SERVICE_ACCOUNT JSON or initialize admin.", error);
   }
 } else {
-  console.error("CRITICAL: FIREBASE_SERVICE_ACCOUNT secret is missing from Edge Function Secrets!");
+  console.error("CRITICAL: FIREBASE_SERVICE_ACCOUNT or FIREBASE_DATABASE_URL secret is missing from Edge Function Secrets!");
 }
 
 serve(async (req) => {
@@ -127,12 +125,14 @@ serve(async (req) => {
     dedupedSubscriptions.forEach(async (sub: any) => {
       const fcmToken = sub.endpoint;
       
-      // Calculate badge count (total unread messages for this user)
-      const { count: unreadCount } = await supabase
-        .from('messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('receiver_id', message.receiver_id)
-        .is('read_at', null);
+      // Calculate badge count from Firebase Realtime Database
+      let badgeCount = 0;
+      try {
+        const snapshot = await admin.database().ref(`unseen_chat_count/${message.receiver_id}`).once('value');
+        badgeCount = snapshot.val() || 0;
+      } catch (dbError) {
+        console.error("Failed to read unseen_chat_count from RTDB, defaulting to 0", dbError);
+      }
 
       const payload = {
         token: fcmToken,
@@ -151,7 +151,7 @@ serve(async (req) => {
                 title: senderName,
                 body: bodyText
               },
-              badge: Number(unreadCount || 0), // CRITICAL: APNs requires an INTEGER
+              badge: Number(badgeCount), // CRITICAL: APNs requires an INTEGER
               sound: 'default',
               'content-available': 1
             }

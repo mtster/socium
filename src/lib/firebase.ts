@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
+import { getDatabase } from "firebase/database";
 
 // TODO: Replace with your Firebase project configuration
 const firebaseConfig = {
@@ -8,7 +9,8 @@ const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL
 };
 
 const app = initializeApp(firebaseConfig);
@@ -16,6 +18,8 @@ const app = initializeApp(firebaseConfig);
 export const messaging = typeof window !== "undefined" && 'serviceWorker' in navigator 
   ? getMessaging(app) 
   : null;
+
+export const rtdb = getDatabase(app);
 
 export const setupForegroundMessageListener = (callback: (payload: any) => void) => {
   if (!messaging) return null;

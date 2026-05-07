@@ -15,6 +15,8 @@ import { Toaster } from 'react-hot-toast';
 
 import { useStore } from './store/useStore';
 
+import { initPresence } from '@/src/lib/presence';
+
 export default function App() {
   const { 
     profile, setProfile, 
@@ -37,6 +39,17 @@ export default function App() {
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
   const mainRef = React.useRef<HTMLElement>(null);
 
+  // Inside useEffect where auth state is handled, or a new useEffect
+  useEffect(() => {
+    let unmountPresence: (() => void) | undefined;
+    if (session?.user?.id) {
+      unmountPresence = initPresence(session.user.id);
+    }
+    return () => {
+      if (unmountPresence) unmountPresence();
+    };
+  }, [session?.user?.id]);
+  
   useEffect(() => {
     const handleOpenChat = (e: any) => {
       setFloatingAvatar(null);

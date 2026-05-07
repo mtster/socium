@@ -6,6 +6,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, ArrowUp, Plus, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, MoreHorizontal, Play, Pause, SendHorizonal } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { rtdb } from '@/src/lib/firebase';
+import { ref, get, set, increment } from 'firebase/database';
+import { setChatLocation, checkRecipientPresenceAndNotify } from '@/src/lib/presence';
 
 const parseLocation = (content: string) => {
   if (!content) return { lat: null, lng: null };
@@ -215,8 +218,10 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   }, [initialActiveChat]);
   useEffect(() => { if (!chatConnectionsCache || Date.now() - lastChatListFetch > 60000) fetchConnectionsAndRecentMessages(); }, [currentUserId]);
 
+// Inside Chat component, replacing the activeChat useEffect
   useEffect(() => {
     if (activeChat) {
+      setChatLocation(currentUserId, activeChat.id);
       (window as any).currentChatUserId = activeChat.id;
       const cached = chatMessagesCache[activeChat.id];
       if (cached) {
@@ -238,8 +243,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           scrollToBottom();
         }
       }).subscribe();
-      return () => { supabase.removeChannel(channel); (window as any).currentChatUserId = null; };
-    } else { (window as any).currentChatUserId = null; }
+      return () => { 
+        supabase.removeChannel(channel); 
+        (window as any).currentChatUserId = null; 
+        setChatLocation(currentUserId, null);
+      };
+    } else { 
+      (window as any).currentChatUserId = null; 
+      setChatLocation(currentUserId, null);
+    }
   }, [activeChat, currentUserId]);
 
   useEffect(() => {
@@ -461,6 +473,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.id, content: contentStr, media_url: mediaUrl, media_type: mediaType }).select().single();
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
+      // Trigger notification if needed
+      checkRecipientPresenceAndNotify(currentUserId, activeChat.id, data);
     } catch (e) { setMessages(prev => prev.filter(m => m.id !== temp.id)); }
   };
 
@@ -476,6 +490,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.id, content: temp.content }).select().single();
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
+      // Trigger notification if needed
+      checkRecipientPresenceAndNotify(currentUserId, activeChat.id, data);
     } catch (e) { setMessages(prev => prev.filter(m => m.id !== temp.id)); }
   };
 
