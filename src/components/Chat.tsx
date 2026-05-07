@@ -9,6 +9,7 @@ import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { rtdb } from '@/src/lib/firebase';
 import { ref, get, set, increment } from 'firebase/database';
 import { setChatLocation, checkRecipientPresenceAndNotify } from '@/src/lib/presence';
+import { useStore } from '@/src/store/useStore';
 
 const parseLocation = (content: string) => {
   if (!content) return { lat: null, lng: null };
@@ -539,7 +540,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                   <span className="font-bold text-sm text-white/90 truncate">{activeChat.full_name || activeChat.username}</span>
                </div>
             </div>
-            <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col overflow-y-auto p-4 space-y-1 relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+            <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto p-4 relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
               onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
               onTouchMove={(e) => {
                 if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -554,6 +555,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
               }}
             >
+               <div ref={messagesEndRef} className="h-4 shrink-0" />
                <AnimatePresence>
                 {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="absolute top-4 left-0 w-full flex justify-center z-50 pointer-events-none">
                   <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
@@ -562,14 +564,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 </motion.div>}
                </AnimatePresence>
                {loadingMessages && <div className="absolute top-4 left-0 w-full flex justify-center z-50 pointer-events-none"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
-               <div className="flex flex-col-reverse">
+               <div className="flex flex-col justify-end">
                  {messages.slice().reverse().map((msg, idx, arr) => (
                     <div key={msg.id}>
                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenu={contextMenu} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onCloseChat} />
                     </div>
                   ))}
                </div>
-               <div ref={messagesEndRef} className="h-4" />
             </div>
             <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0">
                <div className="flex items-center gap-3">
