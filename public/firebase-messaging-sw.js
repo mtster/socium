@@ -72,50 +72,34 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   let urlToOpen = event.notification.data?.url || '/';
-  if (event.notification.data?.senderId && !urlToOpen.includes('chat_with=')) {
+  // Avoid double appending if it already has it
+  if (event.notification.data?.senderId && !urlToOpen.includes('chatId=')) {
     if (urlToOpen === '/') {
-        urlToOpen = `/?chat_with=${event.notification.data.senderId}`;
+        urlToOpen = `/?chatId=${event.notification.data.senderId}`;
     } else {
-        urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chat_with=${event.notification.data.senderId}`;
+        urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${event.notification.data.senderId}`;
     }
   }
 
+  // Ensure absolute URL for iOS clients.openWindow
   const absoluteUrl = new URL(urlToOpen, self.location.origin).href;
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
-      if (windowClients.length > 0) {
-        // Find if any window is already focused
-        let clientToFocus = windowClients[0];
-        for (let i = 0; i < windowClients.length; i++) {
-           if (windowClients[i].focused) {
-              clientToFocus = windowClients[i];
-              break;
-           }
-        }
-        
-        if ('focus' in clientToFocus) {
-          return clientToFocus.focus().then((client) => {
-             if (client) {
-               if (event.notification.data?.senderId) {
-                 client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
-               }
-               // Add a fallback navigate in case postMessage isn't caught
-               setTimeout(() => {
-                 if ('navigate' in client && event.notification.data?.senderId) {
-                    client.navigate(absoluteUrl).catch(() => {});
-                 }
-               }, 500);
-             }
-             return client;
-          }).catch(e => {
-             if (self.clients.openWindow) return self.clients.openWindow(absoluteUrl);
-          });
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
+      // 1. Try to find a client that is already open
+      for (let i = 0; i < windowClients.length; i++) {
+        const client = windowClients[i];
+        if ('focus' in client) {
+          if (event.notification.data?.senderId) {
+            client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
+          }
+          return client.focus();
         }
       }
       
-      if (self.clients.openWindow) {
-         return self.clients.openWindow(absoluteUrl);
+      // 2. Fallback: open a new window
+      if (clients.openWindow) {
+         return clients.openWindow(absoluteUrl);
       }
     })
   );

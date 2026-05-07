@@ -49,9 +49,7 @@ export default function App() {
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
   const mainRef = React.useRef<HTMLElement>(null);
 
-  const [slideDir, setSlideDir] = useState(1);
-  const tabOrder = ['feed', 'chat', 'profile'];
-
+  // Inside useEffect where auth state is handled, or a new useEffect
   useEffect(() => {
     let unmountPresence: (() => void) | undefined;
     if (session?.user?.id) {
@@ -66,11 +64,6 @@ export default function App() {
     const handleOpenChat = (e: any) => {
       setFloatingAvatar(null);
       setInitialActiveChat(e.detail.profile);
-      
-      const to = tabOrder.indexOf('chat');
-      const from = tabOrder.indexOf(activeTab);
-      setSlideDir(to > from ? 1 : -1);
-
       setViewingProfileId(null);
       setActiveTab('chat');
     };
@@ -566,10 +559,9 @@ export default function App() {
            {activeTab === 'feed' && (
              <motion.div 
                key="feed" 
-               initial={{ opacity: 0, x: slideDir * 20 }} 
+               initial={{ opacity: 0, x: -20 }} 
                animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: slideDir * -20 }}
-               transition={{ duration: 0.2 }}
+               exit={{ opacity: 0, x: 20 }}
                className="page-transition"
              >
                <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
@@ -579,10 +571,9 @@ export default function App() {
            {activeTab === 'profile' && (
              <motion.div 
                key="profile" 
-               initial={{ opacity: 0, x: slideDir * 20 }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: slideDir * -20 }}
-               transition={{ duration: 0.2 }}
+               initial={{ opacity: 0, scale: 0.95 }} 
+               animate={{ opacity: 1, scale: 1 }} 
+               exit={{ opacity: 0, scale: 1.05 }}
                className="page-transition min-h-screen"
              >
                {profile ? (
@@ -646,21 +637,19 @@ export default function App() {
              animate={{ opacity: 1, x: 0 }} 
              exit={{ opacity: 0, x: '100%' }}
              transition={{ type: "tween", duration: 0.3 }}
-             className="fixed inset-0 z-[60] bg-black overflow-y-auto"
+             className="absolute top-0 left-0 right-0 z-[60] bg-black overflow-y-auto"
+             style={{ bottom: 'calc(60px + env(safe-area-inset-bottom))' }}
              >
                <div 
-               className="sticky top-0 left-0 w-full z-[70] bg-black/90 backdrop-blur-md border-b border-white/10 px-4 h-14 flex items-center justify-center -mb-7"
-               style={{ paddingTop: 'env(safe-area-inset-top)' }}
+               className="absolute left-2 z-[60]"
+               style={{ top: 'calc(12px + env(safe-area-inset-top))' }}
              >
                <button 
                  onClick={() => setViewingProfileId(null)} 
-                 className="absolute left-4 p-2 -ml-2 text-white/90 active:scale-95 transition-transform"
+                 className="p-3 bg-black/40 backdrop-blur-md rounded-full text-white/90 active:scale-95 transition-transform"
                >
-                 <ArrowLeft size={28} />
+                 <ArrowLeft size={20} opacity={0.8} />
                </button>
-               <h1 className="text-sm font-bold tracking-widest uppercase truncate max-w-[60%] mt-[env(safe-area-inset-top)]">
-                 {viewingProfileData?.profile?.username || 'PROFILE'}
-               </h1>
              </div>
                
                {viewingProfileData ? (
@@ -707,9 +696,6 @@ export default function App() {
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={(tab) => {
-             const to = tabOrder.indexOf(tab);
-             const from = tabOrder.indexOf(activeTab);
-             setSlideDir(to > from ? 1 : -1);
              setActiveTab(tab);
              setViewingProfileId(null);
            }} 

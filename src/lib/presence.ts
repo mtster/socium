@@ -21,13 +21,9 @@ export const initPresence = (userId: string) => {
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
        set(globalPresenceRef, true).catch(console.error);
-       if (typeof window !== 'undefined' && 'currentChatUserId' in window && (window as any).currentChatUserId) {
-           set(locationRef, (window as any).currentChatUserId).catch(console.error);
-           markChatAsSeen(userId, (window as any).currentChatUserId);
-       } else {
-           set(locationRef, 'none').catch(console.error);
-       }
+       // Re-establish chat location if needed (this would normally be handled by the route or component, but default to 'none' if unsure)
     } else {
+       // Instantly update to offline when app goes to background
        set(globalPresenceRef, false).catch(console.error);
        set(locationRef, 'none').catch(console.error);
     }
