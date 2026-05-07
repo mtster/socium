@@ -10,12 +10,15 @@ import { Profile, Post } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
-import { Bell } from 'lucide-react';
+import { Bell, ArrowLeft } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 
 import { useStore } from './store/useStore';
 
 import { initPresence } from '@/src/lib/presence';
+
+import { ref, set } from 'firebase/database';
+import { rtdb } from '@/src/lib/firebase';
 
 export default function App() {
   const { 
@@ -324,15 +327,24 @@ export default function App() {
     }
 
     setViewingProfileId(userId);
-    // Remove the setActiveTab('other_profile') since we'll overlay it
+    setViewingProfileData(null); // Clear previous data so it goes back to loading state
     
     // Fetch other user's profile
-    const { data: pData } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    const { data: pData, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    
+    if (error || !pData) {
+      console.error('Profile not found:', error);
+      // fallback to generic profile so it doesn't stay loading
+      setViewingProfileData({ 
+        profile: { id: userId, username: 'Unknown User', full_name: 'Unknown User', avatar_url: null, updated_at: new Date().toISOString() }, 
+        posts: [] 
+      });
+      return;
+    }
+    
     const { data: postsData } = await supabase.from('posts').select('*, profiles(*)').eq('user_id', userId).order('created_at', { ascending: false });
     
-    if (pData) {
-      setViewingProfileData({ profile: pData, posts: postsData as any || [] });
-    }
+    setViewingProfileData({ profile: pData, posts: postsData as any || [] });
   };
 
   // Ensure scroll is reset when tab changes
@@ -390,6 +402,17 @@ export default function App() {
 
     if (!error) {
       setProfile(newProfile);
+    }
+    
+    // Also init RTDB values
+    if (rtdb) {
+      try {
+        await set(ref(rtdb, `unseen_chat_count/${userId}`), 0);
+        await set(ref(rtdb, `location/${userId}`), 'none');
+        await set(ref(rtdb, `global_presence/${userId}`), true);
+      } catch (e) {
+         console.error('Failed to init RTDB for new user', e);
+      }
     }
   }
 
