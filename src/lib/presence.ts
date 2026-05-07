@@ -105,8 +105,14 @@ export const checkRecipientPresenceAndNotify = async (
   let isOnline = false;
 
   try {
-    const recipientLocationRef = ref(rtdb, `location/${receiverId}`);
-    const locSnapshot = await get(recipientLocationRef);
+    const inboxRef = ref(rtdb, `inboxes/${receiverId}/${senderId}`);
+    
+    const [locSnapshot, inboxSnapshot, precSnapshot] = await Promise.all([
+      get(ref(rtdb, `location/${receiverId}`)),
+      get(inboxRef),
+      get(ref(rtdb, `global_presence/${receiverId}`))
+    ]);
+    
     const location = locSnapshot.val();
   
     // 1. recipient has the chat open - nothing gets updated.
@@ -115,8 +121,6 @@ export const checkRecipientPresenceAndNotify = async (
     }
   
     // 2. recipient has the chat closed - unseen chat number must be incremented.
-    const inboxRef = ref(rtdb, `inboxes/${receiverId}/${senderId}`);
-    const inboxSnapshot = await get(inboxRef);
     const isSeen = inboxSnapshot.val();
     
     if (isSeen !== false) {
@@ -125,23 +129,16 @@ export const checkRecipientPresenceAndNotify = async (
       set(countRef, increment(1)).catch(console.error);
     }
   
-    const globalPresenceRef = ref(rtdb, `global_presence/${receiverId}`);
-    const precSnapshot = await get(globalPresenceRef);
     isOnline = precSnapshot.val() === true;
   } catch (dbError) {
     console.error("RTDB error in checkRecipientPresenceAndNotify, assuming offline.", dbError);
     // Continue below to send the push notification even if RTDB failed
   }
 
+  // trigger edge function asynchronously to not block client
   if (!isOnline) {
-    // trigger edge function to send push notification
-    try {
-      const { data, error } = await supabase.functions.invoke('send-push', {
-        body: messageData
-      });
-      if (error) console.error("Error triggering push:", error);
-    } catch (e) {
-      console.error("Error invoking edge function:", e);
-    }
+    supabase.functions.invoke('send-push', {
+      body: messageData
+    }).catch(e => console.error("Error invoking edge function:", e));
   }
 };

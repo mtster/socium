@@ -72,13 +72,17 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   let urlToOpen = event.notification.data?.url || '/';
-  if (event.notification.data?.senderId) {
+  // Avoid double appending if it already has it
+  if (event.notification.data?.senderId && !urlToOpen.includes('chatId=')) {
     if (urlToOpen === '/') {
         urlToOpen = `/?chatId=${event.notification.data.senderId}`;
     } else {
         urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${event.notification.data.senderId}`;
     }
   }
+
+  // Ensure absolute URL for iOS clients.openWindow
+  const absoluteUrl = new URL(urlToOpen, self.location.origin).href;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
@@ -95,7 +99,7 @@ self.addEventListener('notificationclick', function(event) {
       
       // 2. Fallback: open a new window
       if (clients.openWindow) {
-         return clients.openWindow(urlToOpen);
+         return clients.openWindow(absoluteUrl);
       }
     })
   );

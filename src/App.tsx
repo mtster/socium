@@ -626,28 +626,31 @@ export default function App() {
            )}
         </AnimatePresence>
         
-        {/* Overlay for Other Profile */}
+        </main>
+
+      {/* Overlay for Other Profile */}
         <AnimatePresence>
            {viewingProfileId !== null && (
-             <motion.div 
-               key="other_profile" 
-               initial={{ opacity: 0, x: '100%' }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: '100%' }}
-               transition={{ type: "tween", duration: 0.3 }}
-               className="absolute inset-0 z-[100] bg-black overflow-y-auto"
+           <motion.div 
+             key="other_profile" 
+             initial={{ opacity: 0, x: '100%' }} 
+             animate={{ opacity: 1, x: 0 }} 
+             exit={{ opacity: 0, x: '100%' }}
+             transition={{ type: "tween", duration: 0.3 }}
+             className="absolute top-0 left-0 right-0 z-[60] bg-black overflow-y-auto"
+             style={{ bottom: 'calc(60px + env(safe-area-inset-bottom))' }}
              >
-               <div className="sticky top-0 left-0 w-full px-4 h-14 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 pt-[env(safe-area-inset-top)]">
-                 <button 
-                   onClick={() => setViewingProfileId(null)} 
-                   className="p-2 -ml-2 text-white/80 active:scale-95 transition-transform absolute"
-                 >
-                   <ArrowLeft size={24} />
-                 </button>
-                 <h1 className="w-full text-center text-sm font-bold tracking-widest uppercase">
-                   {viewingProfileData?.profile?.username || 'PROFILE'}
-                 </h1>
-               </div>
+               <div 
+               className="absolute left-2 z-[60]"
+               style={{ top: 'calc(12px + env(safe-area-inset-top))' }}
+             >
+               <button 
+                 onClick={() => setViewingProfileId(null)} 
+                 className="p-3 bg-black/40 backdrop-blur-md rounded-full text-white/90 active:scale-95 transition-transform"
+               >
+                 <ArrowLeft size={20} opacity={0.8} />
+               </button>
+             </div>
                
                {viewingProfileData ? (
                  <ProfileView 
@@ -679,14 +682,7 @@ export default function App() {
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center relative w-full h-full">
-                    <div className="absolute top-0 left-0 w-full px-4 h-14 flex items-center pt-[env(safe-area-inset-top)]">
-                      <button 
-                         onClick={() => setViewingProfileId(null)} 
-                         className="p-2 -ml-2 text-white/80 active:scale-95 transition-transform"
-                      >
-                         <ArrowLeft size={24} />
-                      </button>
-                    </div>
+                    
                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
                     <p className="text-white/50 text-sm">Loading profile...</p>
                  </div>
@@ -694,7 +690,6 @@ export default function App() {
              </motion.div>
            )}
         </AnimatePresence>
-      </main>
 
       {/* Navigation */}
       {(activeTab !== 'create' && !isChatRoomOpen && !isImageViewerOpen) && (
