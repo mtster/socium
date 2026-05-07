@@ -9,19 +9,21 @@ export const initPresence = (userId: string) => {
   const locationRef = ref(rtdb, `location/${userId}`);
   
   // Set presence to true when initialized
-  set(globalPresenceRef, true);
+  set(globalPresenceRef, true).catch(e => console.error("Global presence set failed (Check RTDB rules)", e));
   
   // Clean up on disconnect
-  onDisconnect(globalPresenceRef).set(false);
-  onDisconnect(locationRef).set('none');
+  try {
+    onDisconnect(globalPresenceRef).set(false);
+    onDisconnect(locationRef).set('none');
+  } catch (e) { console.error("onDisconnect failed", e); }
   
   // Ensure unseen_chat_count exists and initialized
   const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
   get(countRef).then(snapshot => {
     if (!snapshot.exists()) {
-      set(countRef, 0);
+      set(countRef, 0).catch(console.error);
     }
-  });
+  }).catch(e => console.error("unseen_chat_count get failed", e));
 
   const unsubscribeCount = onValue(countRef, (snapshot) => {
     const count = snapshot.val() || 0;
@@ -74,35 +76,42 @@ export const checkRecipientPresenceAndNotify = async (
 ) => {
   if (!rtdb) return;
 
-  const recipientLocationRef = ref(rtdb, `location/${receiverId}`);
-  const locSnapshot = await get(recipientLocationRef);
-  const location = locSnapshot.val();
+  let isOnline = false;
 
-  // 1. recipient has the chat open - nothing gets updated.
-  if (location === senderId) {
-    return;
-  }
-
-  // 2. recipient has the chat closed - unseen chat number must be incremented.
-  const inboxRef = ref(rtdb, `inboxes/${receiverId}/${senderId}`);
-  const inboxSnapshot = await get(inboxRef);
-  const isSeen = inboxSnapshot.val();
+  try {
+    const recipientLocationRef = ref(rtdb, `location/${receiverId}`);
+    const locSnapshot = await get(recipientLocationRef);
+    const location = locSnapshot.val();
   
-  if (isSeen !== false) {
-    set(inboxRef, false);
-    const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
-    await set(countRef, increment(1));
+    // 1. recipient has the chat open - nothing gets updated.
+    if (location === senderId) {
+      return;
+    }
+  
+    // 2. recipient has the chat closed - unseen chat number must be incremented.
+    const inboxRef = ref(rtdb, `inboxes/${receiverId}/${senderId}`);
+    const inboxSnapshot = await get(inboxRef);
+    const isSeen = inboxSnapshot.val();
+    
+    if (isSeen !== false) {
+      set(inboxRef, false).catch(console.error);
+      const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
+      set(countRef, increment(1)).catch(console.error);
+    }
+  
+    const globalPresenceRef = ref(rtdb, `global_presence/${receiverId}`);
+    const precSnapshot = await get(globalPresenceRef);
+    isOnline = precSnapshot.val() === true;
+  } catch (dbError) {
+    console.error("RTDB error in checkRecipientPresenceAndNotify, assuming offline.", dbError);
+    // Continue below to send the push notification even if RTDB failed
   }
-
-  const globalPresenceRef = ref(rtdb, `global_presence/${receiverId}`);
-  const precSnapshot = await get(globalPresenceRef);
-  const isOnline = precSnapshot.val() === true;
 
   if (!isOnline) {
     // trigger edge function to send push notification
     try {
       const { data, error } = await supabase.functions.invoke('send-push', {
-        body: JSON.stringify(messageData)
+        body: messageData
       });
       if (error) console.error("Error triggering push:", error);
     } catch (e) {

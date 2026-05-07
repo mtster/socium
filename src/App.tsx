@@ -360,6 +360,10 @@ export default function App() {
     try {
       setIsProfileError(false);
       await fetchProfile(userId);
+      const currentProfile = useStore.getState().profile;
+      if (!currentProfile || currentProfile.id !== userId) {
+        await createInitialProfile(userId);
+      }
       fetchUserPosts(userId, userId);
     } catch (error) {
       console.error('Error fetching profile:', error);

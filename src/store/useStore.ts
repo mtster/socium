@@ -126,12 +126,6 @@ export const useStore = create<AppState>((set, get) => ({
     if (data) {
       const unreadCount = new Set(data.map(d => d.sender_id)).size;
       set({ totalUnread: unreadCount });
-      
-      if (unreadCount > 0 && typeof (navigator as any).setAppBadge === 'function') {
-        (navigator as any).setAppBadge(unreadCount).catch(() => {});
-      } else if (unreadCount === 0 && typeof (navigator as any).clearAppBadge === 'function') {
-        (navigator as any).clearAppBadge().catch(() => {});
-      }
     }
   },
 
