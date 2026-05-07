@@ -68,6 +68,11 @@ serve(async (req) => {
     }
     
     // Webhook shape usually is: { type: 'INSERT', record: { ... }, table: 'messages' }
+    if (record.type === 'INSERT' && record.table === 'messages') {
+      console.log("Webhook trigger detected. Ignoring because client handles push and RTDB sync.");
+      return new Response('Webhook ignored to prevent duplicate push', { status: 200, headers: corsHeaders });
+    }
+    
     const message = record.record || record;
     console.log("Parsed message:", message);
     
@@ -81,6 +86,16 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
     const supabase = createClient(supabaseUrl!, supabaseServiceKey!);
+
+    try {
+      const presenceSnapshot = await admin.database().ref(`global_presence/${message.receiver_id}`).once('value');
+      if (presenceSnapshot.val() === true) {
+        console.log(`Recipient ${message.receiver_id} is online. Skipping push.`);
+        return new Response('User is online, push skipped', { status: 200, headers: corsHeaders });
+      }
+    } catch (e) {
+      console.error("Failed to check presence in edge function. Proceeding...", e);
+    }
 
     console.log(`Fetching FCM tokens for user: ${message.receiver_id}`);
     const { data: subscriptions, error: subError } = await supabase
@@ -141,26 +156,12 @@ serve(async (req) => {
 
       const payload = {
         token: fcmToken,
-        notification: {
-          title: senderName,
-          body: bodyText
-        },
         data: {
+          title: senderName,
+          body: bodyText,
           url: `/?chatId=${message.sender_id}`,
-          senderId: message.sender_id || ""
-        },
-        webpush: {
-          fcmOptions: {
-             link: `/?chatId=${message.sender_id}`
-          }
-        },
-        apns: {
-          payload: {
-            aps: {
-              badge: Number(badgeCount), // CRITICAL: APNs requires an INTEGER
-              sound: 'default'
-            }
-          }
+          senderId: message.sender_id || "",
+          badge: String(badgeCount)
         }
       };
       

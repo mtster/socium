@@ -507,7 +507,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
             <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
               {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No connections found</div> : filteredConnections.map(c => (
-                  <button key={c.id} onClick={() => setActiveChat(c)} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4">
+                  <button key={c.id} onClick={() => {
+                     setActiveChat(c);
+                     if (c.unreadCount && c.unreadCount > 0) {
+                       const { totalUnread, setTotalUnread } = useStore.getState();
+                       setTotalUnread(Math.max(0, totalUnread - 1));
+                       setConnections(prev => prev.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn));
+                       chatConnectionsCache = chatConnectionsCache?.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn);
+                     }
+                  }} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4">
                      <div className="w-12 h-12 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 relative">
                         {c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{(c.username?.charAt(0) || c.full_name?.charAt(0) || '?').toUpperCase()}</div>}
                      </div>
