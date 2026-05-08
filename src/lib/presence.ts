@@ -1,4 +1,4 @@
-import { ref, onValue, set, onDisconnect, increment, get } from "firebase/database";
+import { ref, onValue, set, onDisconnect, increment, get, runTransaction } from "firebase/database";
 import { rtdb } from "./firebase";
 import { supabase } from "./supabase";
 
@@ -90,7 +90,9 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
       // Mark as seen and decrease unseen count
       set(inboxRef, true);
       const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
-      set(countRef, increment(-1));
+      runTransaction(countRef, (currentVal) => {
+        return Math.max(0, (currentVal || 0) - 1);
+      });
     }
   });
 };

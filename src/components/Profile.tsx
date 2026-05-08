@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin, Pencil, Users, ArrowLeft } from 'lucide-react';
+import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin, Pencil, Users, ArrowLeft, UserMinus } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
@@ -44,6 +44,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [showConnectedMenu, setShowConnectedMenu] = useState(false);
   const [showRequestsSlide, setShowRequestsSlide] = useState(false);
   
   useEffect(() => {
@@ -466,32 +467,42 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         {!isOwnProfile && (
           <div className="flex space-x-3 mb-8 w-full max-w-xs relative">
             <AnimatePresence>
-              {showDisconnectConfirm && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95, y: -10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                  className="absolute top-full mt-2 left-0 right-0 bg-[#222] p-4 rounded-2xl border border-white/10 shadow-xl z-20"
+              {showDisconnectConfirm && createPortal(
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+            onClick={() => setShowDisconnectConfirm(false)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-xs bg-[#1A1A1A] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl p-8 text-center"
+            >
+              <h3 className="text-white text-base font-bold mb-8 tracking-tight">Are you sure you want to remove this user from connections?</h3>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowDisconnectConfirm(false)}
+                  className="flex-1 bg-white/5 text-white/70 font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/10 text-sm"
                 >
-                  <p className="text-sm font-medium text-center mb-4 leading-relaxed">Are you sure you want to remove this user from your connections?</p>
-                  <div className="flex space-x-2">
-                    <button 
-                      onClick={() => setShowDisconnectConfirm(false)}
-                      className="flex-1 bg-white/10 hover:bg-white/20 active:scale-95 transition-all text-white font-bold py-2 rounded-xl text-sm"
-                    >
-                      Cancel
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setShowDisconnectConfirm(false);
-                        if (connectionId) handleRemoveConnection(connectionId);
-                      }}
-                      className="flex-1 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 active:scale-95 transition-all text-red-500 font-bold py-2 rounded-xl text-sm"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </motion.div>
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    if (connectionId) handleRemoveConnection(connectionId);
+                    setShowDisconnectConfirm(false);
+                  }}
+                  className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
+                >
+                  Remove
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>,
+          document.body
               )}
             </AnimatePresence>
 
@@ -521,12 +532,49 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             )}
              {connectionStatus === 'accepted' && profile.id !== ADMIN_ID && currentUserId !== ADMIN_ID && (
                <>
+               <div className="relative flex-1">
                  <button 
-                   onClick={() => setShowDisconnectConfirm(true)}
-                   className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
+                   onClick={(e) => { e.stopPropagation(); setShowConnectedMenu(!showConnectedMenu); }}
+                   className="w-full h-full bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
                  >
                    Connected
                  </button>
+                 <AnimatePresence>
+                   {showConnectedMenu && (
+                     <motion.div 
+                       initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                       animate={{ opacity: 1, scale: 1, y: 0 }}
+                       exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                       className="absolute top-12 left-0 min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                       onClick={(e) => e.stopPropagation()}
+                     >
+                       
+                       <button 
+                         onClick={() => {
+                           setShowConnectedMenu(false);
+                           if (profile.avatar_url) setViewingImage(profile.avatar_url);
+                         }}
+                         className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors"
+                       >
+                         <Eye size={18} className="mr-3 text-white/70" />
+                         Look at picture
+                       </button>
+                       
+                       <button 
+                         onClick={() => {
+                           setShowConnectedMenu(false);
+                           setShowDisconnectConfirm(true);
+                         }}
+                         className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors mt-1 text-red-400"
+                       >
+                         <UserMinus size={18} className="mr-3 text-red-500" />
+                         Remove
+                       </button>
+                       
+                     </motion.div>
+                   )}
+                 </AnimatePresence>
+               </div>
                  <button 
                    onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
                    className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"

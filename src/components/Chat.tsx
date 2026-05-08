@@ -9,6 +9,7 @@ import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { rtdb } from '@/src/lib/firebase';
 import { ref, get, set, increment } from 'firebase/database';
 import { setChatLocation, checkRecipientPresenceAndNotify } from '@/src/lib/presence';
+import { useStore } from '@/src/store/useStore';
 
 const parseLocation = (content: string) => {
   if (!content) return { lat: null, lng: null };
@@ -216,7 +217,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       setActiveChat(initialActiveChat); 
     }
   }, [initialActiveChat]);
-  useEffect(() => { if (!chatConnectionsCache || Date.now() - lastChatListFetch > 60000) fetchConnectionsAndRecentMessages(); }, [currentUserId]);
+  useEffect(() => {
+    if (!chatConnectionsCache || Date.now() - lastChatListFetch > 60000) fetchConnectionsAndRecentMessages();
+    const handleVis = () => { if (document.visibilityState === 'visible') fetchConnectionsAndRecentMessages(); };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVis);
+    return () => { if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVis); };
+  }, [currentUserId]);
 
 // Inside Chat component, replacing the activeChat useEffect
   useEffect(() => {
@@ -267,18 +273,24 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     }
   }, [activeChat, currentUserId]);
 
+  const updateConnectionLastMessage = (newMessage: any, partnerId: string, incrementUnread: boolean) => {
+    setConnections(prev => {
+      const idx = prev.findIndex(c => c.id === partnerId);
+      if (idx === -1) return prev;
+      const updatedConnections = [...prev];
+      const unreadCount = incrementUnread ? (updatedConnections[idx].unreadCount || 0) + 1 : (updatedConnections[idx].unreadCount || 0);
+      updatedConnections[idx] = { ...updatedConnections[idx], lastMessage: newMessage, unreadCount };
+      updatedConnections.unshift(updatedConnections.splice(idx, 1)[0]);
+      chatConnectionsCache = updatedConnections;
+      return updatedConnections;
+    });
+  };
+
   useEffect(() => {
     const mainChannel = supabase.channel('global_messages').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${currentUserId}` }, (payload) => {
       const newMessage = payload.new;
-      setConnections(prev => {
-        const idx = prev.findIndex(c => c.id === newMessage.sender_id);
-        if (idx === -1) return prev;
-        const updatedConnections = [...prev];
-        const isCurrentlyActive = (window as any).currentChatUserId === newMessage.sender_id;
-        updatedConnections[idx] = { ...updatedConnections[idx], lastMessage: newMessage, unreadCount: isCurrentlyActive ? 0 : (updatedConnections[idx].unreadCount || 0) + 1 };
-        updatedConnections.unshift(updatedConnections.splice(idx, 1)[0]);
-        return updatedConnections;
-      });
+      const isCurrentlyActive = (window as any).currentChatUserId === newMessage.sender_id;
+      updateConnectionLastMessage(newMessage, newMessage.sender_id, !isCurrentlyActive);
       window.dispatchEvent(new CustomEvent('forceGetUnread'));
     }).subscribe();
     return () => { supabase.removeChannel(mainChannel); };
@@ -487,11 +499,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.id, content: contentStr, media_url: mediaUrl, media_type: mediaType, created_at: new Date().toISOString() };
     setMessages(prev => { const nm = [...prev, temp]; chatMessagesCache[activeChat.id] = nm; return nm; });
+    updateConnectionLastMessage(temp, activeChat.id, false);
     scrollToBottom();
     try {
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.id, content: contentStr, media_url: mediaUrl, media_type: mediaType }).select().single();
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
+      updateConnectionLastMessage(data, activeChat.id, false);
       // Trigger notification if needed
       checkRecipientPresenceAndNotify(currentUserId, activeChat.id, data);
     } catch (e) { setMessages(prev => prev.filter(m => m.id !== temp.id)); }
@@ -503,12 +517,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.id, content: newMessage.trim(), created_at: new Date().toISOString() };
     setMessages(prev => { const nm = [...prev, temp]; chatMessagesCache[activeChat.id] = nm; return nm; });
+    updateConnectionLastMessage(temp, activeChat.id, false);
     setNewMessage('');
     scrollToBottom();
     try {
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.id, content: temp.content }).select().single();
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
+      updateConnectionLastMessage(data, activeChat.id, false);
       // Trigger notification if needed
       checkRecipientPresenceAndNotify(currentUserId, activeChat.id, data);
     } catch (e) { setMessages(prev => prev.filter(m => m.id !== temp.id)); }
@@ -533,7 +549,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
             <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
               {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No connections found</div> : filteredConnections.map(c => (
-                  <button key={c.id} onClick={() => {
+                  <motion.button layout key={c.id} onClick={() => {
                      setActiveChat(c);
                      if (c.unreadCount && c.unreadCount > 0) {
                        const { totalUnread, setTotalUnread } = useStore.getState();
@@ -549,8 +565,11 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                        <p className="font-bold text-white/90 truncate text-sm">{c.full_name || c.username}</p>
                        {c.lastMessage && <p className={cn("text-xs truncate mt-1", c.unreadCount ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
                      </div>
-                     {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
-                  </button>
+                     <div className="flex flex-col items-end gap-1">
+                       {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
+                       {c.unreadCount ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
+                     </div>
+                  </motion.button>
               ))}
             </div>
           </motion.div>
@@ -588,7 +607,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
               }}
             >
                <div ref={messagesEndRef} className="h-1 shrink-0" />
-               <div className="flex flex-col-reverse gap-1">
+               <div className="flex flex-col-reverse">
                  {messages.slice().reverse().map((msg, idx, arr) => (
                     <div key={msg.id}>
                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenu={contextMenu} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onCloseChat} />

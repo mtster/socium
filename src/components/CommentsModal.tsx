@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Send, User } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
@@ -90,15 +91,15 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
     }
   };
 
-  return (
+  return createPortal(
     <motion.div 
       initial={{ opacity: 0, y: '100%' }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: '100%' }}
-      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      className="fixed inset-0 z-50 bg-black flex flex-col"
+      transition={{ type: 'tween', duration: 0.3 }}
+      className="fixed inset-0 z-[500] bg-black flex flex-col"
     >
-      <div className="flex items-center justify-between px-4 h-16 border-b border-white/10 shrink-0">
+      <div className="flex items-center justify-between px-4 h-16 pt-[env(safe-area-inset-top)] border-b border-white/10 shrink-0">
         <h2 className="text-sm font-bold uppercase tracking-widest text-white/50">Viewing Post</h2>
         <button onClick={onClose} className="text-white/60 p-2 active:bg-white/10 rounded-full transition-colors">
           <X size={20} />
@@ -222,6 +223,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
         )}
         </div>
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }
