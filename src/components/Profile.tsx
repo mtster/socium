@@ -561,20 +561,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                         <button 
                           onClick={() => {
                             setShowConnectedMenu(false);
-                            if (profile.avatar_url) setViewingImage(profile.avatar_url);
-                          }}
-                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors"
-                        >
-                          <Eye size={18} className="mr-3 text-white/70" />
-                          Look at picture
-                        </button>
-                        
-                        <button 
-                          onClick={() => {
-                            setShowConnectedMenu(false);
                             setShowDisconnectConfirm(true);
                           }}
-                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors mt-1 text-red-500"
+                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
                         >
                           <UserMinus size={18} className="mr-3" />
                           Remove connection
@@ -588,16 +577,46 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
              )}
              {connectionStatus === 'accepted' && (profile.id === ADMIN_ID || currentUserId === ADMIN_ID) && (
                <>
-                 <div className="flex-1 bg-white/5 text-white/50 text-center font-bold py-2.5 rounded-xl cursor-default border border-white/5 text-sm flex items-center justify-center">
-                   {profile.id === ADMIN_ID ? 'Official Account' : 'Connected'}
-                 </div>
-                 <button 
-                   onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
-                   className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
-                 >
-                   <MessageCircle size={20} className="fill-current" />
-                 </button>
-               </>
+                  <button 
+                    onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
+                    className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+                  >
+                    <MessageCircle size={20} className="fill-current" />
+                  </button>
+                  <div className="flex-1 bg-white/5 text-white/50 text-center font-bold py-2.5 rounded-xl cursor-default border border-white/5 text-sm flex items-center justify-center">
+                    {profile.id === ADMIN_ID ? 'Official Account' : 'Connected'}
+                  </div>
+                  <div className="relative">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setShowConnectedMenu(!showConnectedMenu); }}
+                      className="w-11 h-11 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform hover:bg-white/20"
+                    >
+                      <MoreHorizontal size={20} />
+                    </button>
+                    <AnimatePresence>
+                      {showConnectedMenu && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                          animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                          className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button 
+                            onClick={() => {
+                              setShowConnectedMenu(false);
+                              setShowDisconnectConfirm(true);
+                            }}
+                            className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
+                          >
+                            <UserMinus size={18} className="mr-3" />
+                            Remove connection
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </>
              )}
           </div>
         )}
