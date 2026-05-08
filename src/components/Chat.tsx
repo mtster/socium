@@ -534,53 +534,48 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
   return (
     <div className="flex flex-col h-full bg-black overflow-hidden relative">
+      <div 
+         className="absolute inset-0 flex flex-col h-full select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+      >
+        <div className="p-4 pt-safe border-b border-white/10 shrink-0">
+           <input type="text" placeholder="Search connections..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
+        </div>
+        <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
+          {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No connections found</div> : filteredConnections.map(c => (
+              <button key={c.id} onClick={() => {
+                 setActiveChat(c);
+                 if (c.unreadCount && c.unreadCount > 0) {
+                   const { totalUnread, setTotalUnread } = useStore.getState();
+                   setTotalUnread(Math.max(0, totalUnread - 1));
+                   setConnections(prev => prev.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn));
+                   chatConnectionsCache = chatConnectionsCache?.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn);
+                 }
+              }} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4">
+                 <div className="w-12 h-12 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 relative">
+                    {c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{(c.username?.charAt(0) || c.full_name?.charAt(0) || '?').toUpperCase()}</div>}
+                 </div>
+                 <div className="flex-1 text-left overflow-hidden">
+                   <p className="font-bold text-white/90 truncate text-sm">{c.full_name || c.username}</p>
+                   {c.lastMessage && <p className={cn("text-xs truncate mt-1", c.unreadCount ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
+                 </div>
+                 <div className="flex flex-col items-end gap-1">
+                   {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
+                   {c.unreadCount ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
+                 </div>
+              </button>
+          ))}
+        </div>
+      </div>
+
       <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
-        {!activeChat ? (
-          <motion.div 
-             key="chat-list" 
-             initial={{ x: '-30%', opacity: 0 }} 
-             animate={{ x: 0, opacity: 1 }} 
-             exit={{ x: '-30%', opacity: 0 }} 
-             transition={{ type: 'tween', duration: 0.3 }} 
-             className="absolute inset-0 flex flex-col h-full select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
-          >
-            <div className="p-4 pt-safe border-b border-white/10 shrink-0">
-               <input type="text" placeholder="Search connections..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
-            </div>
-            <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
-              {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No connections found</div> : filteredConnections.map(c => (
-                  <motion.button layout key={c.id} onClick={() => {
-                     setActiveChat(c);
-                     if (c.unreadCount && c.unreadCount > 0) {
-                       const { totalUnread, setTotalUnread } = useStore.getState();
-                       setTotalUnread(Math.max(0, totalUnread - 1));
-                       setConnections(prev => prev.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn));
-                       chatConnectionsCache = chatConnectionsCache?.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn);
-                     }
-                  }} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4">
-                     <div className="w-12 h-12 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 relative">
-                        {c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{(c.username?.charAt(0) || c.full_name?.charAt(0) || '?').toUpperCase()}</div>}
-                     </div>
-                     <div className="flex-1 text-left overflow-hidden">
-                       <p className="font-bold text-white/90 truncate text-sm">{c.full_name || c.username}</p>
-                       {c.lastMessage && <p className={cn("text-xs truncate mt-1", c.unreadCount ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
-                     </div>
-                     <div className="flex flex-col items-end gap-1">
-                       {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
-                       {c.unreadCount ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
-                     </div>
-                  </motion.button>
-              ))}
-            </div>
-          </motion.div>
-        ) : (
+        {activeChat && (
           <motion.div 
              key="chat-room" 
              initial={{ x: '100%', opacity: 1 }} 
              animate={{ x: 0, opacity: 1 }} 
              exit={{ x: '100%', opacity: 1 }} 
-             transition={{ type: 'tween', duration: 0.3 }} 
-             className="absolute inset-0 z-50 flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+             transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
+             className="fixed inset-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
           >
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
@@ -608,12 +603,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             >
                <div ref={messagesEndRef} className="h-1 shrink-0" />
                <div className="flex flex-col-reverse">
-                 {messages.slice().reverse().map((msg, idx, arr) => (
-                    <div key={msg.id}>
-                       <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenu={contextMenu} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onCloseChat} />
-                    </div>
-                  ))}
-               </div>
+                  <AnimatePresence initial={false}>
+                  {messages.slice().reverse().map((msg, idx, arr) => (
+                     <motion.div key={msg.id} layout initial={{ opacity: 0, scale: 0.95, y: 15 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 400, damping: 30 }}>
+                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenu={contextMenu} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onCloseChat} />
+                     </motion.div>
+                   ))}
+                  </AnimatePresence>
+                </div>
                
                {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
                <AnimatePresence>

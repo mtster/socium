@@ -16,55 +16,24 @@ messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
   const notificationTitle = payload.data?.title || 'New Message';
+  // FIX: On iOS 17, the 'badge' in notificationOptions is for the icon, 
+  // but we must ensure we handle the numeric badge correctly.
   const notificationOptions = {
     body: payload.data?.body || '',
     icon: '/icon-192.png',
-    badge: '/icon-192.png',
     data: {
       url: payload.data?.url || '/',
-      senderId: payload.data?.senderId || ''
+      senderId: payload.data?.senderId || '',
+      badge: payload.data?.badge // keep it here for access in click
     }
   };
 
-  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async function(clientList) {
-    let isVisible = false;
+  // Set the badge immediately - don't wait for the ping logic
+  if ('setAppBadge' in navigator && payload.data?.badge) {
+    navigator.setAppBadge(parseInt(payload.data.badge)).catch(() => {});
+  }
 
-    // Check basic properties
-    if (clientList.some(c => c.visibilityState === 'visible' || c.focused)) {
-      isVisible = true;
-    }
-
-    // Try pinging if optimistic check failed (for iOS reliability)
-    if (!isVisible && clientList.length > 0) {
-      isVisible = await new Promise((resolve) => {
-        let answered = false;
-        
-        for (const client of clientList) {
-          try {
-            const channel = new MessageChannel();
-            channel.port1.onmessage = (event) => {
-              if (event.data === 'VISIBLE') {
-                answered = true;
-                resolve(true);
-              }
-            };
-            client.postMessage('PING_VISIBILITY', [channel.port2]);
-          } catch(e) { console.error('Ping failed for a client'); }
-        }
-        
-        setTimeout(() => {
-          if (!answered) resolve(false);
-        }, 1500); // give it 1.5 seconds to reply
-      });
-    }
-
-    if (!isVisible) {
-      if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator && payload.data?.badge) {
-        navigator.setAppBadge(parseInt(payload.data.badge)).catch(() => {});
-      }
-      self.registration.showNotification(notificationTitle, notificationOptions);
-    }
-  });
+  return self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
 self.addEventListener('notificationclick', function(event) {
@@ -72,42 +41,30 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   let urlToOpen = event.notification.data?.url || '/';
-  // Avoid double appending if it already has it
   if (event.notification.data?.senderId && !urlToOpen.includes('chatId=')) {
-    if (urlToOpen === '/') {
-        urlToOpen = `/?chatId=${event.notification.data.senderId}`;
-    } else {
-        urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${event.notification.data.senderId}`;
-    }
+    urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${event.notification.data.senderId}`;
   }
 
-  // Ensure absolute URL for iOS clients.openWindow
   const absoluteUrl = new URL(urlToOpen, self.location.origin).href;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
-      // 1. Try to find a client that is already open
+      // 1. Check if the app is already open
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
-        if ('focus' in client) {
-          if (event.notification.data?.senderId) {
-            // Send immediately
-            client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
-            // Send again after delay in case iOS WebKit took time to wake JS thread
-            setTimeout(() => {
-              client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
-            }, 600);
-            setTimeout(() => {
-              client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
-            }, 1500);
-          }
-          return client.focus();
+        
+        // FIX: Instead of just focusing and hoping postMessage works, 
+        // Force the window to navigate to the chat URL. 
+        // This is much more reliable on iOS 17.
+        if ('navigate' in client && 'focus' in client) {
+          client.focus();
+          return client.navigate(absoluteUrl); 
         }
       }
       
-      // 2. Fallback: open a new window
+      // 2. If no window is found, open a new one
       if (clients.openWindow) {
-         return clients.openWindow(absoluteUrl);
+        return clients.openWindow(absoluteUrl);
       }
     })
   );

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin, Pencil, Users, ArrowLeft, UserMinus } from 'lucide-react';
+import { Settings, Plus, Camera, Eye, User as UserIcon, Trash, X, MessageCircle, MapPin, Pencil, Users, ArrowLeft, UserMinus, MoreHorizontal } from 'lucide-react';
 import { Profile, Post } from '@/src/types';
 import PostCard from './PostCard';
 import { supabase } from '@/src/lib/supabase';
@@ -532,56 +532,59 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             )}
              {connectionStatus === 'accepted' && profile.id !== ADMIN_ID && currentUserId !== ADMIN_ID && (
                <>
-               <div className="relative flex-1">
-                 <button 
-                   onClick={(e) => { e.stopPropagation(); setShowConnectedMenu(!showConnectedMenu); }}
-                   className="w-full h-full bg-white/10 text-white font-bold py-2.5 rounded-xl active:scale-95 transition-transform"
-                 >
-                   Connected
-                 </button>
-                 <AnimatePresence>
-                   {showConnectedMenu && (
-                     <motion.div 
-                       initial={{ opacity: 0, scale: 0.9, y: 10 }}
-                       animate={{ opacity: 1, scale: 1, y: 0 }}
-                       exit={{ opacity: 0, scale: 0.9, y: 10 }}
-                       className="absolute top-12 left-0 min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
-                       onClick={(e) => e.stopPropagation()}
-                     >
-                       
-                       <button 
-                         onClick={() => {
-                           setShowConnectedMenu(false);
-                           if (profile.avatar_url) setViewingImage(profile.avatar_url);
-                         }}
-                         className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors"
-                       >
-                         <Eye size={18} className="mr-3 text-white/70" />
-                         Look at picture
-                       </button>
-                       
-                       <button 
-                         onClick={() => {
-                           setShowConnectedMenu(false);
-                           setShowDisconnectConfirm(true);
-                         }}
-                         className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors mt-1 text-red-400"
-                       >
-                         <UserMinus size={18} className="mr-3 text-red-500" />
-                         Remove
-                       </button>
-                       
-                     </motion.div>
-                   )}
-                 </AnimatePresence>
-               </div>
-                 <button 
-                   onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
-                   className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
-                 >
-                   <MessageCircle size={20} className="fill-current" />
-                 </button>
-               </>
+                  <button 
+                    onClick={() => window.dispatchEvent(new CustomEvent('openChat', { detail: { profile } }))}
+                    className="w-11 h-11 bg-white text-black rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+                  >
+                    <MessageCircle size={20} className="fill-current" />
+                  </button>
+                <div className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl flex items-center justify-center text-sm">
+                  Connected
+                </div>
+                <div className="relative">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setShowConnectedMenu(!showConnectedMenu); }}
+                    className="w-11 h-11 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform hover:bg-white/20"
+                  >
+                    <MoreHorizontal size={20} />
+                  </button>
+                  <AnimatePresence>
+                    {showConnectedMenu && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                        animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                        className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        
+                        <button 
+                          onClick={() => {
+                            setShowConnectedMenu(false);
+                            if (profile.avatar_url) setViewingImage(profile.avatar_url);
+                          }}
+                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors"
+                        >
+                          <Eye size={18} className="mr-3 text-white/70" />
+                          Look at picture
+                        </button>
+                        
+                        <button 
+                          onClick={() => {
+                            setShowConnectedMenu(false);
+                            setShowDisconnectConfirm(true);
+                          }}
+                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors mt-1 text-red-500"
+                        >
+                          <UserMinus size={18} className="mr-3" />
+                          Remove connection
+                        </button>
+                        
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+                </>
              )}
              {connectionStatus === 'accepted' && (profile.id === ADMIN_ID || currentUserId === ADMIN_ID) && (
                <>
