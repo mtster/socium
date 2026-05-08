@@ -223,6 +223,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     if (activeChat) {
       setChatLocation(currentUserId, activeChat.id);
       (window as any).currentChatUserId = activeChat.id;
+      
+      const handleVisChange = () => {
+        if (document.visibilityState === 'visible') {
+           setChatLocation(currentUserId, activeChat.id);
+        }
+      };
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', handleVisChange);
+      }
+
       const cached = chatMessagesCache[activeChat.id];
       if (cached) {
          setMessages(cached);
@@ -244,6 +254,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         }
       }).subscribe();
       return () => { 
+        if (typeof document !== 'undefined') {
+          document.removeEventListener('visibilitychange', handleVisChange);
+        }
         supabase.removeChannel(channel); 
         (window as any).currentChatUserId = null; 
         setChatLocation(currentUserId, null);
@@ -327,7 +340,13 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     await supabase.from('messages').update({ read_at: new Date().toISOString() }).eq('sender_id', senderId).eq('receiver_id', currentUserId).is('read_at', null);
   };
 
-  const scrollToBottom = (smooth = true) => setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' }), 100);
+  const scrollToBottom = (smooth = true) => {
+    if (smooth) {
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+  };
 
   const uploadToCloudinary = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
@@ -499,9 +518,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
   return (
     <div className="flex flex-col h-full bg-black overflow-hidden relative">
-      <AnimatePresence initial={false}>
+      <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
         {!activeChat ? (
-          <motion.div key="chat-list" initial={{ opacity: 1 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0 }} className="flex-1 flex flex-col h-full select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]">
+          <motion.div 
+             key="chat-list" 
+             initial={{ x: '-30%', opacity: 0 }} 
+             animate={{ x: 0, opacity: 1 }} 
+             exit={{ x: '-30%', opacity: 0 }} 
+             transition={{ type: 'tween', duration: 0.3 }} 
+             className="absolute inset-0 flex flex-col h-full select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+          >
             <div className="p-4 pt-safe border-b border-white/10 shrink-0">
                <input type="text" placeholder="Search connections..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
             </div>
@@ -529,7 +555,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             </div>
           </motion.div>
         ) : (
-          <motion.div key="chat-room" className="absolute inset-0 z-50 flex flex-col bg-black w-full border-x border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]">
+          <motion.div 
+             key="chat-room" 
+             initial={{ x: '100%', opacity: 1 }} 
+             animate={{ x: 0, opacity: 1 }} 
+             exit={{ x: '100%', opacity: 1 }} 
+             transition={{ type: 'tween', duration: 0.3 }} 
+             className="absolute inset-0 z-50 flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+          >
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
                <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: activeChat.id } })); onCloseChat?.(); }}>
@@ -539,7 +572,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                   <span className="font-bold text-sm text-white/90 truncate">{activeChat.full_name || activeChat.username}</span>
                </div>
             </div>
-            <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col overflow-y-auto p-4 space-y-1 relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+            <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto p-4 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
               onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
               onTouchMove={(e) => {
                 if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -554,22 +587,23 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
               }}
             >
-               <AnimatePresence>
-                {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="absolute top-4 left-0 w-full flex justify-center z-50 pointer-events-none">
-                  <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
-                    {pullProgress >= 1 ? "Release to load" : "Pull for history"}
-                  </div>
-                </motion.div>}
-               </AnimatePresence>
-               {loadingMessages && <div className="absolute top-4 left-0 w-full flex justify-center z-50 pointer-events-none"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
-               <div className="flex flex-col-reverse">
+               <div ref={messagesEndRef} className="h-1 shrink-0" />
+               <div className="flex flex-col-reverse gap-1">
                  {messages.slice().reverse().map((msg, idx, arr) => (
                     <div key={msg.id}>
                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenu={contextMenu} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onCloseChat} />
                     </div>
                   ))}
                </div>
-               <div ref={messagesEndRef} className="h-4" />
+               
+               {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
+               <AnimatePresence>
+                {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
+                  <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
+                    {pullProgress >= 1 ? "Release to load" : "Pull for history"}
+                  </div>
+                </motion.div>}
+               </AnimatePresence>
             </div>
             <form onSubmit={handleSendMessage} className="p-4 pb-safe border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0">
                <div className="flex items-center gap-3">

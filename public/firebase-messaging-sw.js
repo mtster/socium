@@ -91,7 +91,15 @@ self.addEventListener('notificationclick', function(event) {
         const client = windowClients[i];
         if ('focus' in client) {
           if (event.notification.data?.senderId) {
+            // Send immediately
             client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
+            // Send again after delay in case iOS WebKit took time to wake JS thread
+            setTimeout(() => {
+              client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
+            }, 600);
+            setTimeout(() => {
+              client.postMessage({ type: 'OPEN_CHAT', senderId: event.notification.data.senderId });
+            }, 1500);
           }
           return client.focus();
         }

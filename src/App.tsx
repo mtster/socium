@@ -31,7 +31,16 @@ export default function App() {
   } = useStore();
 
   const [session, setSession] = useState<any>(undefined);
-  const [activeTab, setActiveTab] = useState('feed');
+  const [activeTab, setActiveTabState] = useState('feed');
+  const previousTabRef = React.useRef('feed');
+  const activeTabRef = React.useRef('feed');
+  
+  const setActiveTab = (tab: string) => {
+    previousTabRef.current = activeTabRef.current;
+    activeTabRef.current = tab;
+    setActiveTabState(tab);
+  };
+  
   const [isProfileError, setIsProfileError] = useState(false);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const viewingProfileIdRef = React.useRef<string | null>(null);
@@ -247,30 +256,32 @@ export default function App() {
         console.error('SW registration failed:', err);
       });
 
-      navigator.serviceWorker.addEventListener('message', async (event) => {
-        if (event.data === 'PING_VISIBILITY' && event.ports[0]) {
-          if (document.visibilityState === 'visible') {
-            event.ports[0].postMessage('VISIBLE');
+        const handleMessage = async (event: MessageEvent) => {
+          if (event.data === 'PING_VISIBILITY' && event.ports[0]) {
+            if (document.visibilityState === 'visible') {
+              event.ports[0].postMessage('VISIBLE');
+            }
           }
-        }
-        if (event.data && event.data.type === 'OPEN_CHAT' && event.data.senderId) {
-          const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', event.data.senderId).single();
-          if (senderProfile) {
-             setFloatingAvatar(null);
-             setInitialActiveChat(senderProfile);
-             setViewingProfileId(null);
-             setActiveTab('chat');
+          if (event.data && event.data.type === 'OPEN_CHAT' && event.data.senderId) {
+            const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', event.data.senderId).single();
+            if (senderProfile) {
+               setFloatingAvatar(null);
+               setInitialActiveChat(senderProfile);
+               setViewingProfileId(null);
+               setActiveTab('chat');
+            }
           }
-        }
-        if (event.data && event.data.type === 'OPEN_REQUESTS') {
-           setActiveTab('profile');
-           setTimeout(() => {
-             window.dispatchEvent(new CustomEvent('openRequestsUI'));
-           }, 100);
-        }
-      });
-    }
-  }, []);
+          if (event.data && event.data.type === 'OPEN_REQUESTS') {
+             setActiveTab('profile');
+             setTimeout(() => {
+               window.dispatchEvent(new CustomEvent('openRequestsUI'));
+             }, 100);
+          }
+        };
+        navigator.serviceWorker.addEventListener('message', handleMessage);
+        return () => navigator.serviceWorker.removeEventListener('message', handleMessage);
+      }
+    }, []);
 
   const [notifPermission, setNotifPermission] = useState(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
 
@@ -498,7 +509,7 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      {(activeTab !== 'create' && !isChatRoomOpen && !isImageViewerOpen && viewingProfileId === null) && (
+      {(activeTab !== 'create' && !isChatRoomOpen && !isImageViewerOpen) && (
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
@@ -610,11 +621,11 @@ export default function App() {
            {activeTab === 'chat' && (
              <motion.div 
                key="chat" 
-               initial={{ opacity: 1 }} 
-               animate={{ opacity: 1 }} 
-               exit={{ opacity: 0 }}
-               transition={{ duration: 0 }}
-               className="absolute inset-0 z-10 flex flex-col bg-black"
+               initial={{ x: previousTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }} 
+               animate={{ x: 0, opacity: 1 }} 
+               exit={{ x: activeTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }}
+               transition={{ type: 'tween', duration: 0.3 }}
+               className="absolute inset-0 z-40 flex flex-col bg-black"
              >
                <Chat 
                  currentUserId={session.user.id} 
@@ -637,20 +648,19 @@ export default function App() {
              animate={{ opacity: 1, x: 0 }} 
              exit={{ opacity: 0, x: '100%' }}
              transition={{ type: "tween", duration: 0.3 }}
-             className="absolute top-0 left-0 right-0 z-[60] bg-black overflow-y-auto"
-             style={{ bottom: 'calc(60px + env(safe-area-inset-bottom))' }}
+             className="absolute inset-0 z-[60] bg-black overflow-y-auto"
              >
-               <div 
-               className="absolute left-2 z-[60]"
-               style={{ top: 'calc(12px + env(safe-area-inset-top))' }}
-             >
-               <button 
-                 onClick={() => setViewingProfileId(null)} 
-                 className="p-3 bg-black/40 backdrop-blur-md rounded-full text-white/90 active:scale-95 transition-transform"
-               >
-                 <ArrowLeft size={20} opacity={0.8} />
-               </button>
-             </div>
+               <div className="sticky top-0 left-0 w-full px-4 h-14 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 pt-[env(safe-area-inset-top)] gap-4">
+                 <button 
+                   onClick={() => setViewingProfileId(null)} 
+                   className="p-3 -ml-2 text-white/90 active:scale-95 transition-transform"
+                 >
+                   <ArrowLeft size={24} />
+                 </button>
+                 <span className="text-xl font-bold tracking-tight">
+                   {viewingProfileData?.profile?.full_name || viewingProfileData?.profile?.username || 'Profile'}
+                 </span>
+               </div>
                
                {viewingProfileData ? (
                  <ProfileView 

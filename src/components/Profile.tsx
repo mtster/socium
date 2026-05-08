@@ -122,19 +122,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       }
     } else {
       // Viewing someone else: checking our relational status
-      const { data: rel1 } = await supabase.from('connections')
+      const { data: rel } = await supabase.from('connections')
         .select('*')
-        .eq('requester_id', currentUserId)
-        .eq('receiver_id', profile.id)
+        .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`)
         .maybeSingle();
-
-      const { data: rel2 } = await supabase.from('connections')
-        .select('*')
-        .eq('requester_id', profile.id)
-        .eq('receiver_id', currentUserId)
-        .maybeSingle();
-
-      const rel = rel1 || rel2;
       
       if (profile.id === ADMIN_ID) {
         setConnectionStatus('accepted');
@@ -647,7 +638,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       {/* Footer text */}
       <div className="mt-16 text-center px-8 pb-12">
         <p className="text-[10px] text-white/20 font-medium uppercase tracking-[0.2em] leading-relaxed">
-          You entered Socium on<br/>
+          {isOwnProfile ? 'You' : (profile.full_name?.split(' ')[0] || profile.username)} entered Socium on<br/>
           <span className="text-white/40">{formatDate(profile.updated_at).split(',')[0]}</span>
         </p>
       </div>
