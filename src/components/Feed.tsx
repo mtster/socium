@@ -24,22 +24,24 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
     }
     
     // Restore scroll position
-    if (feedScrollPosition > 0) {
+    const mainScroll = document.getElementById('main-scroll');
+    if (feedScrollPosition > 0 && mainScroll) {
       requestAnimationFrame(() => {
-        window.scrollTo({ top: feedScrollPosition, behavior: 'instant' });
+        mainScroll.scrollTo({ top: feedScrollPosition, behavior: 'instant' });
       });
     }
     
     const handleResetTab = (e: any) => {
-      if (e.detail?.tabId === 'feed') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (e.detail?.tabId === 'feed' && mainScroll) {
+        mainScroll.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
     window.addEventListener('resetTab', handleResetTab);
     return () => {
       window.removeEventListener('resetTab', handleResetTab);
       // Save scroll position when navigating away
-      setFeedScrollPosition(window.scrollY);
+      const currentScroll = document.getElementById('main-scroll')?.scrollTop || 0;
+      setFeedScrollPosition(currentScroll);
     };
   }, []);
 

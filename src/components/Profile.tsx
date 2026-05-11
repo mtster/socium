@@ -193,23 +193,31 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
   const handleRemoveConnection = async (id: string, connectionProfileId?: string) => {
     try {
-      // Try to delete by ID
-      const { error } = await supabase.from('connections').delete().eq('id', id);
+      // Try to delete by ID if it exists
+      let mainError;
+      if (id) {
+         const { error } = await supabase.from('connections').delete().eq('id', id);
+         mainError = error;
+      }
       
       // Fallback robust deletion if we are on someone else's profile
       if (!isOwnProfile) {
-        await supabase.from('connections')
+        const { error: fallbackError } = await supabase.from('connections')
           .delete()
           .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`);
+        
+        if (fallbackError && fallbackError.code !== 'PGRST116') throw fallbackError;
       } else if (connectionProfileId) {
          // robust deletion from pending list if id is unknown
-         await supabase.from('connections')
+         const { error: fallbackError } = await supabase.from('connections')
           .delete()
           .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${connectionProfileId}),and(requester_id.eq.${connectionProfileId},receiver_id.eq.${currentUserId})`);
+          
+         if (fallbackError && fallbackError.code !== 'PGRST116') throw fallbackError;
+      } else if (mainError && mainError.code !== 'PGRST116') {
+         throw mainError;
       }
 
-      if (error && error.code !== 'PGRST116') throw error; // Ignore not found error if robust strategy worked
-      
       if (!isOwnProfile) {
         setConnectionStatus('none');
         setConnectionId(null);
@@ -390,7 +398,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
         {/* Profile Picture Section */}
         <div className="relative mb-8 flex justify-center">
-          <div className="w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden">
+          <div 
+            onClick={() => {
+              if (!isOwnProfile && localAvatar) setViewingImage(localAvatar);
+            }}
+            className={`w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden ${(!isOwnProfile && localAvatar) ? 'cursor-pointer active:scale-95 transition-transform' : ''}`}
+          >
             {localAvatar ? (
               <img src={localAvatar} alt={profile.username} className="w-full h-full object-cover" />
             ) : (

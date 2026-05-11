@@ -572,7 +572,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </div>
 
       <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
-        {activeChat && createPortal(
+        {activeChat && (
           <motion.div 
              key="chat-room" 
              initial={{ transform: 'translate3d(100%, 0, 0)' }} 
@@ -645,8 +645,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
                <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
             </form>
-          </motion.div>,
-          document.body
+          </motion.div>
         )}
       </AnimatePresence>
 
