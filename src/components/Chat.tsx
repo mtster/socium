@@ -50,7 +50,13 @@ const openInNativeMaps = (lat: number | null, lng: number | null, originalUrl?: 
   }
 
   if (iosUrl) {
+    const start = Date.now();
     window.location.href = iosUrl;
+    setTimeout(() => {
+      if (!document.hidden && (Date.now() - start < 2000)) {
+        if (webUrl) window.open(webUrl, '_blank');
+      }
+    }, 1500);
   } else if (webUrl) {
     window.open(webUrl, '_blank');
   }
@@ -587,17 +593,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         </div>
       </div>
 
-      {createPortal(
-        <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
-          {activeChat && (
-            <motion.div 
-               key="chat-room" 
-               initial={{ x: '100%', opacity: 1 }} 
-               animate={{ x: 0, opacity: 1 }} 
-               exit={{ x: '100%', opacity: 1 }} 
-               transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
-               className="fixed inset-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
-            >
+      <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
+        {activeChat && (
+          <motion.div 
+             key="chat-room" 
+             initial={{ x: '100%', opacity: 1 }} 
+             animate={{ x: 0, opacity: 1 }} 
+             exit={{ x: '100%', opacity: 1 }} 
+             transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
+             className="fixed inset-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+          >
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
                <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: activeChat.id } })); onCloseChat?.(); }}>
