@@ -1,741 +1,180 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { supabase } from './lib/supabase';
+import { Toaster } from 'react-hot-toast';
+import { cn } from './lib/utils';
+import { useStore } from './store/useStore';
+import { useAppLogic } from './hooks/useAppLogic';
+
+// Components
 import BottomNav from './components/BottomNav';
 import AuthView from './components/Auth';
 import CreatePost from './components/CreatePost';
 import Feed from './components/Feed';
 import ProfileView from './components/Profile';
 import Chat from './components/Chat';
-import { Profile, Post } from './types';
-import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
-import { Bell, ArrowLeft } from 'lucide-react';
-import { cn } from './lib/utils';
-import { Toaster } from 'react-hot-toast';
-
-import { useStore } from './store/useStore';
-
-import { initPresence } from '@/src/lib/presence';
-
-import { ref, set } from 'firebase/database';
-import { rtdb } from '@/src/lib/firebase';
+import AppHeader from './components/AppHeader';
+import NotificationPromo from './components/NotificationPromo';
+import OtherProfileOverlay from './components/OtherProfileOverlay';
+import LoadingScreen from './components/LoadingScreen';
 
 export default function App() {
-  const { 
-    profile, setProfile, 
-    userPosts, setUserPosts, 
-    totalUnread, setTotalUnread, 
-    floatingAvatar, setFloatingAvatar,
-    fetchProfile, fetchUserPosts, fetchUnreadCount,
-    fetchPendingRequestsCount
-  } = useStore();
+  const logic = useAppLogic();
+  const { session, activeTab, setActiveTab, mainRef, profile, userPosts, totalUnread, floatingAvatar, setFloatingAvatar, viewingProfileId, setViewingProfileId, viewingProfileData, setViewingProfileData, initialActiveChat, setInitialActiveChat, isChatRoomOpen, setIsChatRoomOpen, isImageViewerOpen, showNotifPromoPopup, setShowNotifPromoPopup, hasSeenPromo, setHasSeenPromo, notifPermission, handleUserClick, handleDeletePost, handleLikeProfilePost, registerPush, fetchProfileData } = logic;
+  const { fetchUserPosts } = useStore();
 
-  const [session, setSession] = useState<any>(undefined);
-  const [activeTab, setActiveTabState] = useState('feed');
-  const previousTabRef = React.useRef('feed');
-  const activeTabRef = React.useRef('feed');
-  
-  const setActiveTab = (tab: string) => {
-    previousTabRef.current = activeTabRef.current;
-    activeTabRef.current = tab;
-    setActiveTabState(tab);
-  };
-  
-  const [isProfileError, setIsProfileError] = useState(false);
-  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
-  const viewingProfileIdRef = React.useRef<string | null>(null);
-  
-  // Sync state to ref
-  useEffect(() => {
-    viewingProfileIdRef.current = viewingProfileId;
-  }, [viewingProfileId]);
-
-  const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
-  const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
-  const [isChatRoomOpen, setIsChatRoomOpen] = useState(false);
-  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
-  const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
-  const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
-  const mainRef = React.useRef<HTMLElement>(null);
-
-  // Inside useEffect where auth state is handled, or a new useEffect
-  useEffect(() => {
-    let unmountPresence: (() => void) | undefined;
-    if (session?.user?.id) {
-      unmountPresence = initPresence(session.user.id);
-    }
-    return () => {
-      if (unmountPresence) unmountPresence();
-    };
-  }, [session?.user?.id]);
-  
-  useEffect(() => {
-    const handleOpenChat = (e: any) => {
-      setFloatingAvatar(null);
-      setInitialActiveChat(e.detail.profile);
-      setViewingProfileId(null);
-      setActiveTab('chat');
-    };
-    const handleOpenProfile = (e: any) => {
-      setInitialActiveChat(null);
-      handleUserClick(e.detail.userId);
-    };
-    const handleViewerState = (e: any) => {
-      setIsImageViewerOpen(e.detail.isOpen);
-    };
-    const handleResetTab = (e: any) => {
-      if (viewingProfileIdRef.current !== null) {
-        setViewingProfileId(null);
-        return; // Just close the popup, do not scroll
-      }
-      if (e.detail?.tabId === 'chat') {
-        if (initialActiveChat) {
-          setInitialActiveChat(null);
-        } else {
-          mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-      } else {
-        mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-    };
-
-    window.addEventListener('openChat', handleOpenChat);
-    window.addEventListener('openProfile', handleOpenProfile);
-    window.addEventListener('viewerState', handleViewerState);
-    window.addEventListener('resetTab', handleResetTab);
-
-    // If returning from OAuth provider, clean up the URL to prevent showing the callback path
-    if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
-      window.history.replaceState({}, document.title, '/');
-    }
-
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchProfileData(session.user.id);
-        registerPush(session.user.id);
-
-        const params = new URLSearchParams(window.location.search);
-        const chatId = params.get('chatId');
-        if (chatId) {
-           const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatId).single();
-           if (senderProfile) {
-              setInitialActiveChat(senderProfile);
-              setActiveTab('chat');
-              // remove the param from url
-              window.history.replaceState({}, document.title, window.location.pathname);
-           }
-        }
-      }
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
-      if (session) {
-        fetchProfileData(session.user.id);
-        registerPush(session.user.id);
-
-        const params = new URLSearchParams(window.location.search);
-        const chatId = params.get('chatId') || params.get('chat_with');
-        if (chatId) {
-           const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatId).single();
-           if (senderProfile) {
-              setInitialActiveChat(senderProfile);
-              setActiveTab('chat');
-              // remove the param from url
-              window.history.replaceState({}, document.title, window.location.pathname);
-           }
-        }
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-      window.removeEventListener('openChat', handleOpenChat);
-      window.removeEventListener('openProfile', handleOpenProfile);
-      window.removeEventListener('viewerState', handleViewerState);
-      window.removeEventListener('resetTab', handleResetTab);
-    };
-  }, []);
-
-  useEffect(() => {
-    let globalUnreadChannel: any = null;
-
-    let forceGetUnreadHandler: any = null;
-
-    if (session?.user?.id) {
-      const getUnread = async () => {
-        await fetchUnreadCount(session.user.id);
-      };
-      
-      const getPending = async () => {
-        await fetchPendingRequestsCount(session.user.id);
-      };
-
-      forceGetUnreadHandler = () => getUnread();
-      window.addEventListener('forceGetUnread', forceGetUnreadHandler);
-
-      getUnread();
-      getPending();
-
-      // Check url param
-      if (typeof window !== 'undefined') {
-         const urlParams = new URLSearchParams(window.location.search);
-         const chatWith = urlParams.get('chat_with');
-         if (chatWith) {
-           setTimeout(async () => {
-             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatWith).single();
-             if (senderProfile) {
-               window.history.replaceState({}, document.title, window.location.pathname);
-               setFloatingAvatar(null);
-               setInitialActiveChat(senderProfile);
-               setViewingProfileId(null);
-               setActiveTab('chat');
-             }
-           }, 500);
-         }
-      }
-
-      globalUnreadChannel = supabase.channel('global_unread')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, async (payload) => {
-           getUnread();
-           const senderId = payload.new.sender_id;
-           if ((window as any).currentChatUserId !== senderId) {
-             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
-             if (senderProfile) {
-               // Only show the floating avatar if the user is NOT already looking at the chat list or chat view
-               const currentPathOpen = (window as any).currentActiveTab;
-               if (currentPathOpen !== 'chat') {
-                 setFloatingAvatar(senderProfile);
-                 setTimeout(() => setFloatingAvatar(null), 4000);
-               }
-             }
-           }
-        })
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
-           getUnread();
-        })
-        .subscribe();
-
-      const connectionsChannel = supabase.channel('global_connections')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'connections', filter: `receiver_id=eq.${session.user.id}` }, () => {
-           getPending();
-        })
-        .subscribe();
-        
-      return () => {
-        if (forceGetUnreadHandler) window.removeEventListener('forceGetUnread', forceGetUnreadHandler);
-        if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
-        supabase.removeChannel(connectionsChannel);
-      };
-    }
-
-    return () => {
-      if (forceGetUnreadHandler) window.removeEventListener('forceGetUnread', forceGetUnreadHandler);
-      if (globalUnreadChannel) supabase.removeChannel(globalUnreadChannel);
-    };
-  }, [session?.user?.id]);
-
-  useEffect(() => {
-    const initForegroundMessaging = async () => {
-      const { setupForegroundMessageListener } = await import('./lib/firebase');
-      setupForegroundMessageListener(() => {
-        // We use Supabase Realtime to update the UI securely and reliably.
-        // Doing nothing here prevents the system push notification from appearing while the app is actively open, satisfying the requirement.
-      });
-    };
-    
-    initForegroundMessaging();
-  }, []);
-
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((err) => {
-        console.error('SW registration failed:', err);
-      });
-
-        const handleMessage = async (event: MessageEvent) => {
-          if (event.data === 'PING_VISIBILITY' && event.ports[0]) {
-            if (document.visibilityState === 'visible') {
-              event.ports[0].postMessage('VISIBLE');
-            }
-          }
-          if (event.data && event.data.type === 'OPEN_CHAT' && event.data.senderId) {
-            const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', event.data.senderId).single();
-            if (senderProfile) {
-               setFloatingAvatar(null);
-               setInitialActiveChat(senderProfile);
-               setViewingProfileId(null);
-               setActiveTab('chat');
-            }
-          }
-          if (event.data && event.data.type === 'OPEN_REQUESTS') {
-             setActiveTab('profile');
-             setTimeout(() => {
-               window.dispatchEvent(new CustomEvent('openRequestsUI'));
-             }, 100);
-          }
-        };
-        navigator.serviceWorker.addEventListener('message', handleMessage);
-        return () => navigator.serviceWorker.removeEventListener('message', handleMessage);
-      }
-    }, []);
-
-  const [notifPermission, setNotifPermission] = useState(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
-
-  const registerPush = async (userId: string, isUserAction = false) => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      console.warn("Push unsupported");
-      return;
-    }
-    
-    try {
-      const permission = typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default';
-      console.log(`registerPush called (userAction: ${isUserAction}), current permission:`, permission);
-      
-      const { requestFirebaseNotificationPermission } = await import('./lib/firebase');
-      const token = await requestFirebaseNotificationPermission();
-      
-      setNotifPermission(Notification.permission);
-      
-      if (!token) {
-        console.warn("Could not get Firebase FCM token.");
-        if (isUserAction) alert('Could not enable notifications.');
-        return;
-      }
-
-      console.log("Firebase FCM token obtained:", token.substring(0, 20) + "...");
-
-      console.log("Upserting subscription to database for user:", userId);
-      const { error } = await supabase.from('push_subscriptions').upsert({
-        user_id: userId,
-        endpoint: token, // We store the FCM token in the 'endpoint' column for simplicity
-        p256dh_key: 'FCM',
-        auth_key: 'FCM'
-      }, { onConflict: 'user_id, endpoint' });
-      
-      if (error) {
-        console.error('Error upserting DB:', error);
-      } else {
-        console.log('Successfully saved FCM token to database');
-      }
-      
-    } catch (e: any) {
-      console.error('Push registration failed:', e.name, e.message);
-      if (isUserAction) alert(`Push registration failed: ${e.message}`);
-    }
-  };
-
-  function urlBase64ToUint8Array(base64String: string) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray;
-  }
-
-  const handleUserClick = async (userId: string) => {
-    if (!session) return;
-    if (userId === session.user.id) {
-      setViewingProfileId(null);
-      setActiveTab('profile');
-      mainRef.current?.scrollTo(0, 0);
-      return;
-    }
-
-    setViewingProfileId(userId);
-    setViewingProfileData(null); // Clear previous data so it goes back to loading state
-    
-    // Fetch other user's profile
-    const { data: pData, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    
-    if (error || !pData) {
-      console.error('Profile not found:', error);
-      // fallback to generic profile so it doesn't stay loading
-      setViewingProfileData({ 
-        profile: { id: userId, username: 'Unknown User', full_name: 'Unknown User', avatar_url: null, updated_at: new Date().toISOString() }, 
-        posts: [] 
-      });
-      return;
-    }
-    
-    const { data: postsData } = await supabase.from('posts').select('*, profiles(*)').eq('user_id', userId).order('created_at', { ascending: false });
-    
-    setViewingProfileData({ profile: pData, posts: postsData as any || [] });
-  };
-
-  // Ensure scroll is reset when tab changes
-  useEffect(() => {
-    if (activeTab === 'profile') mainRef.current?.scrollTo(0, 0);
-  }, [activeTab]);
-
-  const handleDeletePost = async (postId: string) => {
-    try {
-      const { error } = await supabase.from('posts').delete().eq('id', postId);
-      if (error) throw error;
-      setUserPosts(userPosts.filter(p => p.id !== postId));
-      if (viewingProfileData) {
-        setViewingProfileData({
-          ...viewingProfileData,
-          posts: viewingProfileData.posts.filter(p => p.id !== postId)
-        });
-      }
-    } catch (error: any) {
-      alert(`Failed to delete: ${error.message}`);
-    }
-  };
-
-  async function fetchProfileData(userId: string) {
-    try {
-      setIsProfileError(false);
-      await fetchProfile(userId);
-      const currentProfile = useStore.getState().profile;
-      if (!currentProfile || currentProfile.id !== userId) {
-        await createInitialProfile(userId);
-      }
-      fetchUserPosts(userId, userId);
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      setIsProfileError(true);
-    }
-  }
-
-  async function createInitialProfile(userId: string) {
-    const { data: { user } } = await supabase.auth.getUser();
-    const username = user?.email?.split('@')[0] || `user_${userId.slice(0, 5)}`;
-    
-    const { data: newProfile, error } = await supabase
-      .from('profiles')
-      .upsert({
-        id: userId,
-        username,
-        full_name: user?.user_metadata?.full_name || username,
-        avatar_url: user?.user_metadata?.avatar_url || null,
-        email: user?.email || null,
-        updated_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (!error) {
-      setProfile(newProfile);
-    }
-    
-    // Also init RTDB values
-    if (rtdb) {
-      try {
-        await set(ref(rtdb, `unseen_chat_count/${userId}`), 0);
-        await set(ref(rtdb, `location/${userId}`), 'none');
-        await set(ref(rtdb, `global_presence/${userId}`), true);
-      } catch (e) {
-         console.error('Failed to init RTDB for new user', e);
-      }
-    }
-  }
-
-  // Reload posts when switching back to profile tab
+  // Tab sync for external refs
   useEffect(() => {
     (window as any).currentActiveTab = activeTab;
     if (session?.user?.id && activeTab === 'profile') {
       fetchUserPosts(session.user.id, session.user.id);
     }
     if (activeTab === 'chat' && !hasSeenPromo && session?.user) {
-      setHasSeenPromo(true);
+      setHasSeenPromo?.(true);
       setShowNotifPromoPopup(true);
       localStorage.setItem('first_time_chat_notif', 'true');
     }
-  }, [activeTab, session?.user, hasSeenPromo]);
+  }, [activeTab, session?.user, hasSeenPromo, fetchUserPosts, setHasSeenPromo, setShowNotifPromoPopup]);
 
-  // Removed local fetchUserPosts as it's in the store now
-
-  const handleLikeProfilePost = async (postId: string, isLiked: boolean) => {
-    // Optimistic Update
-    setUserPosts(userPosts.map(p => {
-      if (p.id === postId) {
-        return {
-          ...p,
-          has_liked: !isLiked,
-          likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)
-        };
-      }
-      return p;
-    }));
-
-    try {
-      if (isLiked) {
-        await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', session.user.id);
-      } else {
-        await supabase.from('likes').insert({ post_id: postId, user_id: session.user.id });
-      }
-    } catch (e) {
-      console.error(e);
-      // Revert if error
-      fetchUserPosts(viewingProfileId || session.user.id, session.user.id);
+  // SW and FCM Handling (Keeping in App.tsx for root scope)
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((err) => console.error('SW registration failed:', err));
+      const handleMessage = async (event: MessageEvent) => {
+        if (event.data === 'PING_VISIBILITY' && event.ports[0]) {
+          if (document.visibilityState === 'visible') event.ports[0].postMessage('VISIBLE');
+        }
+        if (event.data && event.data.type === 'OPEN_CHAT' && event.data.senderId) {
+          const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', event.data.senderId).single();
+          if (senderProfile) {
+              setFloatingAvatar(null);
+              setInitialActiveChat(senderProfile);
+              setViewingProfileId(null);
+              setActiveTab('chat');
+          }
+        }
+        if (event.data && event.data.type === 'OPEN_REQUESTS') {
+           setActiveTab('profile');
+           setTimeout(() => window.dispatchEvent(new CustomEvent('openRequestsUI')), 100);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleMessage);
+      return () => navigator.serviceWorker.removeEventListener('message', handleMessage);
     }
-  };
+  }, [setActiveTab, setFloatingAvatar, setInitialActiveChat, setViewingProfileId]);
 
-  if (session === undefined) {
-    return (
-      <div className="fixed inset-0 bg-black flex flex-col items-center justify-center p-8 text-center animate-pulse">
-        <div className="w-16 h-16 bg-white text-black rounded-2xl flex items-center justify-center font-black text-3xl mb-6 shadow-[0_0_30px_rgba(255,255,255,0.1)]">S</div>
-        <h1 className="text-xl font-bold tracking-tighter uppercase italic text-white/90">Socium</h1>
-        <div className="mt-8 flex gap-1">
-          <div className="w-1 h-1 bg-white/20 rounded-full animate-bounce [animation-delay:-0.3s]" />
-          <div className="w-1 h-1 bg-white/20 rounded-full animate-bounce [animation-delay:-0.15s]" />
-          <div className="w-1 h-1 bg-white/20 rounded-full animate-bounce" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!session) {
-    return (
-      <>
-        <Toaster />
-        <AddToHomeScreenModal />
-        <AuthView />
-      </>
-    );
-  }
+  if (session === undefined) return <LoadingScreen />;
+  if (!session) return (
+    <>
+      <Toaster />
+      <AddToHomeScreenModal />
+      <AuthView />
+    </>
+  );
 
   return (
     <div className="fixed inset-0 h-[100dvh] bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
       <Toaster />
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
-      {/* Header Placeholder to prevent layout shift */}
-      <div className={cn("shrink-0 h-14 w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "block opacity-0" : "hidden opacity-100")} />
-      
-      {/* Header */}
-      <div className={cn("shrink-0 h-14 w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "opacity-0 pointer-events-none absolute" : "relative z-40 opacity-100")}>
-        <header className="h-14 flex items-center justify-between px-4 glass border-b border-white/10 bg-black/90 [touch-action:none]">
-          <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
-          <div className="flex space-x-4">
-            {activeTab === 'chat' && !initialActiveChat && (
-              <button 
-                onClick={() => {
-                  setShowNotifPromoPopup(false);
-                  if ('Notification' in window && notifPermission !== 'granted') {
-                    registerPush(session.user.id, true);
-                  }
-                }}
-                className="text-white hover:text-white/80 transition-colors relative"
-              >
-                <Bell size={24} />
-                {notifPermission === 'granted' && (
-                  <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
-                )}
-              </button>
-            )}
-          </div>
-        </header>
-      </div>
-
-      {/* Promo Popup */}
-      <AnimatePresence>
-        {showNotifPromoPopup && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            className="fixed top-[env(safe-area-inset-top,20px)] right-4 z-[200] w-72 bg-[#1c1c1c] border border-white/20 p-4 rounded-3xl shadow-2xl origin-top-right flex flex-col gap-3 mt-14"
-          >
-            <div className="absolute -top-2 right-4 w-4 h-4 bg-[#1c1c1c] border-t border-l border-white/20 rotate-45 transform" />
-            <div className="relative z-10 flex flex-col gap-2">
-              <h3 className="font-bold text-white text-base">Stay in the loop</h3>
-              <p className="text-white/60 text-sm leading-tight">Turn on notifications to never miss a message. Tap the bell icon anytime.</p>
-              <button 
-                onClick={() => setShowNotifPromoPopup(false)}
-                className="mt-2 text-sm font-bold bg-white text-black py-2 rounded-full w-full active:scale-95 transition-transform"
-              >
-                Got it
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Modals and Overlays */}
-      <CompleteProfileModal 
-        profile={profile} 
-        onComplete={() => { if (session?.user?.id) fetchProfileData(session.user.id); }} 
-      />
-      <AddToHomeScreenModal />
-
-      {/* Main View Area */}
-      <main 
-        ref={mainRef} 
-        onScroll={(e) => {
-          if (activeTab === 'feed') {
-            useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
+      <AppHeader 
+        activeTab={activeTab}
+        isImageViewerOpen={isImageViewerOpen}
+        isChatRoomOpen={isChatRoomOpen}
+        initialActiveChat={initialActiveChat}
+        notifPermission={notifPermission}
+        onBellClick={() => {
+          setShowNotifPromoPopup(false);
+          if ('Notification' in window && notifPermission !== 'granted') {
+            registerPush(session.user.id, true);
           }
         }}
-        className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]"
-      >
-        <AnimatePresence mode="wait">
-           {activeTab === 'feed' && (
-             <motion.div 
-               key="feed" 
-               initial={{ opacity: 0, x: -20 }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: 20 }}
-               onAnimationComplete={() => {
-                 if (mainRef.current) {
-                   mainRef.current.scrollTop = useStore.getState().feedScrollPos;
-                 }
-               }}
-               className="page-transition"
-             >
-               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
-             </motion.div>
-           )}
-           
-           {activeTab === 'profile' && (
-             <motion.div 
-               key="profile" 
-               initial={{ opacity: 0, scale: 0.95 }} 
-               animate={{ opacity: 1, scale: 1 }} 
-               exit={{ opacity: 0, scale: 1.05 }}
-               className="page-transition min-h-screen"
-             >
-               {profile ? (
-                 <ProfileView 
-                   profile={profile} 
-                   posts={userPosts} 
-                   isOwnProfile={true}
-                   currentUserId={session.user.id}
-                   onUserClick={handleUserClick}
-                   onDeletePost={handleDeletePost}
-                   onLikePost={handleLikeProfilePost}
-                   onRefetch={() => { fetchUserPosts(session.user.id, session.user.id); }}
-                 />
-               ) : (
-                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
-                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
-                    <p className="text-white/50 text-sm">Building profile...</p>
-                 </div>
-               )}
-             </motion.div>
-           )}
+      />
 
-           {activeTab === 'create' && (
-             <CreatePost 
-                userId={session.user.id}
-                onSuccess={() => {
-                  setActiveTab('feed');
-                  fetchUserPosts(session.user.id, session.user.id);
-                }}
-                onCancel={() => setActiveTab('feed')}
-             />
-           )}
+      <NotificationPromo show={showNotifPromoPopup} onClose={() => setShowNotifPromoPopup(false)} />
 
-           {activeTab === 'chat' && (
-             <motion.div 
-               key="chat" 
-               initial={{ x: previousTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }} 
-               animate={{ x: 0, opacity: 1 }} 
-               exit={{ x: activeTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }}
-               transition={{ type: 'tween', duration: 0.3 }}
-               className="absolute inset-0 z-40 flex flex-col bg-black"
-             >
-               <Chat 
-                 currentUserId={session.user.id} 
-                 initialActiveChat={initialActiveChat}
-                 onCloseChat={() => setInitialActiveChat(null)}
-                 onChatStateChange={setIsChatRoomOpen}
-               />
-             </motion.div>
-           )}
-        </AnimatePresence>
+      <CompleteProfileModal profile={profile} onComplete={() => { if (session?.user?.id) fetchProfileData(session.user.id); }} />
+      <AddToHomeScreenModal />
+
+      <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
+        <div className={cn("page-transition", activeTab !== 'feed' && "hidden")}>
+          <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
+        </div>
         
-        </main>
+        <div className={cn("page-transition min-h-screen", activeTab !== 'profile' && "hidden")}>
+          {profile ? (
+            <ProfileView 
+              profile={profile} 
+              posts={userPosts} 
+              isOwnProfile={true}
+              currentUserId={session.user.id}
+              onUserClick={handleUserClick}
+              onDeletePost={handleDeletePost}
+              onLikePost={handleLikeProfilePost}
+              onRefetch={() => fetchUserPosts(session.user.id, session.user.id)}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
+                <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                <p className="text-white/50 text-sm">Building profile...</p>
+            </div>
+          )}
+        </div>
 
-      {/* Overlay for Other Profile */}
-        <AnimatePresence>
-           {viewingProfileId !== null && (
-           <motion.div 
-             key="other_profile" 
-             initial={{ opacity: 0, x: '100%' }} 
-             animate={{ opacity: 1, x: 0 }} 
-             exit={{ opacity: 0, x: '100%' }}
-             transition={{ type: "tween", duration: 0.3 }}
-             className="fixed inset-0 z-[60] bg-black overflow-y-auto"
-             >
-               <div className="sticky top-0 left-0 w-full px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 gap-4">
-                 <button 
-                   onClick={() => setViewingProfileId(null)} 
-                   className="p-3 -ml-2 text-white/90 active:scale-95 transition-transform"
-                 >
-                   <ArrowLeft size={24} />
-                 </button>
-                 <span className="text-xl font-bold tracking-tight">
-                   {viewingProfileData?.profile?.full_name || viewingProfileData?.profile?.username || 'Profile'}
-                 </span>
-               </div>
-               
-               {viewingProfileData ? (
-                 <ProfileView 
-                   profile={viewingProfileData.profile} 
-                   posts={viewingProfileData.posts} 
-                   isOwnProfile={false}
-                   currentUserId={session.user.id}
-                   onUserClick={handleUserClick}
-                   onDeletePost={handleDeletePost}
-                   onLikePost={async (id, isLiked) => {
-                     setViewingProfileData(prev => {
-                       if (!prev) return prev;
-                       return {
-                         ...prev,
-                         posts: prev.posts.map(p => {
-                           if (p.id === id) {
-                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
-                           }
-                           return p;
-                         })
-                       };
-                     });
-                     try {
-                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
-                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
-                     } catch(e) {}
-                   }}
-                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
-                 />
-               ) : (
-                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center relative w-full h-full">
-                    
-                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
-                    <p className="text-white/50 text-sm">Loading profile...</p>
-                 </div>
-               )}
-             </motion.div>
-           )}
-        </AnimatePresence>
+        <div className={cn("page-transition", activeTab !== 'create' && "hidden")}>
+          <CreatePost 
+            userId={session.user.id}
+            onSuccess={() => { setActiveTab('feed'); fetchUserPosts(session.user.id, session.user.id); }}
+            onCancel={() => setActiveTab('feed')}
+          />
+        </div>
 
-      {/* Navigation Placeholder */}
+        <div className={cn("absolute inset-0 z-40 flex flex-col bg-black", activeTab !== 'chat' && "hidden")}>
+          <Chat 
+            currentUserId={session.user.id} 
+            initialActiveChat={initialActiveChat}
+            onCloseChat={() => setInitialActiveChat(null)}
+            onChatStateChange={setIsChatRoomOpen}
+          />
+        </div>
+      </main>
+
+      <OtherProfileOverlay 
+        viewingProfileId={viewingProfileId}
+        onClose={() => setViewingProfileId(null)}
+        viewingProfileData={viewingProfileData}
+        currentUserId={session.user.id}
+        onUserClick={handleUserClick}
+        onDeletePost={handleDeletePost}
+        onRefetch={handleUserClick}
+        onUpdatePosts={async (id, isLiked) => {
+          setViewingProfileData?.(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              posts: prev.posts.map(p => p.id === id ? { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)} : p)
+            };
+          });
+          try {
+             if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+             else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+          } catch(e) {}
+        }}
+      />
+
       <div className={cn("shrink-0 h-[60px] pb-[env(safe-area-inset-bottom)] w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "block opacity-0" : "hidden opacity-100")} />
 
-      {/* Navigation */}
       <div className={cn("w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "opacity-0 pointer-events-none absolute bottom-0" : "relative z-40 opacity-100")}>
         <BottomNav 
            activeTab={activeTab} 
-           setActiveTab={(tab) => {
-             setActiveTab(tab);
-             setViewingProfileId(null);
-           }} 
+           setActiveTab={(tab) => { setActiveTab(tab); setViewingProfileId(null); }} 
            unreadCount={totalUnread} 
            floatingAvatar={floatingAvatar}
            setFloatingAvatar={setFloatingAvatar}
            showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
         />
       </div>
-      
     </div>
   );
 }
