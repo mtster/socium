@@ -17,21 +17,49 @@ const parseLocation = (content: string) => {
                    content.match(/ll=([-0-9.]+),([-0-9.]+)/) ||
                    content.match(/([-0-9.]+),([-0-9.]+)/) ||
                    content.match(/google\.com\/maps\/search\/([-0-9.]+),([-0-9.]+)/);
-  if (locMatch) return { lat: parseFloat(locMatch[1]), lng: parseFloat(locMatch[2]) };
+  if (locMatch && !content.includes('goo.gl/maps') && !content.includes('maps.app.goo.gl')) {
+     return { lat: parseFloat(locMatch[1]), lng: parseFloat(locMatch[2]) };
+  }
   return { lat: null, lng: null };
 };
 
-const openInNativeMaps = (lat: number, lng: number) => {
-  const dest = `${lat},${lng}`;
-  const iosUrl = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
-  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
-  const start = Date.now();
-  window.location.href = iosUrl;
-  setTimeout(() => {
-     if (!document.hidden && (Date.now() - start < 2000)) {
-       window.open(webUrl, '_blank');
-     }
-  }, 1500);
+const openInNativeMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
+  const isApple = originalUrl && (originalUrl.includes('apple.com') || originalUrl.includes('apple.com/maps'));
+  const isGoogle = originalUrl && (originalUrl.includes('google.com') || originalUrl.includes('goo.gl/maps') || originalUrl.includes('maps.app.goo.gl'));
+
+  let iosUrl = '';
+  let webUrl = originalUrl || '';
+
+  if (lat !== null && lng !== null) {
+    const dest = `${lat},${lng}`;
+    if (isApple) {
+      iosUrl = `maps://?q=${dest}`;
+      webUrl = originalUrl || `https://maps.apple.com/?q=${dest}`;
+    } else {
+      iosUrl = `comgooglemaps://?q=${dest}&directionsmode=driving`;
+      webUrl = originalUrl || `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
+    }
+  } else if (originalUrl) {
+    if (isApple) {
+      iosUrl = originalUrl.replace(/^https?:\/\//, 'maps://');
+    } else if (isGoogle) {
+      // the shortest way to launch google maps from generic url is sometimes comgooglemapsurl://
+      // but without lat/lng we can just try comgooglemaps://?q=... or let fallback happen
+      iosUrl = originalUrl.replace(/^https?:\/\//, 'comgooglemapsurl://');
+    }
+  }
+
+  if (iosUrl) {
+    const start = Date.now();
+    window.location.href = iosUrl;
+    setTimeout(() => {
+      if (!document.hidden && (Date.now() - start < 2000)) {
+        if (webUrl) window.open(webUrl, '_blank');
+      }
+    }, 1500);
+  } else if (webUrl) {
+    window.open(webUrl, '_blank');
+  }
 };
 
 const Linkify = ({ text }: { text: string }) => {
@@ -41,7 +69,7 @@ const Linkify = ({ text }: { text: string }) => {
     <>
       {parts.map((part, i) => {
         if (part.match(urlRegex)) {
-          const isMapUrl = part.includes('google.com/maps') || part.includes('goo.gl/maps') || part.includes('maps.apple.com') || part.includes('apple.com/maps');
+          const isMapUrl = part.includes('google.com/maps') || part.includes('goo.gl/maps') || part.includes('maps.app.goo.gl') || part.includes('maps.apple.com') || part.includes('apple.com/maps');
           return (
             <a 
               key={i} 
@@ -51,12 +79,10 @@ const Linkify = ({ text }: { text: string }) => {
               className="underline underline-offset-2 break-all opacity-80 hover:opacity-100 transition-opacity"
               onClick={(e) => {
                 if (isMapUrl) {
+                  e.preventDefault();
+                  e.stopPropagation();
                   const { lat, lng } = parseLocation(part);
-                  if (lat !== null && lng !== null) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openInNativeMaps(lat, lng);
-                  }
+                  openInNativeMaps(lat, lng, part);
                 }
               }}
             >
@@ -586,7 +612,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                   <span className="font-bold text-sm text-white/90 truncate">{activeChat.full_name || activeChat.username}</span>
                </div>
             </div>
-            <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto p-4 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+            <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto p-4 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch] select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]" 
               onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
               onTouchMove={(e) => {
                 if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -679,7 +705,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
                   if (lat && lng) {
-                    window.open(`https://maps.apple.com/?q=${lat},${lng}`, '_blank');
+                    window.location.href = `maps://?q=${lat},${lng}`;
                   }
                   setContextMenu(null);
                 }}>
@@ -688,7 +714,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
                   if (lat && lng) {
-                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+                    window.location.href = `comgooglemaps://?q=${lat},${lng}`;
+                    setTimeout(() => { if (!document.hidden) window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank'); }, 1500);
                   }
                   setContextMenu(null);
                 }}>
@@ -766,7 +793,7 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, s
          {isLoc && (
            <div className="p-3 bg-white/5 flex items-center gap-3 active:bg-white/10 transition-colors" onClick={() => { 
              const { lat, lng } = parseLocation(msg.content); 
-             if(lat && lng) openInNativeMaps(lat, lng); 
+             openInNativeMaps(lat, lng, msg.content); 
            }}>
              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center shrink-0">
                <MapPin size={20} className="text-white" />

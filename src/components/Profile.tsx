@@ -224,10 +224,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (showPfpMenu) setShowPfpMenu(false);
+      if (showConnectedMenu) setShowConnectedMenu(false);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [showPfpMenu]);
+  }, [showPfpMenu, showConnectedMenu]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -492,7 +493,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 </button>
                 <button 
                   onClick={() => {
-                    if (connectionId) handleRemoveConnection(connectionId);
+                    handleRemoveConnection(connectionId || 'unknown');
                     setShowDisconnectConfirm(false);
                   }}
                   className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
@@ -541,20 +542,20 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 <div className="flex-1 bg-white/10 text-white font-bold py-2.5 rounded-xl flex items-center justify-center text-sm">
                   Connected
                 </div>
-                <div className="relative">
+                  <div className="relative">
                   <button 
                     onClick={(e) => { e.stopPropagation(); setShowConnectedMenu(!showConnectedMenu); }}
-                    className="w-11 h-11 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0 active:scale-95 transition-transform hover:bg-white/20"
+                    className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center shrink-0 active:scale-95 transition-transform hover:bg-white/20 ml-2"
                   >
-                    <MoreHorizontal size={20} />
+                    <MoreHorizontal size={18} />
                   </button>
                   <AnimatePresence>
                     {showConnectedMenu && (
                       <motion.div 
-                        initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
-                        animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
-                        className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                        initial={{ opacity: 0, scale: 0.9, y: 5 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.9, y: 5 }}
+                        className="absolute top-12 right-0 min-w-[180px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
                         onClick={(e) => e.stopPropagation()}
                       >
                         
@@ -563,7 +564,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                             setShowConnectedMenu(false);
                             setShowDisconnectConfirm(true);
                           }}
-                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
+                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-medium"
                         >
                           <UserMinus size={18} className="mr-3" />
                           Remove connection

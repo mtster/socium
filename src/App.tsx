@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
 import { Bell, ArrowLeft } from 'lucide-react';
+import { cn } from './lib/utils';
 import { Toaster } from 'react-hot-toast';
 
 import { useStore } from './store/useStore';
@@ -508,9 +509,12 @@ export default function App() {
       <Toaster />
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
+      {/* Header Placeholder to prevent layout shift */}
+      <div className={cn("shrink-0 h-14 w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "block opacity-0" : "hidden opacity-100")} />
+      
       {/* Header */}
-      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
-        <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
+      <div className={cn("shrink-0 h-14 w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "opacity-0 pointer-events-none absolute" : "relative z-40 opacity-100")}>
+        <header className="h-14 flex items-center justify-between px-4 glass border-b border-white/10 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
             {activeTab === 'chat' && !initialActiveChat && (
@@ -531,7 +535,7 @@ export default function App() {
             )}
           </div>
         </header>
-      )}
+      </div>
 
       {/* Promo Popup */}
       <AnimatePresence>
@@ -565,7 +569,15 @@ export default function App() {
       <AddToHomeScreenModal />
 
       {/* Main View Area */}
-      <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
+      <main 
+        ref={mainRef} 
+        onScroll={(e) => {
+          if (activeTab === 'feed') {
+            useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
+          }
+        }}
+        className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]"
+      >
         <AnimatePresence mode="wait">
            {activeTab === 'feed' && (
              <motion.div 
@@ -573,6 +585,11 @@ export default function App() {
                initial={{ opacity: 0, x: -20 }} 
                animate={{ opacity: 1, x: 0 }} 
                exit={{ opacity: 0, x: 20 }}
+               onAnimationComplete={() => {
+                 if (mainRef.current) {
+                   mainRef.current.scrollTop = useStore.getState().feedScrollPos;
+                 }
+               }}
                className="page-transition"
              >
                <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
@@ -701,8 +718,11 @@ export default function App() {
            )}
         </AnimatePresence>
 
+      {/* Navigation Placeholder */}
+      <div className={cn("shrink-0 h-[60px] pb-[env(safe-area-inset-bottom)] w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "block opacity-0" : "hidden opacity-100")} />
+
       {/* Navigation */}
-      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
+      <div className={cn("w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "opacity-0 pointer-events-none absolute bottom-0" : "relative z-40 opacity-100")}>
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={(tab) => {
@@ -714,7 +734,7 @@ export default function App() {
            setFloatingAvatar={setFloatingAvatar}
            showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
         />
-      )}
+      </div>
       
     </div>
   );

@@ -23,9 +23,16 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       fetchFeedPosts(currentUserId);
     }
     
+    // Restore scroll position
+    const mainEl = document.querySelector('main');
+    if (mainEl) {
+      mainEl.scrollTop = useStore.getState().feedScrollPos;
+    }
+
     const handleResetTab = (e: any) => {
       if (e.detail?.tabId === 'feed') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        const mainEl = document.querySelector('main');
+        if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
     window.addEventListener('resetTab', handleResetTab);

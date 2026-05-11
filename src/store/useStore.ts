@@ -6,6 +6,7 @@ interface AppState {
   profile: Profile | null;
   userPosts: Post[];
   feedPosts: Post[];
+  feedScrollPos: number;
   totalUnread: number;
   pendingRequestsCount: number;
   floatingAvatar: Profile | null;
@@ -13,6 +14,7 @@ interface AppState {
   setProfile: (profile: Profile | null) => void;
   setUserPosts: (posts: Post[]) => void;
   setFeedPosts: (posts: Post[]) => void;
+  setFeedScrollPos: (pos: number) => void;
   setTotalUnread: (count: number) => void;
   setPendingRequestsCount: (count: number) => void;
   setFloatingAvatar: (profile: Profile | null) => void;
@@ -28,6 +30,7 @@ export const useStore = create<AppState>((set, get) => ({
   profile: null,
   userPosts: [],
   feedPosts: [],
+  feedScrollPos: 0,
   totalUnread: 0,
   pendingRequestsCount: 0,
   floatingAvatar: null,
@@ -35,6 +38,7 @@ export const useStore = create<AppState>((set, get) => ({
   setProfile: (profile) => set({ profile }),
   setUserPosts: (userPosts) => set({ userPosts }),
   setFeedPosts: (feedPosts) => set({ feedPosts }),
+  setFeedScrollPos: (feedScrollPos) => set({ feedScrollPos }),
   setTotalUnread: (totalUnread) => set({ totalUnread }),
   setPendingRequestsCount: (pendingRequestsCount) => set({ pendingRequestsCount }),
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
