@@ -21,17 +21,13 @@ const parseLocation = (content: string) => {
   return { lat: null, lng: null };
 };
 
-const openInNativeMaps = (lat: number, lng: number) => {
+const openInNativeMaps = (lat: number, lng: number, url?: string) => {
   const dest = `${lat},${lng}`;
-  const iosUrl = `comgooglemaps://?daddr=${dest}&directionsmode=driving`;
-  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
-  const start = Date.now();
-  window.location.href = iosUrl;
-  setTimeout(() => {
-     if (!document.hidden && (Date.now() - start < 2000)) {
-       window.open(webUrl, '_blank');
-     }
-  }, 1500);
+  if (url && url.includes('apple.com')) {
+    window.location.href = `maps://?q=${dest}`;
+  } else {
+    window.location.href = `comgooglemaps://?q=${dest}`;
+  }
 };
 
 const Linkify = ({ text }: { text: string }) => {
@@ -51,11 +47,17 @@ const Linkify = ({ text }: { text: string }) => {
               className="underline underline-offset-2 break-all opacity-80 hover:opacity-100 transition-opacity"
               onClick={(e) => {
                 if (isMapUrl) {
-                  const { lat, lng } = parseLocation(part);
-                  if (lat !== null && lng !== null) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openInNativeMaps(lat, lng);
+                  e.preventDefault();
+                  e.stopPropagation();
+                  
+                  if (part.includes('apple.com')) {
+                    const { lat, lng } = parseLocation(part);
+                    if (lat && lng) window.location.href = `maps://?q=${lat},${lng}`;
+                    else window.location.href = part;
+                  } else {
+                    const { lat, lng } = parseLocation(part);
+                    if (lat && lng) window.location.href = `comgooglemaps://?q=${lat},${lng}`;
+                    else window.location.href = part;
                   }
                 }
               }}
@@ -353,10 +355,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   };
 
   const scrollToBottom = (smooth = true) => {
-    if (smooth) {
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    if (scrollContainerRef.current) {
+      if (smooth) {
+        scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        scrollContainerRef.current.scrollTop = 0;
+      }
     }
   };
 
@@ -535,7 +539,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   return (
     <div className="flex flex-col h-full bg-black overflow-hidden relative">
       <div 
-         className="absolute inset-0 flex flex-col h-full select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="absolute inset-0 flex flex-col h-full select-none [-webkit-touch-callout:none] [user-select:none] [-webkit-user-select:none] [-webkit-user-drag:none] [-webkit-touch-callout:none]"
       >
         <div className="p-4 pt-safe border-b border-white/10 shrink-0">
            <input type="text" placeholder="Search connections..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
@@ -568,14 +572,14 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </div>
 
       <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
-        {activeChat && (
+        {activeChat && createPortal(
           <motion.div 
              key="chat-room" 
-             initial={{ x: '100%', opacity: 1 }} 
-             animate={{ x: 0, opacity: 1 }} 
-             exit={{ x: '100%', opacity: 1 }} 
-             transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
-             className="fixed inset-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+             initial={{ transform: 'translate3d(100%, 0, 0)' }} 
+             animate={{ transform: 'translate3d(0, 0, 0)' }} 
+             exit={{ transform: 'translate3d(100%, 0, 0)' }} 
+             transition={{ type: 'tween', duration: 0.4, ease: [0.32, 0.72, 0, 1] }} 
+             className="fixed inset-0 z-[100] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
           >
             <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
                <button onClick={() => { setActiveChat(null); onCloseChat?.(); }} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
@@ -641,7 +645,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
                <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
             </form>
-          </motion.div>
+          </motion.div>,
+          document.body
         )}
       </AnimatePresence>
 
@@ -679,7 +684,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
                   if (lat && lng) {
-                    window.open(`https://maps.apple.com/?q=${lat},${lng}`, '_blank');
+                    window.location.href = `maps://?q=${lat},${lng}`;
                   }
                   setContextMenu(null);
                 }}>
@@ -688,7 +693,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
                   const { lat, lng } = parseLocation(contextMenu.message.content || '');
                   if (lat && lng) {
-                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+                    window.location.href = `comgooglemaps://?q=${lat},${lng}`;
                   }
                   setContextMenu(null);
                 }}>
@@ -766,7 +771,7 @@ const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, s
          {isLoc && (
            <div className="p-3 bg-white/5 flex items-center gap-3 active:bg-white/10 transition-colors" onClick={() => { 
              const { lat, lng } = parseLocation(msg.content); 
-             if(lat && lng) openInNativeMaps(lat, lng); 
+             if(lat && lng) openInNativeMaps(lat, lng, msg.content); 
            }}>
              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center shrink-0">
                <MapPin size={20} className="text-white" />

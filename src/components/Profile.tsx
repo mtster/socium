@@ -224,10 +224,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (showPfpMenu) setShowPfpMenu(false);
+      if (showConnectedMenu) setShowConnectedMenu(false);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [showPfpMenu]);
+  }, [showPfpMenu, showConnectedMenu]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -492,7 +493,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 </button>
                 <button 
                   onClick={() => {
-                    if (connectionId) handleRemoveConnection(connectionId);
+                    handleRemoveConnection(connectionId || '');
                     setShowDisconnectConfirm(false);
                   }}
                   className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
@@ -551,10 +552,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   <AnimatePresence>
                     {showConnectedMenu && (
                       <motion.div 
-                        initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
-                        animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
-                        className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                        className="absolute top-14 right-0 w-48 bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
                         onClick={(e) => e.stopPropagation()}
                       >
                         
@@ -563,10 +564,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                             setShowConnectedMenu(false);
                             setShowDisconnectConfirm(true);
                           }}
-                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
+                          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-medium"
                         >
-                          <UserMinus size={18} className="mr-3" />
-                          Remove connection
+                          <UserMinus size={16} className="mr-3" />
+                          Disconnect
                         </button>
                         
                       </motion.div>
@@ -596,10 +597,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     <AnimatePresence>
                       {showConnectedMenu && (
                         <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
-                          animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
-                          className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute top-14 right-0 w-48 bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button 
@@ -607,10 +608,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                               setShowConnectedMenu(false);
                               setShowDisconnectConfirm(true);
                             }}
-                            className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
+                            className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-medium"
                           >
-                            <UserMinus size={18} className="mr-3" />
-                            Remove connection
+                            <UserMinus size={16} className="mr-3" />
+                            Disconnect
                           </button>
                         </motion.div>
                       )}

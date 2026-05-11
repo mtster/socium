@@ -42,10 +42,10 @@ self.addEventListener('notificationclick', function(event) {
 
   let urlToOpen = event.notification.data?.url || '/';
   if (event.notification.data?.senderId && !urlToOpen.includes('chatId=')) {
-    urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${event.notification.data.senderId}`;
+    urlToOpen = `/?chatId=${event.notification.data.senderId}`;
   }
 
-  const absoluteUrl = new URL(urlToOpen, self.location.origin).href;
+  const absoluteUrl = new URL(urlToOpen, 'https://sociumx.vercel.app').href;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {

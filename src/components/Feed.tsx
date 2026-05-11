@@ -11,7 +11,7 @@ interface FeedProps {
 }
 
 export default function Feed({ currentUserId, onUserClick }: FeedProps) {
-  const { feedPosts, fetchFeedPosts } = useStore();
+  const { feedPosts, fetchFeedPosts, feedScrollPosition, setFeedScrollPosition } = useStore();
   const [loading, setLoading] = useState(feedPosts.length === 0);
 
   useEffect(() => {
@@ -23,13 +23,24 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       fetchFeedPosts(currentUserId);
     }
     
+    // Restore scroll position
+    if (feedScrollPosition > 0) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: feedScrollPosition, behavior: 'instant' });
+      });
+    }
+    
     const handleResetTab = (e: any) => {
       if (e.detail?.tabId === 'feed') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
     window.addEventListener('resetTab', handleResetTab);
-    return () => window.removeEventListener('resetTab', handleResetTab);
+    return () => {
+      window.removeEventListener('resetTab', handleResetTab);
+      // Save scroll position when navigating away
+      setFeedScrollPosition(window.scrollY);
+    };
   }, []);
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {
