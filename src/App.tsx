@@ -6,7 +6,6 @@ import CreatePost from './components/CreatePost';
 import Feed from './components/Feed';
 import ProfileView from './components/Profile';
 import Chat from './components/Chat';
-import OtherProfileOverlay from './components/OtherProfileOverlay';
 import { Profile, Post } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
@@ -510,24 +509,26 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      {(activeTab !== 'create' && !isImageViewerOpen) && (
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
-            <button 
-              onClick={() => {
-                setShowNotifPromoPopup(false);
-                if ('Notification' in window && notifPermission !== 'granted') {
-                  registerPush(session.user.id, true);
-                }
-              }}
-              className="text-white hover:text-white/80 transition-colors relative"
-            >
-              <Bell size={24} />
-              {notifPermission === 'granted' && (
-                <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
-              )}
-            </button>
+            {activeTab === 'chat' && !initialActiveChat && (
+              <button 
+                onClick={() => {
+                  setShowNotifPromoPopup(false);
+                  if ('Notification' in window && notifPermission !== 'granted') {
+                    registerPush(session.user.id, true);
+                  }
+                }}
+                className="text-white hover:text-white/80 transition-colors relative"
+              >
+                <Bell size={24} />
+                {notifPermission === 'granted' && (
+                  <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
+                )}
+              </button>
+            )}
           </div>
         </header>
       )}
@@ -564,7 +565,7 @@ export default function App() {
       <AddToHomeScreenModal />
 
       {/* Main View Area */}
-      <main id="main-scroll" ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]">
         <AnimatePresence mode="wait">
            {activeTab === 'feed' && (
              <motion.div 
@@ -620,10 +621,11 @@ export default function App() {
            {activeTab === 'chat' && (
              <motion.div 
                key="chat" 
-               initial={{ opacity: 0, x: 20 }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: -20 }}
-               className="page-transition"
+               initial={{ x: previousTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }} 
+               animate={{ x: 0, opacity: 1 }} 
+               exit={{ x: activeTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }}
+               transition={{ type: 'tween', duration: 0.3 }}
+               className="absolute inset-0 z-40 flex flex-col bg-black"
              >
                <Chat 
                  currentUserId={session.user.id} 
@@ -638,18 +640,69 @@ export default function App() {
         </main>
 
       {/* Overlay for Other Profile */}
-      <OtherProfileOverlay
-        viewingProfileId={viewingProfileId}
-        viewingProfileData={viewingProfileData}
-        setViewingProfileId={setViewingProfileId}
-        session={session}
-        handleUserClick={handleUserClick}
-        handleDeletePost={handleDeletePost}
-        setViewingProfileData={setViewingProfileData}
-      />
+        <AnimatePresence>
+           {viewingProfileId !== null && (
+           <motion.div 
+             key="other_profile" 
+             initial={{ opacity: 0, x: '100%' }} 
+             animate={{ opacity: 1, x: 0 }} 
+             exit={{ opacity: 0, x: '100%' }}
+             transition={{ type: "tween", duration: 0.3 }}
+             className="fixed inset-0 z-[60] bg-black overflow-y-auto"
+             >
+               <div className="sticky top-0 left-0 w-full px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 gap-4">
+                 <button 
+                   onClick={() => setViewingProfileId(null)} 
+                   className="p-3 -ml-2 text-white/90 active:scale-95 transition-transform"
+                 >
+                   <ArrowLeft size={24} />
+                 </button>
+                 <span className="text-xl font-bold tracking-tight">
+                   {viewingProfileData?.profile?.full_name || viewingProfileData?.profile?.username || 'Profile'}
+                 </span>
+               </div>
+               
+               {viewingProfileData ? (
+                 <ProfileView 
+                   profile={viewingProfileData.profile} 
+                   posts={viewingProfileData.posts} 
+                   isOwnProfile={false}
+                   currentUserId={session.user.id}
+                   onUserClick={handleUserClick}
+                   onDeletePost={handleDeletePost}
+                   onLikePost={async (id, isLiked) => {
+                     setViewingProfileData(prev => {
+                       if (!prev) return prev;
+                       return {
+                         ...prev,
+                         posts: prev.posts.map(p => {
+                           if (p.id === id) {
+                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
+                           }
+                           return p;
+                         })
+                       };
+                     });
+                     try {
+                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                     } catch(e) {}
+                   }}
+                   onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
+                 />
+               ) : (
+                 <div className="flex flex-col items-center justify-center pt-40 px-4 text-center relative w-full h-full">
+                    
+                    <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                    <p className="text-white/50 text-sm">Loading profile...</p>
+                 </div>
+               )}
+             </motion.div>
+           )}
+        </AnimatePresence>
 
       {/* Navigation */}
-      {(activeTab !== 'create' && !isImageViewerOpen) && (
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={(tab) => {

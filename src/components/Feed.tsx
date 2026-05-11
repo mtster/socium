@@ -11,7 +11,7 @@ interface FeedProps {
 }
 
 export default function Feed({ currentUserId, onUserClick }: FeedProps) {
-  const { feedPosts, fetchFeedPosts, feedScrollPosition, setFeedScrollPosition } = useStore();
+  const { feedPosts, fetchFeedPosts } = useStore();
   const [loading, setLoading] = useState(feedPosts.length === 0);
 
   useEffect(() => {
@@ -23,26 +23,13 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       fetchFeedPosts(currentUserId);
     }
     
-    // Restore scroll position
-    const mainScroll = document.getElementById('main-scroll');
-    if (feedScrollPosition > 0 && mainScroll) {
-      requestAnimationFrame(() => {
-        mainScroll.scrollTo({ top: feedScrollPosition, behavior: 'instant' });
-      });
-    }
-    
     const handleResetTab = (e: any) => {
-      if (e.detail?.tabId === 'feed' && mainScroll) {
-        mainScroll.scrollTo({ top: 0, behavior: 'smooth' });
+      if (e.detail?.tabId === 'feed') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
     window.addEventListener('resetTab', handleResetTab);
-    return () => {
-      window.removeEventListener('resetTab', handleResetTab);
-      // Save scroll position when navigating away
-      const currentScroll = document.getElementById('main-scroll')?.scrollTop || 0;
-      setFeedScrollPosition(currentScroll);
-    };
+    return () => window.removeEventListener('resetTab', handleResetTab);
   }, []);
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {

@@ -193,31 +193,23 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
   const handleRemoveConnection = async (id: string, connectionProfileId?: string) => {
     try {
-      // Try to delete by ID if it exists
-      let mainError;
-      if (id) {
-         const { error } = await supabase.from('connections').delete().eq('id', id);
-         mainError = error;
-      }
+      // Try to delete by ID
+      const { error } = await supabase.from('connections').delete().eq('id', id);
       
       // Fallback robust deletion if we are on someone else's profile
       if (!isOwnProfile) {
-        const { error: fallbackError } = await supabase.from('connections')
+        await supabase.from('connections')
           .delete()
           .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`);
-        
-        if (fallbackError && fallbackError.code !== 'PGRST116') throw fallbackError;
       } else if (connectionProfileId) {
          // robust deletion from pending list if id is unknown
-         const { error: fallbackError } = await supabase.from('connections')
+         await supabase.from('connections')
           .delete()
           .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${connectionProfileId}),and(requester_id.eq.${connectionProfileId},receiver_id.eq.${currentUserId})`);
-          
-         if (fallbackError && fallbackError.code !== 'PGRST116') throw fallbackError;
-      } else if (mainError && mainError.code !== 'PGRST116') {
-         throw mainError;
       }
 
+      if (error && error.code !== 'PGRST116') throw error; // Ignore not found error if robust strategy worked
+      
       if (!isOwnProfile) {
         setConnectionStatus('none');
         setConnectionId(null);
@@ -232,11 +224,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (showPfpMenu) setShowPfpMenu(false);
-      if (showConnectedMenu) setShowConnectedMenu(false);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [showPfpMenu, showConnectedMenu]);
+  }, [showPfpMenu]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -398,12 +389,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
         {/* Profile Picture Section */}
         <div className="relative mb-8 flex justify-center">
-          <div 
-            onClick={() => {
-              if (!isOwnProfile && localAvatar) setViewingImage(localAvatar);
-            }}
-            className={`w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden ${(!isOwnProfile && localAvatar) ? 'cursor-pointer active:scale-95 transition-transform' : ''}`}
-          >
+          <div className="w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden">
             {localAvatar ? (
               <img src={localAvatar} alt={profile.username} className="w-full h-full object-cover" />
             ) : (
@@ -506,7 +492,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 </button>
                 <button 
                   onClick={() => {
-                    handleRemoveConnection(connectionId || '');
+                    if (connectionId) handleRemoveConnection(connectionId);
                     setShowDisconnectConfirm(false);
                   }}
                   className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
@@ -565,10 +551,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   <AnimatePresence>
                     {showConnectedMenu && (
                       <motion.div 
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                        className="absolute top-14 right-0 w-48 bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                        initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                        animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                        className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
                         onClick={(e) => e.stopPropagation()}
                       >
                         
@@ -577,10 +563,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                             setShowConnectedMenu(false);
                             setShowDisconnectConfirm(true);
                           }}
-                          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-medium"
+                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
                         >
-                          <UserMinus size={16} className="mr-3" />
-                          Disconnect
+                          <UserMinus size={18} className="mr-3" />
+                          Remove connection
                         </button>
                         
                       </motion.div>
@@ -610,10 +596,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     <AnimatePresence>
                       {showConnectedMenu && (
                         <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute top-14 right-0 w-48 bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                          initial={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                          animate={{ opacity: 1, scale: 1, y: 0, x: '-50%' }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10, x: '-50%' }}
+                          className="absolute top-14 right-[-100px] min-w-[200px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button 
@@ -621,10 +607,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                               setShowConnectedMenu(false);
                               setShowDisconnectConfirm(true);
                             }}
-                            className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-medium"
+                            className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-bold"
                           >
-                            <UserMinus size={16} className="mr-3" />
-                            Disconnect
+                            <UserMinus size={18} className="mr-3" />
+                            Remove connection
                           </button>
                         </motion.div>
                       )}

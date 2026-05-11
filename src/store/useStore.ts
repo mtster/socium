@@ -9,7 +9,6 @@ interface AppState {
   totalUnread: number;
   pendingRequestsCount: number;
   floatingAvatar: Profile | null;
-  feedScrollPosition: number;
   
   setProfile: (profile: Profile | null) => void;
   setUserPosts: (posts: Post[]) => void;
@@ -17,7 +16,6 @@ interface AppState {
   setTotalUnread: (count: number) => void;
   setPendingRequestsCount: (count: number) => void;
   setFloatingAvatar: (profile: Profile | null) => void;
-  setFeedScrollPosition: (pos: number) => void;
   
   fetchProfile: (userId: string) => Promise<void>;
   fetchUserPosts: (userId: string, currentUserId: string) => Promise<void>;
@@ -33,7 +31,6 @@ export const useStore = create<AppState>((set, get) => ({
   totalUnread: 0,
   pendingRequestsCount: 0,
   floatingAvatar: null,
-  feedScrollPosition: 0,
 
   setProfile: (profile) => set({ profile }),
   setUserPosts: (userPosts) => set({ userPosts }),
@@ -41,7 +38,6 @@ export const useStore = create<AppState>((set, get) => ({
   setTotalUnread: (totalUnread) => set({ totalUnread }),
   setPendingRequestsCount: (pendingRequestsCount) => set({ pendingRequestsCount }),
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
-  setFeedScrollPosition: (feedScrollPosition) => set({ feedScrollPosition }),
 
   fetchProfile: async (userId) => {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
