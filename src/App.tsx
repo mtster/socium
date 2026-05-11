@@ -509,12 +509,9 @@ export default function App() {
       <Toaster />
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
-      {/* Header Placeholder to prevent layout shift */}
-      <div className={cn("shrink-0 h-14 w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "block opacity-0" : "hidden opacity-100")} />
-      
       {/* Header */}
-      <div className={cn("shrink-0 h-14 w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "opacity-0 pointer-events-none absolute" : "relative z-40 opacity-100")}>
-        <header className="h-14 flex items-center justify-between px-4 glass border-b border-white/10 bg-black/90 [touch-action:none]">
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
+        <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
             {activeTab === 'chat' && !initialActiveChat && (
@@ -718,11 +715,8 @@ export default function App() {
            )}
         </AnimatePresence>
 
-      {/* Navigation Placeholder */}
-      <div className={cn("shrink-0 h-[60px] pb-[env(safe-area-inset-bottom)] w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "block opacity-0" : "hidden opacity-100")} />
-
       {/* Navigation */}
-      <div className={cn("w-full transition-opacity duration-300", (activeTab === 'create' || isImageViewerOpen || isChatRoomOpen) ? "opacity-0 pointer-events-none absolute bottom-0" : "relative z-40 opacity-100")}>
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={(tab) => {

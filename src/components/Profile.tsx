@@ -193,8 +193,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
   const handleRemoveConnection = async (id: string, connectionProfileId?: string) => {
     try {
-      // Try to delete by ID
-      const { error } = await supabase.from('connections').delete().eq('id', id);
+      let mainError = null;
+      if (id !== 'unknown') {
+        const { error } = await supabase.from('connections').delete().eq('id', id);
+        mainError = error;
+      }
       
       // Fallback robust deletion if we are on someone else's profile
       if (!isOwnProfile) {
@@ -208,7 +211,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${connectionProfileId}),and(requester_id.eq.${connectionProfileId},receiver_id.eq.${currentUserId})`);
       }
 
-      if (error && error.code !== 'PGRST116') throw error; // Ignore not found error if robust strategy worked
+      if (mainError && mainError.code !== 'PGRST116') throw mainError; // Ignore not found error if robust strategy worked
       
       if (!isOwnProfile) {
         setConnectionStatus('none');
@@ -493,7 +496,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 </button>
                 <button 
                   onClick={() => {
-                    handleRemoveConnection(connectionId || 'unknown');
+                    if (connectionId) {
+                      handleRemoveConnection(connectionId);
+                    } else if (!isOwnProfile) {
+                       handleRemoveConnection('unknown', profile.id);
+                    }
                     setShowDisconnectConfirm(false);
                   }}
                   className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
@@ -552,24 +559,22 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   <AnimatePresence>
                     {showConnectedMenu && (
                       <motion.div 
-                        initial={{ opacity: 0, scale: 0.9, y: 5 }}
+                        initial={{ opacity: 0, scale: 0.9, y: -10 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9, y: 5 }}
-                        className="absolute top-12 right-0 min-w-[180px] bg-[#1c1c1c] rounded-2xl p-2 border border-white/10 shadow-2xl z-20"
+                        exit={{ opacity: 0, scale: 0.9, y: -10 }}
+                        className="absolute right-0 top-12 w-48 bg-[#1c1c1c] rounded-xl border border-white/10 shadow-2xl z-20 overflow-hidden"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        
                         <button 
                           onClick={() => {
                             setShowConnectedMenu(false);
                             setShowDisconnectConfirm(true);
                           }}
-                          className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors text-red-500 font-medium"
+                          className="w-full px-4 py-3 flex items-center text-sm hover:bg-white/5 transition-colors text-red-500 font-medium"
                         >
-                          <UserMinus size={18} className="mr-3" />
+                          <UserMinus size={16} className="mr-3" />
                           Remove connection
                         </button>
-                        
                       </motion.div>
                     )}
                   </AnimatePresence>
