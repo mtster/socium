@@ -532,7 +532,7 @@ export default function App() {
             )}
           </div>
         </header>
-      </div>
+      )}
 
       {/* Promo Popup */}
       <AnimatePresence>
@@ -728,8 +728,7 @@ export default function App() {
            setFloatingAvatar={setFloatingAvatar}
            showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
         />
-      </div>
-      
+      )}
     </div>
   );
 }

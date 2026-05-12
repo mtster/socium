@@ -10,160 +10,9 @@ import { rtdb } from '@/src/lib/firebase';
 import { ref, get, set, increment } from 'firebase/database';
 import { setChatLocation, checkRecipientPresenceAndNotify } from '@/src/lib/presence';
 import { useStore } from '@/src/store/useStore';
-
-const parseLocation = (content: string) => {
-  if (!content) return { lat: null, lng: null };
-  const locMatch = content.match(/query=([-0-9.]+),([-0-9.]+)/) || 
-                   content.match(/ll=([-0-9.]+),([-0-9.]+)/) ||
-                   content.match(/([-0-9.]+),([-0-9.]+)/) ||
-                   content.match(/google\.com\/maps\/search\/([-0-9.]+),([-0-9.]+)/);
-  if (locMatch && !content.includes('goo.gl/maps') && !content.includes('maps.app.goo.gl')) {
-     return { lat: parseFloat(locMatch[1]), lng: parseFloat(locMatch[2]) };
-  }
-  return { lat: null, lng: null };
-};
-
-const openInNativeMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
-  const isApple = originalUrl && (originalUrl.includes('apple.com') || originalUrl.includes('apple.com/maps'));
-  const isGoogle = originalUrl && (originalUrl.includes('google.com') || originalUrl.includes('goo.gl/maps') || originalUrl.includes('maps.app.goo.gl'));
-
-  let iosUrl = '';
-  let webUrl = originalUrl || '';
-
-  if (lat !== null && lng !== null) {
-    const dest = `${lat},${lng}`;
-    if (isApple) {
-      iosUrl = `maps://?q=${dest}`;
-      webUrl = originalUrl || `https://maps.apple.com/?q=${dest}`;
-    } else {
-      iosUrl = `comgooglemaps://?q=${dest}&directionsmode=driving`;
-      webUrl = originalUrl || `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
-    }
-  } else if (originalUrl) {
-    if (isApple) {
-      iosUrl = originalUrl.replace(/^https?:\/\//, 'maps://');
-    } else if (isGoogle) {
-      // the shortest way to launch google maps from generic url is sometimes comgooglemapsurl://
-      // but without lat/lng we can just try comgooglemaps://?q=... or let fallback happen
-      iosUrl = originalUrl.replace(/^https?:\/\//, 'comgooglemapsurl://');
-    }
-  }
-
-  if (iosUrl) {
-    window.location.href = iosUrl;
-  } else if (webUrl) {
-    window.open(webUrl, '_blank');
-  }
-};
-
-const Linkify = ({ text }: { text: string }) => {
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const parts = text.split(urlRegex);
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (part.match(urlRegex)) {
-          const isMapUrl = part.includes('google.com/maps') || part.includes('goo.gl/maps') || part.includes('maps.app.goo.gl') || part.includes('maps.apple.com') || part.includes('apple.com/maps');
-          return (
-            <a 
-              key={i} 
-              href={part} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="underline underline-offset-2 break-all opacity-80 hover:opacity-100 transition-opacity"
-              onClick={(e) => {
-                if (isMapUrl) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const { lat, lng } = parseLocation(part);
-                  openInNativeMaps(lat, lng, part);
-                }
-              }}
-            >
-              {part}
-            </a>
-          );
-        }
-        return part;
-      })}
-    </>
-  );
-};
-
-const AudioPlayer = ({ src, isMine }: { src: string, isMine: boolean }) => {
-  const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    const audio = new Audio(src);
-    audioRef.current = audio;
-    audio.preload = 'metadata';
-    const setAudioData = () => { if (audio.duration !== Infinity) setDuration(audio.duration); };
-    const setAudioTime = () => { setProgress((audio.currentTime / audio.duration) * 100 || 0); };
-    const onEnd = () => { setPlaying(false); setProgress(100); };
-    audio.addEventListener('loadedmetadata', setAudioData);
-    audio.addEventListener('timeupdate', setAudioTime);
-    audio.addEventListener('ended', onEnd);
-    audio.addEventListener('durationchange', () => { if (audio.duration !== Infinity) setDuration(audio.duration); });
-    return () => {
-      audio.removeEventListener('loadedmetadata', setAudioData);
-      audio.removeEventListener('timeupdate', setAudioTime);
-      audio.removeEventListener('ended', onEnd);
-      audio.pause();
-    };
-  }, [src]);
-
-  const toggle = async () => {
-    if (!audioRef.current) return;
-    if (playing) {
-      audioRef.current.pause();
-      setPlaying(false);
-    } else {
-      try {
-        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioContext) {
-           const ctx = new AudioContext();
-           const buffer = ctx.createBuffer(1, 1, 22050);
-           const source = ctx.createBufferSource();
-           source.buffer = buffer;
-           source.connect(ctx.destination);
-           source.start(0);
-           if (ctx.state === 'suspended') await ctx.resume();
-           setTimeout(() => ctx.close(), 1000);
-        }
-      } catch (e) {}
-      if (progress >= 100) audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(e => console.error("Play error", e));
-      setPlaying(true);
-    }
-  };
-
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current) return;
-    const bounds = e.currentTarget.getBoundingClientRect();
-    const percentage = (e.clientX - bounds.left) / bounds.width;
-    const newTime = percentage * audioRef.current.duration;
-    if (!isNaN(newTime) && isFinite(newTime)) {
-      audioRef.current.currentTime = newTime;
-      setProgress(percentage * 100);
-    }
-  };
-
-  return (
-    <div className={cn("flex items-center gap-3 px-3 py-2 rounded-[24px] min-w-[180px] backdrop-blur-md transition-all duration-300", isMine ? "bg-white text-black" : "bg-white/20 text-white")}>
-      <button onClick={toggle} className={cn("w-8 h-8 rounded-full flex items-center justify-center transition-transform active:scale-90", isMine ? "bg-black/10" : "bg-white/10")}>
-        {playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
-      </button>
-      <div className="flex-1 h-3 bg-current/10 rounded-full overflow-hidden cursor-pointer flex items-center relative" onClick={handleSeek}>
-        <div className="w-full h-1 bg-current/20 rounded-full absolute pointer-events-none" />
-        <motion.div animate={{ width: `${progress}%` }} transition={{ duration: 0.1 }} className="h-1 bg-current relative z-10 pointer-events-none" />
-      </div>
-      <span className="text-[10px] font-medium opacity-50 w-8">{duration > 0 ? `${Math.floor(duration)}s` : '...'}</span>
-    </div>
-  );
-};
+import { MessageBubble } from './chat/MessageBubble';
+import { AudioPlayer } from './chat/AudioPlayer';
+import { parseLocation } from './chat/locationUtils';
 
 interface ChatProps {
   currentUserId: string;
@@ -587,7 +436,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         </div>
       </div>
 
-      {createPortal(
+      {createPortal((
+        <>
         <AnimatePresence initial={false} custom={initialActiveChat ? 'initial' : 'normal'}>
           {activeChat && (
             <motion.div 
@@ -722,85 +572,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             {contextMenu.message.sender_id === currentUserId && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-red-500 hover:bg-white/5 gap-3 transition-colors" onClick={handleDeleteMessage}><Trash2 size={16} />Delete</button>}
           </motion.div></>)}
       </AnimatePresence>
+      </>
+      ), document.body)}
     </div>
   );
 }
-
-const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, setViewingImage, onTouchStart, onTouchMove, onTouchEnd, onCloseChat, contextMenuId }: any) => {
-  const isConsecutive = nextMsg?.sender_id === msg.sender_id;
-  const isPrevConsecutive = prevMsg?.sender_id === msg.sender_id;
-  const showAvatar = !isMine && !isConsecutive;
-  let rounded = 'rounded-[20px]';
-  if (isMine) {
-    rounded = isConsecutive 
-      ? (isPrevConsecutive ? 'rounded-[20px] rounded-tr-[4px] rounded-br-[4px]' : 'rounded-[20px] rounded-br-[4px]') 
-      : (isPrevConsecutive ? 'rounded-[20px] rounded-tr-[4px]' : 'rounded-[20px]');
-  } else {
-    rounded = isConsecutive 
-      ? (isPrevConsecutive ? 'rounded-[20px] rounded-tl-[4px] rounded-bl-[4px]' : 'rounded-[20px] rounded-bl-[4px]') 
-      : (isPrevConsecutive ? 'rounded-[20px] rounded-tl-[4px]' : 'rounded-[20px]');
-  }
-  const locMatch = msg.content?.match(/(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/);
-  const isLoc = msg.media_type === 'location' || !!locMatch;
-  const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
-  
-  return (
-    <div className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : "mb-3")}>
-       {!isMine && (
-         <div className="w-8 shrink-0 flex items-end mb-0.5">
-           {showAvatar ? (
-             <div 
-               className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 active:scale-95 transition-transform" 
-               onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } })); onCloseChat?.(); }}
-             >
-               {activeChat.avatar_url ? <img src={activeChat.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full items-center justify-center flex text-[10px] text-white/50">{(activeChat.username?.charAt(0) || '?').toUpperCase()}</div>}
-             </div>
-           ) : <div className="w-8" />}
-         </div>
-       )}
-       <motion.div 
-         id={`msg-inner-${msg.id}`} 
-         onContextMenu={(e) => e.preventDefault()}
-         onTouchStart={(e: any) => onTouchStart(e, msg)} 
-         onTouchMove={onTouchMove} 
-         onTouchEnd={onTouchEnd} 
-         animate={contextMenuId === msg.id ? { scale: 1.05, zIndex: 100 } : { scale: 1, zIndex: 1 }}
-         transition={{ type: "spring", stiffness: 400, damping: 25 }}
-         className={cn(
-           "max-w-[75%] min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-colors duration-300 relative select-none [user-select:none] [-webkit-user-select:none]", 
-           rounded, 
-           !isMediaOnly && (isMine ? "bg-white text-black shadow-sm" : "bg-[#262626] text-white shadow-sm"), 
-           !msg.media_type && !isLoc && "px-3.5 py-2", 
-           (msg.media_type === 'image' || isLoc) && "p-0 rounded-[22px] overflow-hidden"
-         )}
-       >
-         {msg.media_type === 'image' && msg.media_url && (
-           <div className="relative group">
-             <img 
-               src={msg.media_url} 
-               className="w-full h-auto max-h-[400px] object-cover block cursor-pointer" 
-               onClick={() => setViewingImage(msg.media_url)} 
-               loading="lazy"
-             />
-           </div>
-         )}
-         {msg.media_type === 'audio' && msg.media_url && <AudioPlayer src={msg.media_url} isMine={isMine} />}
-         {isLoc && (
-           <div className="p-3 bg-white/5 flex items-center gap-3 active:bg-white/10 transition-colors" onClick={() => { 
-             const { lat, lng } = parseLocation(msg.content); 
-             openInNativeMaps(lat, lng, msg.content); 
-           }}>
-             <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center shrink-0">
-               <MapPin size={20} className="text-white" />
-             </div>
-             <div className="flex-1 min-w-0">
-               <span className="text-[13px] font-bold block">Current Location</span>
-               <span className="text-[11px] opacity-40 block truncate">Tap to open maps</span>
-             </div>
-           </div>
-         )}
-         {msg.content && !isMediaOnly && <div className={cn("px-1", isMine ? "text-black" : "text-white")}><Linkify text={msg.content} /></div>}
-       </motion.div>
-    </div>
-  );
-});

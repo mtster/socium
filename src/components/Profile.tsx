@@ -9,6 +9,8 @@ import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { formatDate } from '@/src/lib/utils';
 import UserSearchModal from './UserSearchModal';
 import ImageCropperModal from './ImageCropperModal';
+import { useConnections } from './profile/useConnections';
+import { ProfileImageViewer } from './profile/ProfileImageViewer';
 
 interface ProfileViewProps {
   profile: Profile;
@@ -78,150 +80,15 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     setLocalAvatar(profile.avatar_url);
   }, [profile.avatar_url]);
 
-  // Connections Query State
-  const [connections, setConnections] = useState<any[]>(profileConnectionsCache[profile.id] || []);
-  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<string | null>(null); // 'none', 'pending_sent', 'pending_received', 'accepted'
-  const [connectionId, setConnectionId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!profileConnectionsCache[profile.id] || Date.now() - (profileConnectionsTime[profile.id] || 0) > 60000) {
-      fetchConnections();
-    }
-  }, [profile.id, currentUserId]);
-
-  const fetchConnections = async () => {
-    if (!currentUserId || !profile.id) return;
-
-    if (isOwnProfile) {
-      // Fetch accepted friends
-      const { data: accepted1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', profile.id).eq('status', 'accepted');
-      const { data: accepted2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'accepted');
-      
-      const combined = [
-        ...(accepted1?.map(c => c.profiles) || []),
-        ...(accepted2?.map(c => c.profiles) || [])
-      ].filter(Boolean);
-      
-      const adminProf = await getAdminProfile();
-      if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
-        combined.unshift(adminProf);
-      }
-      
-      const filteredConnections = combined.filter(c => c.id !== profile.id);
-      profileConnectionsCache[profile.id] = filteredConnections;
-      profileConnectionsTime[profile.id] = Date.now();
-      setConnections(filteredConnections);
-
-      // Fetch pending requests we received
-      const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');
-      setPendingRequests(pending || []);
-      
-      // Sync global count if matching
-      if (profile.id === currentUserId && useStore.getState().setPendingRequestsCount) {
-        useStore.getState().setPendingRequestsCount(pending?.length || 0);
-      }
-    } else {
-      // Viewing someone else: checking our relational status
-      const { data: rel } = await supabase.from('connections')
-        .select('*')
-        .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`)
-        .maybeSingle();
-      
-      if (profile.id === ADMIN_ID) {
-        setConnectionStatus('accepted');
-      } else if (!rel) {
-        setConnectionStatus('none');
-      } else {
-        setConnectionId(rel.id);
-        if (rel.status === 'accepted') {
-          setConnectionStatus('accepted');
-        } else if (rel.status === 'pending') {
-          setConnectionStatus(rel.requester_id === currentUserId ? 'pending_sent' : 'pending_received');
-        } else {
-          setConnectionStatus('none');
-        }
-      }
-
-      // Fetch their accepted connections count/list
-      const { data: accepted1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', profile.id).eq('status', 'accepted');
-      const { data: accepted2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'accepted');
-      
-      const combined = [
-        ...(accepted1?.map(c => c.profiles) || []),
-        ...(accepted2?.map(c => c.profiles) || [])
-      ].filter(Boolean);
-
-      const adminProf = await getAdminProfile();
-      if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
-        combined.unshift(adminProf);
-      }
-
-      setConnections(combined.filter(c => c.id !== profile.id));
-    }
-  };
-
-  const handleRequestConnection = async () => {
-    try {
-      const { data, error } = await supabase.from('connections').insert({
-        requester_id: currentUserId,
-        receiver_id: profile.id,
-        status: 'pending'
-      }).select().single();
-      
-      if (error) throw error;
-      setConnectionStatus('pending_sent');
-      setConnectionId(data.id);
-    } catch (e: any) {
-      alert(e.message);
-    }
-  }
-
-  const handleAcceptConnection = async (id: string) => {
-    try {
-      const { error } = await supabase.from('connections').update({ status: 'accepted' }).eq('id', id);
-      if (error) throw error;
-      if (isOwnProfile) {
-        fetchConnections();
-      } else {
-        setConnectionStatus('accepted');
-      }
-    } catch (e: any) {
-      alert(e.message);
-    }
-  }
-
-  const handleRemoveConnection = async (id: string, connectionProfileId?: string) => {
-    try {
-      let mainError = null;
-      if (id !== 'unknown') {
-        const { error } = await supabase.from('connections').delete().eq('id', id);
-        mainError = error;
-      }
-      
-      // Fallback robust deletion if we are on someone else's profile
-      if (!isOwnProfile) {
-        await supabase.from('connections')
-          .delete()
-          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`);
-      } else if (connectionProfileId) {
-         // robust deletion from pending list if id is unknown
-         await supabase.from('connections')
-          .delete()
-          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${connectionProfileId}),and(requester_id.eq.${connectionProfileId},receiver_id.eq.${currentUserId})`);
-      }
-
-      if (mainError && mainError.code !== 'PGRST116') throw mainError; // Ignore not found error if robust strategy worked
-      
-      if (!isOwnProfile) {
-        setConnectionStatus('none');
-        setConnectionId(null);
-      }
-      fetchConnections();
-    } catch (e: any) {
-      alert(e.message);
-    }
-  }
+  const {
+    connections,
+    pendingRequests,
+    connectionStatus,
+    connectionId,
+    handleRequestConnection,
+    handleAcceptConnection,
+    handleRemoveConnection
+  } = useConnections(profile, !!isOwnProfile, currentUserId);
 
   // Close menu if clicked outside
   useEffect(() => {
@@ -314,53 +181,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   return (
     <div className="pb-6 relative z-10">
       {/* Full Screen Image Viewer */}
-      <AnimatePresence>
-        {viewingImage && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
-            onClick={() => setViewingImage(null)}
-          >
-            <button 
-              className="absolute top-10 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
-              onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
-            >
-              <X size={24} />
-            </button>
-            
-            <div className="w-full h-full flex items-center justify-center p-4">
-              <TransformWrapper
-                initialScale={1}
-                minScale={1}
-                maxScale={4}
-                centerOnInit={true}
-              >
-                <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
-                  <motion.div
-                    drag="y"
-                    dragConstraints={{ top: 0, bottom: 0 }}
-                    dragElastic={0.6}
-                    onDragEnd={(_, info) => {
-                      if (Math.abs(info.offset.y) > 80) setViewingImage(null);
-                    }}
-                    className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <motion.img 
-                      layoutId="profile-pfp"
-                      src={viewingImage} 
-                      alt="Profile" 
-                      className="max-w-[95vw] max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/5"
-                    />
-                  </motion.div>
-                </TransformComponent>
-              </TransformWrapper>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ProfileImageViewer viewingImage={viewingImage} setViewingImage={setViewingImage} />
 
       <div className="px-4 py-8 flex flex-col items-center">
         {cropperImageSrc && (
