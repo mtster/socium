@@ -60,7 +60,7 @@ export function useChatList(currentUserId: string) {
       await Promise.all(deduplicatedProfs.map(async (prof) => {
         const { data: msgs } = await supabase.from('messages')
           .select('*').is('group_chat_id', null)
-          .or(`sender_id.eq.${prof.id},receiver_id.eq.${prof.id}`)
+          .or(`and(sender_id.eq.${prof.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${prof.id})`)
           .order('created_at', { ascending: false }).limit(1);
           
         const { count } = await supabase.from('messages')

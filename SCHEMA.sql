@@ -144,7 +144,7 @@ CREATE POLICY "Users can delete own comments" ON comments FOR DELETE USING (auth
 
 -- Connections Policies
 DROP POLICY IF EXISTS "Connections viewable by parties" ON connections;
-CREATE POLICY "Connections viewable by parties" ON connections FOR SELECT USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+CREATE POLICY "Connections viewable by parties" ON connections FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Users can request connection" ON connections;
 CREATE POLICY "Users can request connection" ON connections FOR INSERT WITH CHECK (auth.uid() = requester_id);
@@ -230,9 +230,20 @@ CREATE POLICY "Admin can delete group chats" ON group_chats FOR DELETE USING (au
 DROP POLICY IF EXISTS "Participants can view other participants" ON group_chat_participants;
 CREATE POLICY "Participants can view other participants" ON group_chat_participants FOR SELECT USING (true);
 
+-- Helper to check if group admin (bypasses RLS to avoid infinite recursion)
+CREATE OR REPLACE FUNCTION public.is_group_admin(check_chat_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_chats WHERE id = check_chat_id AND admin_id = auth.uid()
+  );
+$$;
+
 DROP POLICY IF EXISTS "Users can insert participants" ON group_chat_participants;
 CREATE POLICY "Users can insert participants" ON group_chat_participants FOR INSERT WITH CHECK (
-  auth.uid() IN (SELECT admin_id FROM group_chats WHERE id = chat_id) OR
+  public.is_group_admin(chat_id) OR
   user_id = auth.uid() -- A user can insert themselves (creating chat) or admin can insert
 );
 
@@ -242,7 +253,7 @@ CREATE POLICY "Users can update own participant record" ON group_chat_participan
 DROP POLICY IF EXISTS "Admin or self can delete participant" ON group_chat_participants;
 CREATE POLICY "Admin or self can delete participant" ON group_chat_participants FOR DELETE USING (
   user_id = auth.uid() OR
-  auth.uid() IN (SELECT admin_id FROM group_chats WHERE id = chat_id)
+  public.is_group_admin(chat_id)
 );
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;

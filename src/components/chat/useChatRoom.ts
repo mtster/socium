@@ -56,10 +56,11 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     if (activeChat.isGroup) {
       req = req.eq('group_chat_id', activeChat.id);
     } else {
-      req = req.is('group_chat_id', null).or(`sender_id.eq.${activeChat.id},receiver_id.eq.${activeChat.id}`);
+      req = req.is('group_chat_id', null).or(`and(sender_id.eq.${activeChat.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${activeChat.id})`);
     }
 
-    const { data } = await req;
+    const { data, error } = await req;
+    if (error) console.error('fetchMessages error:', error);
     
     if (data) {
       const orderedData = data.reverse();
@@ -129,7 +130,10 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
       if (!activeChat.isGroup) checkRecipientPresenceAndNotify(currentUserId, activeChat.id, data);
-    } catch (e) { setMessages(prev => prev.filter(m => m.id !== temp.id)); }
+    } catch (e: any) { 
+      console.error("sendSpecialMessage error", e);
+      setMessages(prev => prev.filter(m => m.id !== temp.id)); 
+    }
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -138,16 +142,25 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: newMessage.trim(), created_at: new Date().toISOString() };
     setMessages(prev => [...prev, temp]);
+    const storedContent = newMessage.trim();
     setNewMessage('');
     scrollToBottom();
     try {
-      const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: temp.content }).select().single();
-      if (error) throw error;
+      const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: storedContent }).select().single();
+      if (error) {
+        console.error("handleSendMessage error:", error);
+        throw error;
+      }
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
       // Trigger notification if needed
       if (!activeChat.isGroup) checkRecipientPresenceAndNotify(currentUserId, activeChat.id, data);
       // for group chats, Postgres Trigger handles notification via Cloudflare
-    } catch (e) { setMessages(prev => prev.filter(m => m.id !== temp.id)); }
+    } catch (e: any) { 
+      console.error("handleSendMessage exception:", e);
+      alert("Failed to send message: " + e.message);
+      setMessages(prev => prev.filter(m => m.id !== temp.id)); 
+      setNewMessage(storedContent);
+    }
   };
 
   const uploadToCloudinary = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
