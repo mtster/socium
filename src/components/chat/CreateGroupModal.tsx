@@ -82,13 +82,13 @@ export function CreateGroupModal({ currentUserId, connections, onClose, onGroupC
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div className="fixed inset-0 z-[40] bg-black pt-[calc(4rem+env(safe-area-inset-top))] pb-[calc(4.5rem+env(safe-area-inset-bottom))] flex flex-col justify-end sm:justify-center px-0 sm:px-4">
       <motion.div 
         initial={{ y: "100%" }} 
         animate={{ y: 0 }} 
         exit={{ y: "100%" }} 
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="w-full sm:max-w-md bg-black sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col h-[85vh] sm:h-[80vh] border border-white/10"
+        className="w-full sm:max-w-md bg-black sm:rounded-3xl overflow-hidden flex flex-col h-full border-t border-white/10 sm:border-white/10 mx-auto"
       >
         <div className="p-4 border-b border-white/10 flex items-center justify-between shrink-0">
           <h2 className="text-white font-bold text-lg flex items-center gap-2"><Users size={20} /> New Group Chat</h2>
@@ -142,7 +142,7 @@ export function CreateGroupModal({ currentUserId, connections, onClose, onGroupC
           )}
         </div>
 
-        <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-white/10 shrink-0 bg-black">
+        <div className="p-4 border-t border-white/10 shrink-0 bg-black">
           <button 
             disabled={selectedIds.size === 0 || loading}
             onClick={handleCreate}

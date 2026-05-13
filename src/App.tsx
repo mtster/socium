@@ -516,6 +516,22 @@ export default function App() {
           <div className="flex space-x-4">
             {activeTab === 'chat' && !initialActiveChat && (
               <button 
+                onClick={() => {
+                  setShowNotifPromoPopup(false);
+                  if ('Notification' in window && notifPermission !== 'granted') {
+                    registerPush(session.user.id, true);
+                  }
+                }}
+                className="text-white hover:text-white/80 transition-colors relative"
+              >
+                <Bell size={24} />
+                {notifPermission === 'granted' && (
+                  <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
+                )}
+              </button>
+            )}
+            {activeTab === 'chat' && !initialActiveChat && (
+              <button 
                 onClick={() => window.dispatchEvent(new CustomEvent('openCreateGroup'))}
                 className="text-white hover:text-white/80 transition-colors relative flex items-center justify-center group"
               >
@@ -530,22 +546,6 @@ export default function App() {
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                   </div>
                 </div>
-              </button>
-            )}
-            {activeTab === 'chat' && !initialActiveChat && (
-              <button 
-                onClick={() => {
-                  setShowNotifPromoPopup(false);
-                  if ('Notification' in window && notifPermission !== 'granted') {
-                    registerPush(session.user.id, true);
-                  }
-                }}
-                className="text-white hover:text-white/80 transition-colors relative"
-              >
-                <Bell size={24} />
-                {notifPermission === 'granted' && (
-                  <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
-                )}
               </button>
             )}
           </div>
