@@ -163,18 +163,147 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='media_type') THEN 
     ALTER TABLE messages ADD COLUMN media_type TEXT CHECK (media_type IN ('image', 'audio', 'location'));
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='group_chat_id') THEN 
+    ALTER TABLE messages ADD COLUMN group_chat_id UUID;
+  END IF;
   ALTER TABLE messages ALTER COLUMN content DROP NOT NULL;
+  ALTER TABLE messages ALTER COLUMN receiver_id DROP NOT NULL;
 END $$;
+
+-- Group Chats Table
+CREATE TABLE IF NOT EXISTS group_chats (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT,
+  avatar_url TEXT,
+  admin_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  allow_member_edit BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Group Chat Participants
+CREATE TABLE IF NOT EXISTS group_chat_participants (
+  chat_id UUID REFERENCES group_chats(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  last_read_at TIMESTAMPTZ DEFAULT now(),
+  joined_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY(chat_id, user_id)
+);
+
+-- Foreign Key for messages->group_chat_id (delayed to avoid cross-dependency if we re-order, but fine here)
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints 
+    WHERE constraint_name='messages_group_chat_id_fkey'
+  ) THEN 
+    ALTER TABLE messages ADD CONSTRAINT messages_group_chat_id_fkey FOREIGN KEY (group_chat_id) REFERENCES group_chats(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+ALTER TABLE group_chats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE group_chat_participants ENABLE ROW LEVEL SECURITY;
+
+-- Group chats policies
+DROP POLICY IF EXISTS "Participants can view group chats" ON group_chats;
+CREATE POLICY "Participants can view group chats" ON group_chats FOR SELECT USING (
+  EXISTS (SELECT 1 FROM group_chat_participants WHERE chat_id = group_chats.id AND user_id = auth.uid())
+);
+
+DROP POLICY IF EXISTS "Users can create group chats" ON group_chats;
+CREATE POLICY "Users can create group chats" ON group_chats FOR INSERT WITH CHECK (auth.uid() = admin_id);
+
+DROP POLICY IF EXISTS "Admin or permitted members can update group chats" ON group_chats;
+CREATE POLICY "Admin or permitted members can update group chats" ON group_chats FOR UPDATE USING (
+  auth.uid() = admin_id OR 
+  (allow_member_edit = true AND EXISTS (SELECT 1 FROM group_chat_participants WHERE chat_id = group_chats.id AND user_id = auth.uid()))
+);
+
+DROP POLICY IF EXISTS "Admin can delete group chats" ON group_chats;
+CREATE POLICY "Admin can delete group chats" ON group_chats FOR DELETE USING (auth.uid() = admin_id);
+
+-- Group chat participants policies
+DROP POLICY IF EXISTS "Participants can view other participants" ON group_chat_participants;
+CREATE POLICY "Participants can view other participants" ON group_chat_participants FOR SELECT USING (
+  EXISTS (SELECT 1 FROM group_chat_participants as gcp WHERE gcp.chat_id = group_chat_participants.chat_id AND gcp.user_id = auth.uid()) OR
+  user_id = auth.uid()
+);
+
+DROP POLICY IF EXISTS "Users can insert participants" ON group_chat_participants;
+CREATE POLICY "Users can insert participants" ON group_chat_participants FOR INSERT WITH CHECK (
+  auth.uid() IN (SELECT admin_id FROM group_chats WHERE id = chat_id) OR
+  user_id = auth.uid() -- A user can insert themselves (creating chat) or admin can insert
+);
+
+DROP POLICY IF EXISTS "Users can update own participant record" ON group_chat_participants;
+CREATE POLICY "Users can update own participant record" ON group_chat_participants FOR UPDATE USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Admin or self can delete participant" ON group_chat_participants;
+CREATE POLICY "Admin or self can delete participant" ON group_chat_participants FOR DELETE USING (
+  user_id = auth.uid() OR
+  auth.uid() IN (SELECT admin_id FROM group_chats WHERE id = chat_id)
+);
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can read their messages" ON messages;
-CREATE POLICY "Users can read their messages" ON messages FOR SELECT USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+CREATE POLICY "Users can read their messages" ON messages FOR SELECT USING (
+  auth.uid() = sender_id OR 
+  auth.uid() = receiver_id OR 
+  EXISTS (SELECT 1 FROM group_chat_participants WHERE chat_id = messages.group_chat_id AND user_id = auth.uid())
+);
+
 DROP POLICY IF EXISTS "Users can send messages" ON messages;
 CREATE POLICY "Users can send messages" ON messages FOR INSERT WITH CHECK (auth.uid() = sender_id);
+
 DROP POLICY IF EXISTS "Users can update their messages" ON messages;
-CREATE POLICY "Users can update their messages" ON messages FOR UPDATE USING (auth.uid() = receiver_id); -- For read receipts
+CREATE POLICY "Users can update their messages" ON messages FOR UPDATE USING (auth.uid() = receiver_id); -- For read receipts (only DMs)
+
 DROP POLICY IF EXISTS "Users can delete their messages" ON messages;
 CREATE POLICY "Users can delete their messages" ON messages FOR DELETE USING (auth.uid() = sender_id);
+
+-- Cloudflare Worker Webhook Setup
+-- A function that will be called by a trigger on `messages` to invoke Cloudflare
+CREATE OR REPLACE FUNCTION public.notify_cloudflare_worker()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  cf_worker_url TEXT := 'https://socium-group-notifications.YOUR_SUBDOMAIN.workers.dev/'; -- User must replace
+  payload JSONB;
+  recipients UUID[];
+BEGIN
+  IF NEW.group_chat_id IS NOT NULL THEN
+    SELECT array_agg(user_id) INTO recipients 
+    FROM public.group_chat_participants 
+    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id;
+    
+    payload := jsonb_build_object(
+      'message_id', NEW.id,
+      'sender_id', NEW.sender_id,
+      'group_chat_id', NEW.group_chat_id,
+      'content', NEW.content,
+      'media_type', NEW.media_type,
+      'recipients', recipients
+    );
+    
+    -- In Supabase, you can use the http extension (if enabled) or pg_net to make outward calls.
+    -- Assuming pg_net is enabled (which standard supabase instances have)
+    PERFORM net.http_post(
+        url := cf_worker_url,
+        body := payload
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_notify_cloudflare_worker ON public.messages;
+CREATE TRIGGER trigger_notify_cloudflare_worker
+AFTER INSERT ON public.messages
+FOR EACH ROW
+WHEN (NEW.group_chat_id IS NOT NULL)
+EXECUTE FUNCTION public.notify_cloudflare_worker();
 
 -- Push subscriptions policies
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;

@@ -530,6 +530,24 @@ export default function App() {
                 )}
               </button>
             )}
+            {activeTab === 'chat' && !initialActiveChat && (
+              <button 
+                onClick={() => window.dispatchEvent(new CustomEvent('openCreateGroup'))}
+                className="text-white hover:text-white/80 transition-colors relative flex items-center justify-center group"
+              >
+                <div className="relative">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-users">
+                     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                     <circle cx="9" cy="7" r="4"/>
+                     <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                     <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
+                  <div className="absolute -bottom-1 -right-1 bg-black rounded-full p-0.5 border border-black shadow-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                  </div>
+                </div>
+              </button>
+            )}
           </div>
         </header>
       )}
