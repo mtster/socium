@@ -106,6 +106,7 @@ CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.
 
 -- Posts Policies
 DROP POLICY IF EXISTS "Posts are viewable by everyone" ON posts;
+DROP POLICY IF EXISTS "Posts are viewable by authorized audience" ON posts;
 CREATE POLICY "Posts are viewable by authorized audience" ON posts FOR SELECT USING (
   auth.uid() = user_id OR 
   visible_to IS NULL OR 
@@ -269,7 +270,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  cf_worker_url TEXT := 'https://socium-group-notifications.YOUR_SUBDOMAIN.workers.dev/'; -- User must replace
+  cf_worker_url TEXT := 'https://socium-group-notifications.brare-black.workers.dev/';
   payload JSONB;
   recipients UUID[];
 BEGIN

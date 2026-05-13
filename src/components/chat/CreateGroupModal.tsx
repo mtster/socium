@@ -88,7 +88,7 @@ export function CreateGroupModal({ currentUserId, connections, onClose, onGroupC
         animate={{ y: 0 }} 
         exit={{ y: "100%" }} 
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="w-full sm:max-w-md bg-[#131313] sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col h-[85vh] sm:h-[80vh] border border-white/10"
+        className="w-full sm:max-w-md bg-black sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col h-[85vh] sm:h-[80vh] border border-white/10"
       >
         <div className="p-4 border-b border-white/10 flex items-center justify-between shrink-0">
           <h2 className="text-white font-bold text-lg flex items-center gap-2"><Users size={20} /> New Group Chat</h2>
@@ -126,21 +126,23 @@ export function CreateGroupModal({ currentUserId, connections, onClose, onGroupC
                       {(c.username?.charAt(0) || c.full_name?.charAt(0) || '?').toUpperCase()}
                     </div>
                   )}
-                  {selectedIds.has(c.id) && (
-                    <div className="absolute inset-0 bg-blue-500/50 flex items-center justify-center backdrop-blur-[2px]">
-                      <Check size={24} className="text-white" />
-                    </div>
-                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-white/90 truncate text-sm">{c.full_name || c.username}</p>
+                </div>
+                <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-full border border-white/30 transition-colors duration-200">
+                   {selectedIds.has(c.id) && (
+                     <div className="w-full h-full bg-white rounded-full flex items-center justify-center">
+                        <Check size={14} className="text-black stroke-[3px]" />
+                     </div>
+                   )}
                 </div>
               </button>
             ))
           )}
         </div>
 
-        <div className="p-4 border-t border-white/10 shrink-0">
+        <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-white/10 shrink-0 bg-black">
           <button 
             disabled={selectedIds.size === 0 || loading}
             onClick={handleCreate}

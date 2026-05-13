@@ -56,7 +56,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     if (activeChat.isGroup) {
       req = req.eq('group_chat_id', activeChat.id);
     } else {
-      req = req.is('group_chat_id', null).or(`and(sender_id.eq.${activeChat.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${activeChat.id})`);
+      req = req.is('group_chat_id', null).or(`sender_id.eq.${activeChat.id},receiver_id.eq.${activeChat.id}`);
     }
 
     const { data } = await req;
