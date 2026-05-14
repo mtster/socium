@@ -39,12 +39,20 @@ export function useChatList(currentUserId: string) {
           .in('id', groupChatIds);
           
         const { data: allParticipants } = await supabase.from('group_chat_participants')
-          .select('chat_id, user_id, profiles(*)')
+          .select('chat_id, user_id')
           .in('chat_id', groupChatIds);
+
+        const participantUids = allParticipants?.map(p => p.user_id) || [];
+        const { data: allProfilesData } = await supabase.from('profiles')
+          .select('*')
+          .in('id', participantUids);
 
         groupChatsWithDetails = (groups || []).map(group => {
           const joinedInfo = groupParticipants?.find(p => p.chat_id === group.id);
-          const members = allParticipants?.filter(p => p.chat_id === group.id).map(p => p.profiles) as Profile[] || [];
+          const members = allParticipants
+            ?.filter(p => p.chat_id === group.id)
+            .map(p => allProfilesData?.find(prof => prof.id === p.user_id))
+            .filter(Boolean) as Profile[] || [];
           return {
             ...group,
             my_last_read_at: joinedInfo?.last_read_at,
@@ -127,6 +135,44 @@ export function useChatList(currentUserId: string) {
       fetchChats();
     }
   }, [fetchChats]);
+
+  useEffect(() => {
+    // Add real-time listener for ALL messages to update the chat list last message
+    const channel = supabase.channel('chat_list_updates')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        const msg = payload.new;
+        
+        setChats(prev => {
+          let updated = false;
+          const newChats = prev.map(chat => {
+            if (chat.isGroup) {
+              if (chat.id === msg.group_chat_id) {
+                updated = true;
+                return { ...chat, lastMessage: msg, unreadCount: msg.sender_id !== currentUserId ? (chat.unreadCount || 0) + 1 : chat.unreadCount };
+              }
+            } else {
+              if (!msg.group_chat_id && ((msg.sender_id === chat.id && msg.receiver_id === currentUserId) || (msg.sender_id === currentUserId && msg.receiver_id === chat.id))) {
+                updated = true;
+                return { ...chat, lastMessage: msg, unreadCount: msg.sender_id !== currentUserId ? (chat.unreadCount || 0) + 1 : chat.unreadCount };
+              }
+            }
+            return chat;
+          });
+          
+          if (updated) {
+            newChats.sort((a, b) => new Date(b.lastMessage?.created_at || 0).getTime() - new Date(a.lastMessage?.created_at || 0).getTime());
+            chatListCache = newChats;
+            return newChats;
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUserId]);
 
   const updateChatList = useCallback((updater: (prev: ChatListItemType[]) => ChatListItemType[]) => {
     setChats(prev => {

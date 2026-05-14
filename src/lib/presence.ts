@@ -99,48 +99,77 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
 
 export const checkRecipientPresenceAndNotify = async (
   senderId: string, 
-  receiverId: string, 
+  receiverIds: string[], 
+  chatId: string,
   messageData: any
 ) => {
   if (!rtdb) return;
 
-  let isOnline = false;
+  const offlineOrClosedUserIds: string[] = [];
 
-  try {
-    const inboxRef = ref(rtdb, `inboxes/${receiverId}/${senderId}`);
+  for (const receiverId of receiverIds) {
+    if (receiverId === senderId) continue;
     
-    const [locSnapshot, inboxSnapshot, precSnapshot] = await Promise.all([
-      get(ref(rtdb, `location/${receiverId}`)),
-      get(inboxRef),
-      get(ref(rtdb, `global_presence/${receiverId}`))
-    ]);
-    
-    const location = locSnapshot.val();
-  
-    // 1. recipient has the chat open - nothing gets updated.
-    if (location === senderId) {
-      return;
+    try {
+      const inboxRef = ref(rtdb, `inboxes/${receiverId}/${chatId}`);
+      
+      const [locSnapshot, inboxSnapshot, precSnapshot] = await Promise.all([
+        get(ref(rtdb, `location/${receiverId}`)),
+        get(inboxRef),
+        get(ref(rtdb, `global_presence/${receiverId}`))
+      ]);
+      
+      const location = locSnapshot.val();
+      
+      // 1. recipient has the chat open - nothing gets updated.
+      if (location === chatId) {
+        continue;
+      }
+      
+      // 2. recipient has the chat closed - unseen chat number must be incremented.
+      const isSeen = inboxSnapshot.val();
+      if (isSeen !== false) {
+        set(inboxRef, false).catch(console.error);
+        const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
+        runTransaction(countRef, (currentVal) => (currentVal || 0) + 1).catch(console.error);
+      }
+      
+      const isOnline = precSnapshot.val() === true;
+      if (!isOnline || location !== chatId) {
+         offlineOrClosedUserIds.push(receiverId);
+      }
+    } catch (dbError) {
+      console.error("RTDB error for user", receiverId, dbError);
+      offlineOrClosedUserIds.push(receiverId);
     }
-  
-    // 2. recipient has the chat closed - unseen chat number must be incremented.
-    const isSeen = inboxSnapshot.val();
-    
-    if (isSeen !== false) {
-      set(inboxRef, false).catch(console.error);
-      const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
-      set(countRef, increment(1)).catch(console.error);
-    }
-  
-    isOnline = precSnapshot.val() === true;
-  } catch (dbError) {
-    console.error("RTDB error in checkRecipientPresenceAndNotify, assuming offline.", dbError);
-    // Continue below to send the push notification even if RTDB failed
   }
 
-  // trigger edge function asynchronously to not block client
-  if (!isOnline) {
-    supabase.functions.invoke('send-push', {
-      body: messageData
-    }).catch(e => console.error("Error invoking edge function:", e));
+  if (offlineOrClosedUserIds.length > 0) {
+    try {
+      // Fetch FCM tokens from Postgres
+      const { data: subs } = await supabase.from('push_subscriptions').select('endpoint').in('user_id', offlineOrClosedUserIds);
+      const fcmTokens = subs?.map(s => s.endpoint).filter(Boolean) || [];
+      
+      if (fcmTokens.length > 0) {
+        const payload = {
+          message_id: messageData.id,
+          sender_id: messageData.sender_id,
+          group_chat_id: messageData.group_chat_id,
+          content: messageData.content,
+          media_type: messageData.media_type,
+          recipients: offlineOrClosedUserIds,
+          fcmTokens: fcmTokens
+        };
+        
+        // POST directly to cloudflare
+        fetch('https://socium-group-notifications.brare-black.workers.dev/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).catch(e => console.error("Cloudflare worker error:", e));
+      }
+    } catch (e) {
+      console.error("Error sending push notification details:", e);
+    }
   }
 };

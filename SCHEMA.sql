@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS group_chats (
 -- Group Chat Participants
 CREATE TABLE IF NOT EXISTS group_chat_participants (
   chat_id UUID REFERENCES group_chats(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   last_read_at TIMESTAMPTZ DEFAULT now(),
   joined_at TIMESTAMPTZ DEFAULT now(),
   PRIMARY KEY(chat_id, user_id)
@@ -275,47 +275,8 @@ CREATE POLICY "Users can delete their messages" ON messages FOR DELETE USING (au
 
 -- Cloudflare Worker Webhook Setup
 -- A function that will be called by a trigger on `messages` to invoke Cloudflare
-CREATE OR REPLACE FUNCTION public.notify_cloudflare_worker()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  cf_worker_url TEXT := 'https://socium-group-notifications.brare-black.workers.dev/';
-  payload JSONB;
-  recipients UUID[];
-BEGIN
-  IF NEW.group_chat_id IS NOT NULL THEN
-    SELECT array_agg(user_id) INTO recipients 
-    FROM public.group_chat_participants 
-    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id;
-    
-    payload := jsonb_build_object(
-      'message_id', NEW.id,
-      'sender_id', NEW.sender_id,
-      'group_chat_id', NEW.group_chat_id,
-      'content', NEW.content,
-      'media_type', NEW.media_type,
-      'recipients', recipients
-    );
-    
-    -- In Supabase, you can use the http extension (if enabled) or pg_net to make outward calls.
-    -- Assuming pg_net is enabled (which standard supabase instances have)
-    PERFORM net.http_post(
-        url := cf_worker_url,
-        body := payload
-    );
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
 DROP TRIGGER IF EXISTS trigger_notify_cloudflare_worker ON public.messages;
-CREATE TRIGGER trigger_notify_cloudflare_worker
-AFTER INSERT ON public.messages
-FOR EACH ROW
-WHEN (NEW.group_chat_id IS NOT NULL)
-EXECUTE FUNCTION public.notify_cloudflare_worker();
+DROP FUNCTION IF EXISTS public.notify_cloudflare_worker();
 
 -- Push subscriptions policies
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;

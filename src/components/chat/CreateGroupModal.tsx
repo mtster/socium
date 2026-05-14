@@ -75,7 +75,8 @@ export function CreateGroupModal({ currentUserId, connections, onClose, onGroupC
 
       onGroupCreated(newGroupInfo);
     } catch (e: any) {
-      alert(e.message);
+      console.error("CreateGroup Error:", e);
+      alert("Failed to create group: " + (e.message || JSON.stringify(e)));
     } finally {
       setLoading(false);
     }
