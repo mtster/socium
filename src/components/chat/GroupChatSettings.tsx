@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Camera, Settings2, LogOut, Users, Trash2, Bell, BellOff } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
@@ -96,7 +97,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     }
   };
 
-  return (
+  return createPortal((
     <motion.div 
        initial={{ x: '100%', opacity: 1 }} 
        animate={{ x: 0, opacity: 1 }} 
@@ -191,5 +192,5 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
       </div>
       {loading && <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50"><div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /></div>}
     </motion.div>
-  );
+  ), document.body);
 }

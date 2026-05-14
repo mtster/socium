@@ -34,13 +34,13 @@ export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, active
   const isMediaOnly = (msg.media_type === 'image' || isLoc || msg.media_type === 'audio') && (!msg.content || (locMatch && msg.content === locMatch[0]));
   
   return (
-    <div className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : (showAvatar && activeChat.isGroup ? "mb-4" : "mb-3"))}>
+    <div className={cn("flex w-full gap-2 relative", isMine ? "justify-end" : "justify-start", isConsecutive ? "mb-[2px]" : (!isMine && !isPrevConsecutive && activeChat.isGroup ? "mb-4" : "mb-3"))}>
        {!isMine && (
          <div className="w-8 shrink-0 flex items-end mb-0.5">
            {showAvatar ? (
              <div 
-               className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 active:scale-95 transition-transform" 
-               onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } })); onCloseChat?.(); }}
+               className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 active:scale-95 transition-transform cursor-pointer" 
+               onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } })); }}
              >
                {senderProfile?.avatar_url ? <img src={senderProfile.avatar_url} className="w-full h-full object-cover" alt="" /> : <div className="w-full h-full items-center justify-center flex text-[10px] text-white/50">{(senderProfile?.username?.charAt(0) || senderProfile?.full_name?.charAt(0) || '?').toUpperCase()}</div>}
              </div>
@@ -48,7 +48,7 @@ export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, active
          </div>
        )}
        <div className={cn("flex flex-col max-w-[75%]", isMine ? "items-end" : "items-start")}>
-         {!isMine && activeChat.isGroup && showAvatar && senderProfile && (
+         {!isMine && activeChat.isGroup && !isPrevConsecutive && senderProfile && (
            <span className="text-[11px] text-white/50 ml-1 mb-1">{senderProfile.full_name?.split(' ')[0] || senderProfile.username}</span>
          )}
          <motion.div 

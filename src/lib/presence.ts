@@ -99,77 +99,67 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
 
 export const checkRecipientPresenceAndNotify = async (
   senderId: string, 
-  receiverIds: string[], 
+  receiverId: string, 
   chatId: string,
   messageData: any
 ) => {
   if (!rtdb) return;
 
-  const offlineOrClosedUserIds: string[] = [];
-
-  for (const receiverId of receiverIds) {
-    if (receiverId === senderId) continue;
+  if (receiverId === senderId) return;
+  
+  try {
+    const inboxRef = ref(rtdb, `inboxes/${receiverId}/${chatId}`);
     
-    try {
-      const inboxRef = ref(rtdb, `inboxes/${receiverId}/${chatId}`);
-      
-      const [locSnapshot, inboxSnapshot, precSnapshot] = await Promise.all([
-        get(ref(rtdb, `location/${receiverId}`)),
-        get(inboxRef),
-        get(ref(rtdb, `global_presence/${receiverId}`))
-      ]);
-      
-      const location = locSnapshot.val();
-      
-      // 1. recipient has the chat open - nothing gets updated.
-      if (location === chatId) {
-        continue;
-      }
-      
-      // 2. recipient has the chat closed - unseen chat number must be incremented.
-      const isSeen = inboxSnapshot.val();
-      if (isSeen !== false) {
-        set(inboxRef, false).catch(console.error);
-        const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
-        runTransaction(countRef, (currentVal) => (currentVal || 0) + 1).catch(console.error);
-      }
-      
-      const isOnline = precSnapshot.val() === true;
-      if (!isOnline || location !== chatId) {
-         offlineOrClosedUserIds.push(receiverId);
-      }
-    } catch (dbError) {
-      console.error("RTDB error for user", receiverId, dbError);
-      offlineOrClosedUserIds.push(receiverId);
+    // We get unseen_chat_count to include in payload, but wait until we increment it
+    const [locSnapshot, inboxSnapshot, precSnapshot] = await Promise.all([
+      get(ref(rtdb, `location/${receiverId}`)),
+      get(inboxRef),
+      get(ref(rtdb, `global_presence/${receiverId}`))
+    ]);
+    
+    const location = locSnapshot.val();
+    
+    // Case C: recipient has the chat open - nothing gets updated.
+    if (location === chatId) {
+      return;
     }
-  }
+    
+    // Case B & Case A: recipient has the chat closed - unseen chat number must be incremented.
+    const isSeen = inboxSnapshot.val();
+    let updatedUnseenCount = 0;
+    
+    // We increment in a transaction
+    const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
+    
+    if (isSeen !== false) {
+      set(inboxRef, false).catch(console.error);
+      const transactionResult = await runTransaction(countRef, (currentVal) => (currentVal || 0) + 1);
+      updatedUnseenCount = transactionResult.snapshot.val() || 0;
+    } else {
+      updatedUnseenCount = (await get(countRef)).val() || 0;
+    }
+    
+    const isOnline = precSnapshot.val() === true;
+    
+    // Case A: if global presence is false, trigger edge function
+    if (!isOnline) {
+       // Only trigger edge function for offline users
+        supabase.functions.invoke('send-push', {
+          body: {
+             ...messageData,
+             badgeCount: updatedUnseenCount,
+             chatUrl: 'https://sociumx.vercel.app'
+          }
+        }).catch(e => console.error("Error invoking edge function:", e));
+    }
+    // Case B: global presence is true, but location is not chat uuid. 
+    // We only update unseen count (done above) and do NOT trigger edge function.
 
-  if (offlineOrClosedUserIds.length > 0) {
-    try {
-      // Fetch FCM tokens from Postgres
-      const { data: subs } = await supabase.from('push_subscriptions').select('endpoint').in('user_id', offlineOrClosedUserIds);
-      const fcmTokens = subs?.map(s => s.endpoint).filter(Boolean) || [];
-      
-      if (fcmTokens.length > 0) {
-        const payload = {
-          message_id: messageData.id,
-          sender_id: messageData.sender_id,
-          group_chat_id: messageData.group_chat_id,
-          content: messageData.content,
-          media_type: messageData.media_type,
-          recipients: offlineOrClosedUserIds,
-          fcmTokens: fcmTokens
-        };
-        
-        // POST directly to cloudflare
-        fetch('https://socium-group-notifications.brare-black.workers.dev/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        }).catch(e => console.error("Cloudflare worker error:", e));
-      }
-    } catch (e) {
-      console.error("Error sending push notification details:", e);
-    }
+  } catch (dbError) {
+    console.error("RTDB error for user", receiverId, dbError);
+    // Fallback: assume offline and just send push
+    supabase.functions.invoke('send-push', {
+       body: { ...messageData, chatUrl: 'https://sociumx.vercel.app' }
+    }).catch(console.error);
   }
 };

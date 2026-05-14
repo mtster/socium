@@ -274,9 +274,55 @@ DROP POLICY IF EXISTS "Users can delete their messages" ON messages;
 CREATE POLICY "Users can delete their messages" ON messages FOR DELETE USING (auth.uid() = sender_id);
 
 -- Cloudflare Worker Webhook Setup
--- A function that will be called by a trigger on `messages` to invoke Cloudflare
+CREATE OR REPLACE FUNCTION public.notify_cloudflare_worker()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  cf_worker_url TEXT := 'https://socium-group-notifications.brare-black.workers.dev/';
+  payload JSONB;
+  recipients UUID[];
+  fcm_tokens TEXT[];
+BEGIN
+  IF NEW.group_chat_id IS NOT NULL THEN
+    SELECT array_agg(user_id) INTO recipients 
+    FROM public.group_chat_participants 
+    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id;
+    
+    IF recipients IS NOT NULL AND array_length(recipients, 1) > 0 THEN
+      -- Fetch FCM tokens for the recipients
+      SELECT array_agg(endpoint) INTO fcm_tokens
+      FROM public.push_subscriptions
+      WHERE user_id = ANY(recipients);
+
+      payload := jsonb_build_object(
+        'message_id', NEW.id,
+        'sender_id', NEW.sender_id,
+        'group_chat_id', NEW.group_chat_id,
+        'content', NEW.content,
+        'media_type', NEW.media_type,
+        'recipients', recipients,
+        'fcmTokens', fcm_tokens
+      );
+      
+      -- Make the outward HTTP POST
+      PERFORM net.http_post(
+          url := cf_worker_url,
+          body := payload
+      );
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 DROP TRIGGER IF EXISTS trigger_notify_cloudflare_worker ON public.messages;
-DROP FUNCTION IF EXISTS public.notify_cloudflare_worker();
+CREATE TRIGGER trigger_notify_cloudflare_worker
+AFTER INSERT ON public.messages
+FOR EACH ROW
+WHEN (NEW.group_chat_id IS NOT NULL)
+EXECUTE FUNCTION public.notify_cloudflare_worker();
 
 -- Push subscriptions policies
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;

@@ -68,7 +68,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                    updateChatList(prev => prev.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn));
                  }
               }} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4 text-left">
-                 <div className="w-12 h-12 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 relative flex items-center justify-center">
+                 <div className={cn("w-12 h-12 shrink-0 relative flex items-center justify-center", (c.avatar_url || !c.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                     {c.isGroup ? (
                        <div className="w-full h-full relative">
                          {c.participants && c.participants.length > 0 ? (

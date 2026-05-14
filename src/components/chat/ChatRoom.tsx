@@ -69,7 +69,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
         <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => activeChat.isGroup ? openSettings() : onOpenProfile(activeChat.id)}>
-              <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 flex items-center justify-center">
+              <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                 {activeChat.isGroup ? (
                    <div className="w-full h-full relative">
                      {activeChat.participants && activeChat.participants.length > 0 ? (

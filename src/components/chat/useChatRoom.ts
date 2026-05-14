@@ -129,10 +129,9 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType }).select().single();
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
-      const recipients = activeChat.isGroup 
-        ? (activeChat.participants?.map(p => p.id) || []) 
-        : [activeChat.id];
-      checkRecipientPresenceAndNotify(currentUserId, recipients, activeChat.id, data);
+      if (!activeChat.isGroup) {
+        checkRecipientPresenceAndNotify(currentUserId, activeChat.id, activeChat.id, data);
+      }
     } catch (e: any) { 
       console.error("sendSpecialMessage error", e);
       setMessages(prev => prev.filter(m => m.id !== temp.id)); 
@@ -155,11 +154,10 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         throw error;
       }
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
-      // Trigger notification for both 1-on-1 and Group chats directly from client
-      const recipients = activeChat.isGroup 
-        ? (activeChat.participants?.map(p => p.id) || []) 
-        : [activeChat.id];
-      checkRecipientPresenceAndNotify(currentUserId, recipients, activeChat.id, data);
+      // Trigger notification for 1-on-1 chats
+      if (!activeChat.isGroup) {
+        checkRecipientPresenceAndNotify(currentUserId, activeChat.id, activeChat.id, data);
+      }
     } catch (e: any) { 
       console.error("handleSendMessage exception:", e);
       alert("Failed to send message: " + e.message);
