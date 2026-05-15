@@ -117,14 +117,27 @@ export default function App() {
         registerPush(session.user.id);
 
         const params = new URLSearchParams(window.location.search);
-        const chatId = params.get('chatId');
+        const chatId = params.get('chatId') || params.get('chat_with');
         if (chatId) {
            const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatId).single();
            if (senderProfile) {
               setInitialActiveChat(senderProfile);
               setActiveTab('chat');
-              // remove the param from url
               window.history.replaceState({}, document.title, window.location.pathname);
+           } else {
+              // check if it's a group chat
+              const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', chatId).single();
+              if (groupChat) {
+                setInitialActiveChat({
+                  id: groupChat.id,
+                  username: groupChat.name || 'Group',
+                  full_name: groupChat.name || 'Group',
+                  avatar_url: groupChat.avatar_url || null,
+                  isGroup: true
+                } as any);
+                setActiveTab('chat');
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
            }
         }
       }
@@ -145,8 +158,20 @@ export default function App() {
            if (senderProfile) {
               setInitialActiveChat(senderProfile);
               setActiveTab('chat');
-              // remove the param from url
               window.history.replaceState({}, document.title, window.location.pathname);
+           } else {
+              const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', chatId).single();
+              if (groupChat) {
+                setInitialActiveChat({
+                  id: groupChat.id,
+                  username: groupChat.name || 'Group',
+                  full_name: groupChat.name || 'Group',
+                  avatar_url: groupChat.avatar_url || null,
+                  isGroup: true
+                } as any);
+                setActiveTab('chat');
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
            }
         }
       }
@@ -184,7 +209,7 @@ export default function App() {
       // Check url param
       if (typeof window !== 'undefined') {
          const urlParams = new URLSearchParams(window.location.search);
-         const chatWith = urlParams.get('chat_with');
+         const chatWith = urlParams.get('chat_with') || urlParams.get('chatId');
          if (chatWith) {
            setTimeout(async () => {
              const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatWith).single();
@@ -194,29 +219,74 @@ export default function App() {
                setInitialActiveChat(senderProfile);
                setViewingProfileId(null);
                setActiveTab('chat');
+             } else {
+               const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', chatWith).single();
+               if (groupChat) {
+                 window.history.replaceState({}, document.title, window.location.pathname);
+                 setFloatingAvatar(null);
+                 setInitialActiveChat({
+                   id: groupChat.id,
+                   username: groupChat.name || 'Group',
+                   full_name: groupChat.name || 'Group',
+                   avatar_url: groupChat.avatar_url || null,
+                   isGroup: true
+                 } as any);
+                 setViewingProfileId(null);
+                 setActiveTab('chat');
+               }
              }
            }, 500);
          }
       }
 
       globalUnreadChannel = supabase.channel('global_unread')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, async (payload) => {
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload) => {
+           const msg = payload.new;
+           // Filter for messages meant for us
+           const isForUs = msg.receiver_id === session.user.id || msg.group_chat_id !== null;
+           // We don't trigger if we sent it
+           if (msg.sender_id === session.user.id || !isForUs) return;
+           
            getUnread();
-           const senderId = payload.new.sender_id;
-           if ((window as any).currentChatUserId !== senderId) {
-             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
-             if (senderProfile) {
+           const senderId = msg.sender_id;
+           const groupChatId = msg.group_chat_id;
+           
+           const chatId = groupChatId || senderId;
+           if ((window as any).currentChatUserId !== chatId) {
+             let chatRefProfile: any = null;
+             if (groupChatId) {
+               // Load group chat details to construct a mock profile for the floating avatar
+               const { data: gc } = await supabase.from('group_chats').select('*, group_chat_participants(profiles(*))').eq('id', groupChatId).single();
+               if (gc) {
+                 const participants = (gc.group_chat_participants as any[])?.map(p => p.profiles) || [];
+                 chatRefProfile = {
+                   id: gc.id,
+                   username: gc.name || 'Group Chat',
+                   full_name: gc.name || 'Group Chat',
+                   avatar_url: gc.avatar_url || null,
+                   isGroup: true,
+                   participants
+                 };
+               }
+             } else {
+               const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
+               chatRefProfile = senderProfile;
+             }
+             
+             if (chatRefProfile) {
                // Only show the floating avatar if the user is NOT already looking at the chat list or chat view
                const currentPathOpen = (window as any).currentActiveTab;
                if (currentPathOpen !== 'chat') {
-                 setFloatingAvatar(senderProfile);
+                 setFloatingAvatar(chatRefProfile);
                  setTimeout(() => setFloatingAvatar(null), 4000);
                }
              }
            }
         })
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, () => {
-           getUnread();
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
+           if (payload.new.receiver_id === session.user.id || payload.new.group_chat_id !== null) {
+              getUnread();
+           }
         })
         .subscribe();
 

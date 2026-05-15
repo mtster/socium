@@ -2,6 +2,9 @@
 
 This guide shows you how to deploy the notification worker directly from your iPhone browser, without needing `npm`, `wrangler`, or a terminal. We use pure Javascript with the native Web Crypto API, so no external libraries are needed.
 
+## Postgres Setup
+Your Supabase `messages` table already has a trigger set up. Please copy the latest `CREATE OR REPLACE FUNCTION public.notify_cloudflare_worker()` from `SCHEMA.sql` and run it in the Supabase SQL editor to ensure your profile/group names get sent to Cloudflare! Also ensure `pg_net` is enabled if not already (`CREATE EXTENSION IF NOT EXISTS pg_net;`).
+
 ## 1. Setup in Cloudflare Dashboard
 
 1. Log into your Cloudflare account in your browser.
@@ -12,6 +15,7 @@ This guide shows you how to deploy the notification worker directly from your iP
 6. Delete everything inside the editor and paste the completely standalone code below.
 
 ### The Worker Code:
+
 ```javascript
 // Base64URL Encoding utilities
 function b64u(str) {
@@ -40,12 +44,11 @@ export default {
     try {
       const payload = await request.json();
       
-      // 1. Check if we have the necessary environment variables
       if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
         throw new Error('Firebase environment variables are missing in Cloudflare settings');
       }
 
-      // 2. Generate JWT for Firebase REST API Authentication using Web Crypto API
+      // 2. Generate JWT for Firebase REST API Authentication
       const header = b64u(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
       const jwtPayload = b64u(JSON.stringify({
         iss: env.FIREBASE_CLIENT_EMAIL,
@@ -53,11 +56,9 @@ export default {
         aud: 'https://oauth2.googleapis.com/token',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
-        scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/firebase.messaging' // Required scope
+        scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/firebase.messaging'
       }));
 
-      // Parse the private key
-      // If the private key was pasted with literal \n strings, replace them with actual newlines
       const privateKeyText = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
       const key = await crypto.subtle.importKey(
@@ -68,14 +69,12 @@ export default {
         ['sign']
       );
 
-      // Sign the token
       const signatureRaw = await crypto.subtle.sign(
         'RSASSA-PKCS1-v1_5', 
         key, 
         strToU8(`${header}.${jwtPayload}`)
       );
       
-      // Map signature to base64url string
       let signatureString = "";
       const buf = new Uint8Array(signatureRaw);
       for (let i = 0; i < buf.byteLength; i++) {
@@ -101,30 +100,55 @@ export default {
 
       const { access_token } = await tokenResp.json();
 
-      // 4. Fetch recipients presence and subscriptions
-      const { message_id, sender_id, group_chat_id, content, recipients } = payload;
+      // 4. Group Payload Data
+      const { message_id, sender_id, group_chat_id, content, recipient_tokens, sender_name, group_name } = payload;
       
-      if (!recipients || recipients.length === 0) {
-        return new Response('No recipients', { status: 200 });
+      if (!recipient_tokens || recipient_tokens.length === 0) {
+        return new Response('No recipients or tokens', { status: 200 });
       }
 
-      // 5. Send FCM pushes!
-      // In a real application, you would fetch FCM tokens from Supabase here.
-      // Since this worker doesn't have direct access to your Supabase FCM tokens, 
-      // you must either pass them in the payload from Postgres, or fetch them here via Supabase REST API.
-      
+      let bodyText = content;
+      if (!bodyText) {
+         if (payload.media_type === 'image') bodyText = 'Sent an image';
+         else if (payload.media_type === 'audio') bodyText = 'Sent a voice message';
+         else if (payload.media_type === 'location') bodyText = 'Sent a location';
+         else bodyText = 'Sent a media message';
+      }
+
+      // Firebase RTDB URL (defaults to standard format, but override using ENV if needed)
+      const dbUrl = env.FIREBASE_DATABASE_URL || `https://${env.FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`;
+
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`;
       let successCount = 0;
 
-      // Note: Assuming we had `fcmTokens` in the payload passed from Supabase
-      if (payload.fcmTokens) {
-        for (const token of payload.fcmTokens) {
+      // 5. Query Unread Counts & Send Pushes concurrently per user
+      const pushOperations = recipient_tokens.map(async (recipient) => {
+         let badgeCount = 0;
+         try {
+           // We fetch their single unseen_chat_count digit
+           const rtdbResp = await fetch(`${dbUrl}/unseen_chat_count/${recipient.userId}.json?access_token=${access_token}`);
+           if (rtdbResp.ok) {
+             const val = await rtdbResp.json();
+             badgeCount = typeof val === 'number' ? val : 0;
+           }
+         } catch (e) {}
+
+         // Determine title: "SenderName in GroupName"
+         const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
+
+         // Loop over each token for this user
+         const tokenOperations = recipient.tokens.map(async (token) => {
+           // Create DATA-ONLY FCM payload (no "notification" block!) 
+           // This stops duplicates and uses the iOS Service Worker
            const messageBody = {
              message: {
                token: token,
-               notification: {
-                 title: payload.title || 'New Group Chat Message',
-                 body: content || 'You have a new message.'
+               data: {
+                 title: title,
+                 body: bodyText,
+                 url: `/?chatId=${group_chat_id}`,
+                 senderId: group_chat_id || "",
+                 badge: String(badgeCount)
                }
              }
            };
@@ -139,24 +163,24 @@ export default {
            });
            
            if (fcmResp.ok) successCount++;
-        }
-      }
+         });
+         
+         await Promise.all(tokenOperations);
+      });
+
+      await Promise.all(pushOperations);
 
       return new Response(JSON.stringify({ 
         success: true, 
-        message: 'Webhook processed successfully',
+        message: 'Data-only webhook processed',
         sentPushes: successCount
       }), {
         headers: { 'Content-Type': 'application/json' }
       });
       
     } catch (error) {
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error.message || String(error)
-      }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
+      return new Response(JSON.stringify({ success: false, error: error.message || String(error) }), {
+        status: 500, headers: { 'Content-Type': 'application/json' }
       });
     }
   }
@@ -169,12 +193,12 @@ export default {
 
 1. Go back to your Worker's settings page (click its name in the breadcrumbs).
 2. Go to **Settings** -> **Variables and Secrets**.
-3. Add the three Environment Variables (**Secret** text type):
+3. Add the Environmental Variables (**Secret** text type):
    * `FIREBASE_PROJECT_ID`
    * `FIREBASE_CLIENT_EMAIL` 
    * `FIREBASE_PRIVATE_KEY`
+   * `FIREBASE_DATABASE_URL` (Get this from Firebase Console > Realtime Database)
 4. Click Save.
 
-## 3. Update Supabase
-
-The `SCHEMA.sql` file in the project has already been updated to point to `https://socium-group-notifications.brare-black.workers.dev/`. You're done!
+## 3. Verify Supabase Extension
+Go to your Supabase Dashboard -> Database -> Extensions and make sure `pg_net` is enabled. You no longer need to use Database Webhooks in the UI because the SQL trigger handles everything efficiently!

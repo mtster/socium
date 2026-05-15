@@ -72,6 +72,14 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                     >
                       {floatingAvatar.avatar_url ? (
                         <img src={floatingAvatar.avatar_url} alt="" className="w-full h-full object-cover" />
+                      ) : (floatingAvatar as any).isGroup && (floatingAvatar as any).participants?.length > 0 ? (
+                        <div className="w-full h-full relative relative bg-white/10">
+                           {(floatingAvatar as any).participants.slice(0,3).map((p: any, i: number, arr: any[]) => (
+                             <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-6 h-6" : "bottom-0 right-0 w-6 h-6") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-5 h-5 z-20" : i === 1 ? "bottom-0 left-0 w-5 h-5 z-10" : "bottom-0 right-0 w-5 h-5 z-10"))}>
+                               {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[8px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
+                             </div>
+                           ))}
+                        </div>
                       ) : (
                         <span className="text-white text-sm font-bold">{floatingAvatar.username?.charAt(0).toUpperCase()}</span>
                       )}

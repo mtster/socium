@@ -39,8 +39,7 @@ export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, active
          <div className="w-8 shrink-0 flex items-end mb-0.5">
            {showAvatar ? (
              <div 
-               className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 active:scale-95 transition-transform cursor-pointer" 
-               onClick={() => { window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: msg.sender_id } })); }}
+               className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10" 
              >
                {senderProfile?.avatar_url ? <img src={senderProfile.avatar_url} className="w-full h-full object-cover" alt="" /> : <div className="w-full h-full items-center justify-center flex text-[10px] text-white/50">{(senderProfile?.username?.charAt(0) || senderProfile?.full_name?.charAt(0) || '?').toUpperCase()}</div>}
              </div>

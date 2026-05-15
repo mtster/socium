@@ -163,8 +163,11 @@ export function useChatList(currentUserId: string) {
             newChats.sort((a, b) => new Date(b.lastMessage?.created_at || 0).getTime() - new Date(a.lastMessage?.created_at || 0).getTime());
             chatListCache = newChats;
             return newChats;
+          } else {
+            // New message from a completely new chat, trigger a full fetch
+            setTimeout(fetchChats, 500);
+            return prev;
           }
-          return prev;
         });
       })
       .subscribe();

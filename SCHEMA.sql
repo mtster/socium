@@ -283,7 +283,9 @@ DECLARE
   cf_worker_url TEXT := 'https://socium-group-notifications.brare-black.workers.dev/';
   payload JSONB;
   recipients UUID[];
-  fcm_tokens TEXT[];
+  fcm_tokens JSONB;
+  sender_info RECORD;
+  group_info RECORD;
 BEGIN
   IF NEW.group_chat_id IS NOT NULL THEN
     SELECT array_agg(user_id) INTO recipients 
@@ -291,19 +293,33 @@ BEGIN
     WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id;
     
     IF recipients IS NOT NULL AND array_length(recipients, 1) > 0 THEN
-      -- Fetch FCM tokens for the recipients
-      SELECT array_agg(endpoint) INTO fcm_tokens
-      FROM public.push_subscriptions
-      WHERE user_id = ANY(recipients);
+      -- Fetch FCM tokens for the recipients grouped by user_id
+      WITH user_tokens AS (
+        SELECT user_id, array_agg(endpoint) as tokens
+        FROM public.push_subscriptions
+        WHERE user_id = ANY(recipients)
+        GROUP BY user_id
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object('userId', user_id, 'tokens', tokens)
+      ) INTO fcm_tokens
+      FROM user_tokens;
+
+      -- Fetch profile info
+      SELECT full_name, username INTO sender_info FROM public.profiles WHERE id = NEW.sender_id;
+      
+      -- Fetch Group info
+      SELECT name INTO group_info FROM public.group_chats WHERE id = NEW.group_chat_id;
 
       payload := jsonb_build_object(
         'message_id', NEW.id,
         'sender_id', NEW.sender_id,
+        'sender_name', COALESCE(sender_info.full_name, sender_info.username, 'Someone'),
         'group_chat_id', NEW.group_chat_id,
+        'group_name', COALESCE(group_info.name, 'Group Chat'),
         'content', NEW.content,
         'media_type', NEW.media_type,
-        'recipients', recipients,
-        'fcmTokens', fcm_tokens
+        'recipient_tokens', fcm_tokens
       );
       
       -- Make the outward HTTP POST

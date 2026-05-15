@@ -96,13 +96,19 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       : `sender_id=eq.${activeChat.id}`;
 
     const channel = supabase.channel(`chat_${activeChat.id}_active`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter }, (payload) => {
-        // if group chat, we receive everyone's insert. We only care if we aren't the sender
-        // if 1v1, we only get sender_id = activeChat.id, meaning we are receiver.
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
-        if (msg.sender_id === currentUserId && msg.id !== 'temp') return; // our own msg handles optimistic update
+        if (msg.sender_id === currentUserId && msg.id !== 'temp') return; // our own msg handles optimistic update from this device
         
-        if (activeChat.isGroup || msg.receiver_id === currentUserId) {
+        let shouldAdd = false;
+        if (activeChat.isGroup) {
+          shouldAdd = msg.group_chat_id === activeChat.id;
+        } else {
+          shouldAdd = (msg.sender_id === activeChat.id && msg.receiver_id === currentUserId) ||
+                      (msg.sender_id === currentUserId && msg.receiver_id === activeChat.id);
+        }
+
+        if (shouldAdd) {
           setMessages((prev) => {
             if (prev.some(m => m.id === msg.id)) return prev;
             return [...prev, msg];
