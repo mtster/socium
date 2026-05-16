@@ -72,13 +72,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                  <div className={cn("w-12 h-12 shrink-0 relative flex items-center justify-center", (c.avatar_url || !c.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                     {c.isGroup ? (
                        <div className="w-full h-full relative">
-                         {c.participants && c.participants.length > 0 ? (
+                         {c.avatar_url ? (
+                           <img src={c.avatar_url} className="w-full h-full object-cover" />
+                         ) : c.participants && c.participants.length > 0 ? (
                            c.participants.slice(0,3).map((p, i, arr) => (
                              <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-8 h-8" : "bottom-0 right-0 w-8 h-8") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-7 h-7 z-20" : i === 1 ? "bottom-0 left-0 w-7 h-7 z-10" : "bottom-0 right-0 w-7 h-7 z-10"))}>
                                {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[10px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
                              </div>
                            ))
-                         ) : <div className="text-sm font-medium text-white/50 w-full h-full flex items-center justify-center">{(c.name?.charAt(0) || '?').toUpperCase()}</div>}
+                         ) : <div className="text-sm font-medium text-white/50 w-full h-full flex items-center justify-center bg-white/10 rounded-full border border-white/10">{(c.name?.charAt(0) || '?').toUpperCase()}</div>}
                        </div>
                     ) : (
                       c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50">{(c.name.charAt(0) || '?').toUpperCase()}</div>

@@ -15,15 +15,6 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
-  if (payload.notification) {
-    // OS already natively shows this because it's a standard notification payload!
-    // Just update badge if needed, but don't call showNotification
-    if ('setAppBadge' in navigator && payload.data?.badge) {
-      navigator.setAppBadge(parseInt(payload.data.badge)).catch(() => {});
-    }
-    return;
-  }
-
   const notificationTitle = payload.data?.title || 'New Message';
   // FIX: On iOS 17, the 'badge' in notificationOptions is for the icon, 
   // but we must ensure we handle the numeric badge correctly.

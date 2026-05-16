@@ -123,6 +123,55 @@ export function useChatList(currentUserId: string) {
       chatListCache = chatItems;
       lastChatListFetch = Date.now();
       setChats(chatItems);
+      
+      // Cleanup RTDB Inboxes and Unseen chat count
+      try {
+        const { rtdb } = await import('@/src/lib/presence');
+        if (rtdb) {
+           const { ref, get, set } = await import('firebase/database');
+           const inboxRef = ref(rtdb, `inboxes/${currentUserId}`);
+           const snapshot = await get(inboxRef);
+           if (snapshot.exists()) {
+              const inboxes = snapshot.val();
+              const validIds = new Set(chatItems.map(c => c.id));
+              let needsUpdate = false;
+              let computedUnseenCount = 0;
+              
+              const updatedInboxes = { ...inboxes };
+              
+              // Remove old UUIDs
+              for (const key of Object.keys(updatedInboxes)) {
+                 if (!validIds.has(key)) {
+                    delete updatedInboxes[key];
+                    needsUpdate = true;
+                 } else if (updatedInboxes[key] === false) {
+                    computedUnseenCount++;
+                 }
+              }
+              
+              // Force check badge count match
+              const countRef = ref(rtdb, `unseen_chat_count/${currentUserId}`);
+              const countSnap = await get(countRef);
+              const currentUnseen = countSnap.val() || 0;
+              
+              if (currentUnseen !== computedUnseenCount) {
+                 await set(countRef, computedUnseenCount);
+                 if (computedUnseenCount > 0 && 'setAppBadge' in navigator) {
+                   (navigator as any).setAppBadge(computedUnseenCount);
+                 } else if (computedUnseenCount <= 0 && 'clearAppBadge' in navigator) {
+                   (navigator as any).clearAppBadge();
+                 }
+              }
+
+              if (needsUpdate) {
+                 await set(inboxRef, updatedInboxes);
+              }
+           }
+        }
+      } catch (e) {
+        console.warn("RTDB Inbox cleanup failed:", e);
+      }
+      
     } catch (e) {
       console.error(e);
     } finally {
@@ -138,7 +187,7 @@ export function useChatList(currentUserId: string) {
 
   useEffect(() => {
     // Add real-time listener for ALL messages to update the chat list last message
-    const msgChannel = supabase.channel('chat_list_updates')
+    const channel = supabase.channel('chat_list_updates')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
         
@@ -172,35 +221,8 @@ export function useChatList(currentUserId: string) {
       })
       .subscribe();
 
-    const groupChannel = supabase.channel('group_chat_updates')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_chats' }, (payload) => {
-        const updatedGroup = payload.new;
-        setChats(prev => {
-          let updated = false;
-          const newChats = prev.map(chat => {
-            if (chat.isGroup && chat.id === updatedGroup.id) {
-              updated = true;
-              return { 
-                ...chat, 
-                name: updatedGroup.name || chat.name, 
-                avatar_url: updatedGroup.avatar_url,
-                groupChat: { ...chat.groupChat, ...updatedGroup }
-              };
-            }
-            return chat;
-          });
-          if (updated) {
-            chatListCache = newChats;
-            return newChats;
-          }
-          return prev;
-        });
-      })
-      .subscribe();
-
     return () => {
-      supabase.removeChannel(msgChannel);
-      supabase.removeChannel(groupChannel);
+      supabase.removeChannel(channel);
     };
   }, [currentUserId]);
 

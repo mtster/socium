@@ -123,89 +123,114 @@ export default {
 
       // 5. Query Unread Counts & Send Pushes concurrently per user
       const pushOperations = recipient_tokens.map(async (recipient) => {
-         let badgeCount = 0;
          const userId = recipient.userId;
-         try {
-           // We do parallel operations to check presence, inbox, unseen count, and global presence
-           const [locResp, inboxResp, unseenResp, precResp] = await Promise.all([
-              fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
-              fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
-              fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`),
-              fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
-           ]);
+         
+         const [locResp, inboxResp, unseenResp, precResp] = await Promise.all([
+            fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
+            fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
+            fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`),
+            fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
+         ]);
 
-           const location = locResp.ok ? await locResp.json() : null;
-           const inboxSeen = inboxResp.ok ? await inboxResp.json() : null;
-           badgeCount = (unseenResp.ok ? await unseenResp.json() : 0) || 0;
-           const isOnline = precResp.ok ? await precResp.json() : false;
+         const location = locResp.ok ? await locResp.json() : null;
+         const inboxSeen = inboxResp.ok ? await inboxResp.json() : null;
+         let badgeCount = (unseenResp.ok ? await unseenResp.json() : 0) || 0;
+         const isOnline = precResp.ok ? await precResp.json() : false;
 
-           // If user is not looking at this chat right now
-           if (location !== group_chat_id) {
-             // If we haven't already marked this chat as unseen for them
+         let shouldSendNotification = false;
+
+         // if the global presence of recipient is false
+         if (!isOnline) {
+             // 1. update the inbox node for that users uuid
+             await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
+               method: 'PUT',
+               body: 'false'
+             });
+             
+             // 2. increment unseen chat count node for the recipient by +1 (only if inbox was not already false)
              if (inboxSeen !== false) {
-               badgeCount += 1; // Unseen chat count increments!
-               // 1. Mark chat as unseen
-               await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
-                 method: 'PUT',
-                 body: 'false'
-               });
-               // 2. Update their global unseen_chat_count
-               await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
-                 method: 'PUT',
-                 body: String(badgeCount)
-               });
+                 badgeCount += 1;
+                 await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                   method: 'PUT',
+                   body: String(badgeCount)
+                 });
              }
-           }
-           
-           // If user is online and NOT looking at this chat, they need the UI to update,
-           // but FCM won't deliver the background data reliably if we use push. But we send push anyway!
-         } catch (e) {
-           console.error("RTDB operation failed for user " + userId, e);
+             
+             // 3. send notification payload
+             shouldSendNotification = true;
+         } 
+         else if (isOnline && location !== group_chat_id) {
+             // If global presence of recipient is true but location of the recipient is not the group chat uuid
+             // it means they are browsing through the app.
+             
+             // 1. update the inbox node for that users uuid
+             await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
+               method: 'PUT',
+               body: 'false'
+             });
+             
+             // 2. increment unseen chat count node for the recipient by +1 (if needed)
+             if (inboxSeen !== false) {
+                 badgeCount += 1;
+                 await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                   method: 'PUT',
+                   body: String(badgeCount)
+                 });
+             }
+             
+             // No notification needed for users online looking at other parts of the app
+             shouldSendNotification = false;
+         }
+         else if (isOnline && location === group_chat_id) {
+             // If global presence of recipient is true and the location of that recipient is the same as the new messages chat uuid
+             // nothing needs to be updated and no notification must be sent.
+             shouldSendNotification = false;
          }
 
-         // Determine title: "SenderName in GroupName"
-         const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
+         if (shouldSendNotification) {
+             // Determine title: "SenderName in GroupName"
+             const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
 
-         // Loop over each token for this user
-         const tokenOperations = recipient.tokens.map(async (token) => {
-           // Create standard FCM payload with notification AND apns badge for proper iOS delivery
-           const messageBody = {
-             message: {
-               token: token,
-               notification: {
-                 title: title,
-                 body: bodyText
-               },
-               apns: {
-                 payload: {
-                   aps: {
-                     badge: badgeCount
+             // Loop over each token for this user
+             const tokenOperations = recipient.tokens.map(async (token) => {
+               const messageBody = {
+                 message: {
+                   token: token,
+                   notification: {
+                     title: title,
+                     body: bodyText
+                   },
+                   apns: {
+                     payload: {
+                       aps: {
+                         badge: badgeCount
+                       }
+                     }
+                   },
+                   data: {
+                     title: title,
+                     body: bodyText,
+                     url: `/?chatId=${group_chat_id}`,
+                     senderId: group_chat_id || "",
+                     badge: String(badgeCount)
                    }
                  }
-               },
-               data: {
-                 title: title,
-                 body: bodyText,
-                 url: `/?chatId=${group_chat_id}`,
-                 senderId: group_chat_id || "",
-                 badge: String(badgeCount)
-               }
-             }
-           };
+               };
 
-           const fcmResp = await fetch(fcmUrl, {
-             method: 'POST',
-             headers: {
-               'Authorization': `Bearer ${access_token}`,
-               'Content-Type': 'application/json'
-             },
-             body: JSON.stringify(messageBody)
-           });
-           
-           if (fcmResp.ok) successCount++;
-         });
-         
-         await Promise.all(tokenOperations);
+               const fcmResp = await fetch(fcmUrl, {
+                 method: 'POST',
+                 headers: {
+                   'Authorization': `Bearer ${access_token}`,
+                   'Content-Type': 'application/json'
+                 },
+                 body: JSON.stringify(messageBody)
+               });
+               
+               if (fcmResp.ok) successCount++;
+             });
+             
+             await Promise.all(tokenOperations);
+         }
       });
 
       await Promise.all(pushOperations);
