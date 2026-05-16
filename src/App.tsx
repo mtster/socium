@@ -133,7 +133,8 @@ export default function App() {
                   username: groupChat.name || 'Group',
                   full_name: groupChat.name || 'Group',
                   avatar_url: groupChat.avatar_url || null,
-                  isGroup: true
+                  isGroup: true,
+                  groupChat: groupChat
                 } as any);
                 setActiveTab('chat');
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -167,7 +168,8 @@ export default function App() {
                   username: groupChat.name || 'Group',
                   full_name: groupChat.name || 'Group',
                   avatar_url: groupChat.avatar_url || null,
-                  isGroup: true
+                  isGroup: true,
+                  groupChat: groupChat
                 } as any);
                 setActiveTab('chat');
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -229,7 +231,8 @@ export default function App() {
                    username: groupChat.name || 'Group',
                    full_name: groupChat.name || 'Group',
                    avatar_url: groupChat.avatar_url || null,
-                   isGroup: true
+                   isGroup: true,
+                   groupChat: groupChat
                  } as any);
                  setViewingProfileId(null);
                  setActiveTab('chat');
@@ -265,6 +268,7 @@ export default function App() {
                    full_name: gc.name || 'Group Chat',
                    avatar_url: gc.avatar_url || null,
                    isGroup: true,
+                   groupChat: gc,
                    participants
                  };
                }
@@ -349,7 +353,8 @@ export default function App() {
                    username: groupChat.name || 'Group',
                    full_name: groupChat.name || 'Group',
                    avatar_url: groupChat.avatar_url || null,
-                   isGroup: true
+                   isGroup: true,
+                   groupChat: groupChat
                  } as any);
                  setViewingProfileId(null);
                  setActiveTab('chat');

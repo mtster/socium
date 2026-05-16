@@ -86,7 +86,7 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
   const inboxRef = ref(rtdb, `inboxes/${userId}/${chatId}`);
   get(inboxRef).then((snapshot) => {
     const isSeen = snapshot.val();
-    if (isSeen === false) {
+    if (isSeen === false || isSeen === 'false') {
       // Mark as seen and decrease unseen count
       set(inboxRef, true);
       const countRef = ref(rtdb, `unseen_chat_count/${userId}`);

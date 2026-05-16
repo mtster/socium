@@ -72,15 +72,19 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => activeChat.isGroup ? openSettings() : onOpenProfile(activeChat.id)}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                 {activeChat.isGroup ? (
-                   <div className="w-full h-full relative">
-                     {activeChat.participants && activeChat.participants.length > 0 ? (
-                       activeChat.participants.slice(0,3).map((p, i, arr) => (
-                         <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-6 h-6" : "bottom-0 right-0 w-6 h-6") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-5 h-5 z-20" : i === 1 ? "bottom-0 left-0 w-5 h-5 z-10" : "bottom-0 right-0 w-5 h-5 z-10"))}>
-                           {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[8px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
-                         </div>
-                       ))
-                     ) : <div className="text-xs w-full h-full flex items-center justify-center">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>}
-                   </div>
+                   activeChat.avatar_url ? (
+                     <img src={activeChat.avatar_url} className="w-full h-full object-cover" />
+                   ) : (
+                     <div className="w-full h-full relative">
+                       {activeChat.participants && activeChat.participants.length > 0 ? (
+                         activeChat.participants.slice(0,3).map((p, i, arr) => (
+                           <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-6 h-6" : "bottom-0 right-0 w-6 h-6") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-5 h-5 z-20" : i === 1 ? "bottom-0 left-0 w-5 h-5 z-10" : "bottom-0 right-0 w-5 h-5 z-10"))}>
+                             {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[8px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
+                           </div>
+                         ))
+                       ) : <div className="text-xs w-full h-full flex items-center justify-center">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>}
+                     </div>
+                   )
                 ) : (
                   activeChat.avatar_url ? <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>
                 )}

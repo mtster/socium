@@ -14,33 +14,22 @@ export const parseLocation = (content: string) => {
 export const openInAppleMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
-    window.location.href = `maps://?q=${dest}`;
+    window.location.assign(`maps://?q=${dest}`);
   } else if (originalUrl) {
-    window.location.href = originalUrl;
+    window.open(originalUrl, '_blank');
   }
 };
 
 export const openInGoogleMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
-    window.location.href = `comgooglemaps://?q=${dest}`;
-    // Fallback if app is not installed
-    setTimeout(() => {
-      window.location.href = `https://www.google.com/maps/search/?api=1&query=${dest}`;
-    }, 500);
+    window.location.assign(`comgooglemaps://?q=${dest}`);
   } else if (originalUrl) {
-    window.location.href = originalUrl;
+    window.location.assign(`comgooglemaps://?q=${originalUrl}`);
   }
 };
 
 export const openInNativeMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
-  const isApple = originalUrl && (originalUrl.includes('apple.com') || originalUrl.includes('apple.com/maps'));
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  
-  if (isApple || isIOS) {
-    openInAppleMaps(lat, lng, originalUrl);
-  } else {
-    openInGoogleMaps(lat, lng, originalUrl);
-  }
+  openInGoogleMaps(lat, lng, originalUrl);
 };
 

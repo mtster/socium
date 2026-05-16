@@ -138,7 +138,7 @@ export function useChatList(currentUserId: string) {
 
   useEffect(() => {
     // Add real-time listener for ALL messages to update the chat list last message
-    const channel = supabase.channel('chat_list_updates')
+    const msgChannel = supabase.channel('chat_list_updates')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
         
@@ -172,8 +172,35 @@ export function useChatList(currentUserId: string) {
       })
       .subscribe();
 
+    const groupChannel = supabase.channel('group_chat_updates')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_chats' }, (payload) => {
+        const updatedGroup = payload.new;
+        setChats(prev => {
+          let updated = false;
+          const newChats = prev.map(chat => {
+            if (chat.isGroup && chat.id === updatedGroup.id) {
+              updated = true;
+              return { 
+                ...chat, 
+                name: updatedGroup.name || chat.name, 
+                avatar_url: updatedGroup.avatar_url,
+                groupChat: { ...chat.groupChat, ...updatedGroup }
+              };
+            }
+            return chat;
+          });
+          if (updated) {
+            chatListCache = newChats;
+            return newChats;
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(msgChannel);
+      supabase.removeChannel(groupChannel);
     };
   }, [currentUserId]);
 
