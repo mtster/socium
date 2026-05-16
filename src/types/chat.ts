@@ -17,6 +17,7 @@ export type ChatListItemType = {
   avatar_url: string | null;
   lastMessage?: any;
   unreadCount?: number;
+  admin_id?: string;
   
   // For 1-on-1
   profile?: Profile;

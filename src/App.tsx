@@ -340,6 +340,20 @@ export default function App() {
                setInitialActiveChat(senderProfile);
                setViewingProfileId(null);
                setActiveTab('chat');
+            } else {
+               const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', event.data.senderId).single();
+               if (groupChat) {
+                 setFloatingAvatar(null);
+                 setInitialActiveChat({
+                   id: groupChat.id,
+                   username: groupChat.name || 'Group',
+                   full_name: groupChat.name || 'Group',
+                   avatar_url: groupChat.avatar_url || null,
+                   isGroup: true
+                 } as any);
+                 setViewingProfileId(null);
+                 setActiveTab('chat');
+               }
             }
           }
           if (event.data && event.data.type === 'OPEN_REQUESTS') {

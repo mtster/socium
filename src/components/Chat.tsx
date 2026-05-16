@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { useStore } from '@/src/store/useStore';
 import { Profile } from '@/src/types';
 import { ChatListItemType } from '@/src/types/chat';
@@ -96,15 +97,17 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         </div>
       </div>
 
-      {activeChat && (
-        <ChatRoom 
-          currentUserId={currentUserId} 
-          activeChat={activeChat} 
-          onClose={() => { setActiveChat(null); onCloseChat?.(); }} 
-          onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id } }))}
-          openSettings={() => setIsGroupSettingsOpen(true)}
-        />
-      )}
+      <AnimatePresence>
+        {activeChat && (
+          <ChatRoom 
+            currentUserId={currentUserId} 
+            activeChat={activeChat} 
+            onClose={() => { setActiveChat(null); onCloseChat?.(); }} 
+            onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id } }))}
+            openSettings={() => setIsGroupSettingsOpen(true)}
+          />
+        )}
+      </AnimatePresence>
 
       {isCreatingGroup && (
         <CreateGroupModal 

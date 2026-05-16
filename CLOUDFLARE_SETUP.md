@@ -124,25 +124,65 @@ export default {
       // 5. Query Unread Counts & Send Pushes concurrently per user
       const pushOperations = recipient_tokens.map(async (recipient) => {
          let badgeCount = 0;
+         const userId = recipient.userId;
          try {
-           // We fetch their single unseen_chat_count digit
-           const rtdbResp = await fetch(`${dbUrl}/unseen_chat_count/${recipient.userId}.json?access_token=${access_token}`);
-           if (rtdbResp.ok) {
-             const val = await rtdbResp.json();
-             badgeCount = typeof val === 'number' ? val : 0;
+           // We do parallel operations to check presence, inbox, unseen count, and global presence
+           const [locResp, inboxResp, unseenResp, precResp] = await Promise.all([
+              fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
+              fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
+              fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`),
+              fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
+           ]);
+
+           const location = locResp.ok ? await locResp.json() : null;
+           const inboxSeen = inboxResp.ok ? await inboxResp.json() : null;
+           badgeCount = (unseenResp.ok ? await unseenResp.json() : 0) || 0;
+           const isOnline = precResp.ok ? await precResp.json() : false;
+
+           // If user is not looking at this chat right now
+           if (location !== group_chat_id) {
+             // If we haven't already marked this chat as unseen for them
+             if (inboxSeen !== false) {
+               badgeCount += 1; // Unseen chat count increments!
+               // 1. Mark chat as unseen
+               await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
+                 method: 'PUT',
+                 body: 'false'
+               });
+               // 2. Update their global unseen_chat_count
+               await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                 method: 'PUT',
+                 body: String(badgeCount)
+               });
+             }
            }
-         } catch (e) {}
+           
+           // If user is online and NOT looking at this chat, they need the UI to update,
+           // but FCM won't deliver the background data reliably if we use push. But we send push anyway!
+         } catch (e) {
+           console.error("RTDB operation failed for user " + userId, e);
+         }
 
          // Determine title: "SenderName in GroupName"
          const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
 
          // Loop over each token for this user
          const tokenOperations = recipient.tokens.map(async (token) => {
-           // Create DATA-ONLY FCM payload (no "notification" block!) 
-           // This stops duplicates and uses the iOS Service Worker
+           // Create standard FCM payload with notification AND apns badge for proper iOS delivery
            const messageBody = {
              message: {
                token: token,
+               notification: {
+                 title: title,
+                 body: bodyText
+               },
+               apns: {
+                 payload: {
+                   aps: {
+                     badge: badgeCount
+                   }
+                 }
+               },
                data: {
                  title: title,
                  body: bodyText,

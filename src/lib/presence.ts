@@ -92,6 +92,15 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
       const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
       runTransaction(countRef, (currentVal) => {
         return Math.max(0, (currentVal || 0) - 1);
+      }).then((result) => {
+        if (result.committed) { // Update app badge
+           const newCount = result.snapshot.val() || 0;
+           if (newCount > 0 && 'setAppBadge' in navigator) {
+             (navigator as any).setAppBadge(newCount);
+           } else if (newCount <= 0 && 'clearAppBadge' in navigator) {
+             (navigator as any).clearAppBadge();
+           }
+        }
       });
     }
   });

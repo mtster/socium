@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { setChatLocation, checkRecipientPresenceAndNotify } from '@/src/lib/presence';
 import { ChatListItemType } from '@/src/types/chat';

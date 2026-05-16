@@ -41,30 +41,28 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   let urlToOpen = event.notification.data?.url || '/';
-  if (event.notification.data?.senderId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
-    urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chat_with=${event.notification.data.senderId}`;
+  const senderId = event.notification.data?.senderId || '';
+  if (senderId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
+    urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chat_with=${senderId}`;
   }
 
-  // Force actual production URl if requested
   const baseUrl = 'https://sociumx.vercel.app';
   const absoluteUrl = new URL(urlToOpen, baseUrl).href;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
-      // 1. Check if the app is already open
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
-        
-        // FIX: Instead of just focusing and hoping postMessage works, 
-        // Force the window to navigate to the chat URL. 
-        // This is much more reliable on iOS 17.
-        if ('navigate' in client && 'focus' in client) {
+        if ('focus' in client) {
           client.focus();
-          return client.navigate(absoluteUrl); 
+          if (senderId) {
+            client.postMessage({ type: 'OPEN_CHAT', senderId });
+          } else {
+            client.navigate(absoluteUrl);
+          }
+          return;
         }
       }
-      
-      // 2. If no window is found, open a new one
       if (clients.openWindow) {
         return clients.openWindow(absoluteUrl);
       }

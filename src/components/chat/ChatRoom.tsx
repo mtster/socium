@@ -1,5 +1,4 @@
 import React from 'react';
-import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
@@ -8,6 +7,8 @@ import { MessageBubble } from './MessageBubble';
 import { AudioPlayer } from './AudioPlayer';
 import { useChatRoom } from './useChatRoom';
 import { ChatListItemType } from '@/src/types/chat';
+
+import { parseLocation, openInAppleMaps, openInGoogleMaps } from './locationUtils';
 
 interface ChatRoomProps {
   currentUserId: string;
@@ -56,7 +57,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     onTouchEnd
   } = useChatRoom(currentUserId, activeChat);
 
-  return createPortal((
+  return (
     <>
       <motion.div 
          key="chat-room" 
@@ -175,9 +176,24 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
             
             {(contextMenu.message.media_type === 'image' || contextMenu.message.media_type === 'audio') && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url!, 'socium', contextMenu.message.media_type as string); handleLongPress(null as any, null); }}><Download size={16} className="text-white/50" />Save</button>}
 
+            {(contextMenu.message.media_type === 'location' || !!contextMenu.message.content?.match(/(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/)) && (
+               <>
+                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
+                   const { lat, lng } = parseLocation(contextMenu.message.content);
+                   openInAppleMaps(lat, lng, contextMenu.message.content);
+                   handleLongPress(null as any, null); 
+                 }}><MapPin size={16} className="text-white/50" />Apple Maps</button>
+                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { 
+                   const { lat, lng } = parseLocation(contextMenu.message.content);
+                   openInGoogleMaps(lat, lng, contextMenu.message.content);
+                   handleLongPress(null as any, null); 
+                 }}><MapPin size={16} className="text-white/50" />Google Maps</button>
+               </>
+            )}
+
             {contextMenu.message.sender_id === currentUserId && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-red-500 hover:bg-white/5 gap-3 transition-colors" onClick={handleDeleteMessage}><Trash2 size={16} />Delete</button>}
           </motion.div></>)}
       </AnimatePresence>
     </>
-  ), document.body);
+  );
 }
