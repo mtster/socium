@@ -15,11 +15,8 @@ export const openInAppleMaps = (lat: number | null, lng: number | null, original
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
     window.location.href = `maps://?q=${dest}`;
-    setTimeout(() => {
-      window.open(`https://maps.apple.com/?q=${dest}`, '_blank');
-    }, 500);
   } else if (originalUrl) {
-    window.open(originalUrl, '_blank');
+    window.location.href = originalUrl;
   }
 };
 
@@ -27,17 +24,20 @@ export const openInGoogleMaps = (lat: number | null, lng: number | null, origina
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
     window.location.href = `comgooglemaps://?q=${dest}`;
+    // Fallback if app is not installed
     setTimeout(() => {
-      window.open(`https://www.google.com/maps/search/?api=1&query=${dest}`, '_blank');
+      window.location.href = `https://www.google.com/maps/search/?api=1&query=${dest}`;
     }, 500);
   } else if (originalUrl) {
-    window.open(originalUrl, '_blank');
+    window.location.href = originalUrl;
   }
 };
 
 export const openInNativeMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
   const isApple = originalUrl && (originalUrl.includes('apple.com') || originalUrl.includes('apple.com/maps'));
-  if (isApple) {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  
+  if (isApple || isIOS) {
     openInAppleMaps(lat, lng, originalUrl);
   } else {
     openInGoogleMaps(lat, lng, originalUrl);

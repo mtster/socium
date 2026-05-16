@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Camera, Settings2, LogOut, Trash2, Pencil, Search, Shield, X, Edit2, PencilLine } from 'lucide-react';
+import { ArrowLeft, Camera, Settings2, LogOut, Trash2, Pencil, Search, Shield, X, Edit2, PencilLine, ChevronRight } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { ChatListItemType } from '@/src/types/chat';
 import { Profile } from '@/src/types';
@@ -31,15 +31,13 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     const fetchRole = async () => {
       const { data } = await supabase
         .from('group_chat_participants')
-        .select('role')
+        .select('*')
         .eq('chat_id', activeChat.id)
         .eq('user_id', currentUserId)
-        .single();
+        .maybeSingle();
         
-      if (data) {
-        setIsAdmin(data.role === 'admin' || activeChat.admin_id === currentUserId);
-        setCanEdit(data.role === 'admin' || activeChat.admin_id === currentUserId || !!(activeChat.groupChat?.allow_member_edit));
-      }
+      setIsAdmin(activeChat.groupChat?.admin_id === currentUserId || activeChat.admin_id === currentUserId);
+      setCanEdit(activeChat.groupChat?.admin_id === currentUserId || activeChat.admin_id === currentUserId || !!(activeChat.groupChat?.allow_member_edit));
     };
     fetchRole();
   }, [activeChat.id, currentUserId]);
@@ -202,32 +200,37 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
           </div>
 
           <div className="px-4 py-2 space-y-4">
-            <div className="bg-[#1c1c1c] rounded-2xl overflow-hidden">
-               <button onClick={() => setShowMembers(true)} className="w-full flex items-center justify-between p-4 text-white hover:bg-white/5 transition-colors">
-                  <span className="text-[15px] font-medium">Chat Members</span>
+            <div className="bg-[#1c1c1c] rounded-[18px] overflow-hidden">
+               <button onClick={() => setShowMembers(true)} className="w-full flex items-center justify-between p-4 px-5 text-white hover:bg-white/5 transition-colors">
+                  <span className="text-[17px] font-medium">Chat Members</span>
+                  <div className="flex items-center gap-2">
+                     <span className="text-[17px] text-white/50">{participants.length}</span>
+                     <ChevronRight size={20} className="text-white/30" />
+                  </div>
                </button>
-               <button onClick={() => setShowAddMembers(true)} className="w-full flex items-center justify-between p-4 rounded-b-2xl border-t border-white/5 text-white hover:bg-white/5 transition-colors">
-                  <span className="text-[15px] font-medium">Add Member</span>
+               <button onClick={() => setShowAddMembers(true)} className="w-full flex items-center justify-between p-4 px-5 rounded-b-[18px] border-t border-white/5 text-white hover:bg-white/5 transition-colors">
+                  <span className="text-[17px] font-medium">Add Member</span>
+                  <ChevronRight size={20} className="text-white/30" />
                </button>
             </div>
 
             {isAdmin && (
-              <div className="bg-[#1c1c1c] rounded-2xl overflow-hidden">
-                <div className="flex items-center justify-between p-4">
-                  <span className="text-[15px] font-medium text-white">Allow everyone to edit the group chat</span>
+              <div className="bg-[#1c1c1c] rounded-[18px] overflow-hidden">
+                <div className="flex items-center justify-between p-4 px-5">
+                  <span className="text-[17px] font-medium text-white">Allow member edits</span>
                   <button 
                     onClick={handleToggleMembersEdit}
-                    className={cn("w-12 h-6 rounded-full transition-colors relative", activeChat.groupChat?.allow_member_edit ? "bg-white" : "bg-white/20")}
+                    className={cn("w-[50px] h-[30px] rounded-full transition-colors relative", activeChat.groupChat?.allow_member_edit ? "bg-white" : "bg-white/20")}
                   >
-                    <div className={cn("w-5 h-5 rounded-full bg-[#1c1c1c] absolute top-0.5 transition-all shadow-sm", activeChat.groupChat?.allow_member_edit ? "left-[26px]" : "left-0.5")} />
+                    <div className={cn("w-[26px] h-[26px] rounded-full bg-[#1c1c1c] absolute top-[2px] transition-all shadow-sm", activeChat.groupChat?.allow_member_edit ? "left-[22px]" : "left-[2px]")} />
                   </button>
                 </div>
               </div>
             )}
 
-            <div className="bg-[#1c1c1c] rounded-2xl overflow-hidden mt-6">
-               <button className="w-full flex items-center justify-center p-4 text-red-500 hover:bg-white/5 transition-colors" onClick={leaveGroup}>
-                 <span className="text-[15px] font-medium">Leave Group</span>
+            <div className="bg-[#1c1c1c] rounded-[18px] overflow-hidden mt-6">
+               <button className="w-full flex items-center justify-center p-4 px-5 text-red-500 hover:bg-white/5 transition-colors" onClick={leaveGroup}>
+                 <span className="text-[17px] font-semibold">Leave Group</span>
                </button>
             </div>
           </div>

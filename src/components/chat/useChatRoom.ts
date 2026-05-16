@@ -136,7 +136,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
       if (!activeChat.isGroup) {
-        checkRecipientPresenceAndNotify(currentUserId, activeChat.id, activeChat.id, data);
+        checkRecipientPresenceAndNotify(currentUserId, activeChat.id, currentUserId, data);
       }
     } catch (e: any) { 
       console.error("sendSpecialMessage error", e);
@@ -162,7 +162,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
       // Trigger notification for 1-on-1 chats
       if (!activeChat.isGroup) {
-        checkRecipientPresenceAndNotify(currentUserId, activeChat.id, activeChat.id, data);
+        checkRecipientPresenceAndNotify(currentUserId, activeChat.id, currentUserId, data);
       }
     } catch (e: any) { 
       console.error("handleSendMessage exception:", e);
