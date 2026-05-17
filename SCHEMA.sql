@@ -295,7 +295,7 @@ BEGIN
     IF recipients IS NOT NULL AND array_length(recipients, 1) > 0 THEN
       -- Fetch FCM tokens for the recipients grouped by user_id
       WITH user_tokens AS (
-        SELECT user_id, array_agg(endpoint) as tokens
+        SELECT user_id, array_agg(DISTINCT endpoint) as tokens
         FROM public.push_subscriptions
         WHERE user_id = ANY(recipients)
         GROUP BY user_id

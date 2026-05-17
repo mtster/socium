@@ -148,7 +148,10 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
            <div className="p-8 flex flex-col items-center border-b border-white/5 bg-gradient-to-b from-[#1c1c1c]/50 to-transparent">
              <div className="relative mb-6 z-10 group">
                {activeChat.avatar_url ? (
-                 <div className="w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 shadow-2xl ring-1 ring-white/10">
+                 <div 
+                   className={cn("w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 shadow-2xl ring-1 ring-white/10", !canEdit && "cursor-pointer active:scale-95 transition-transform")}
+                   onClick={() => !canEdit && setViewingImage(activeChat.avatar_url!)}
+                 >
                    <img src={activeChat.avatar_url} className="w-full h-full object-cover" />
                  </div>
                ) : (
@@ -172,6 +175,11 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
 
                <AnimatePresence>
                   {avatarMenuOpen && (
+                    <>
+                    <motion.div 
+                      className="fixed inset-0 z-20"
+                      onClick={() => setAvatarMenuOpen(false)}
+                    />
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.9, y: 10 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -216,6 +224,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
                         </button>
                       )}
                     </motion.div>
+                    </>
                   )}
                </AnimatePresence>
              </div>
@@ -264,7 +273,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
                </button>
             </div>
 
-            {isAdmin && (
+            {isAdmin ? (
               <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden border border-white/5 shadow-xl">
                 <div className="flex items-center justify-between p-5">
                   <span className="text-[17px] font-medium text-white max-w-[70%] leading-snug">Allow everyone to edit this group chat</span>
@@ -276,6 +285,14 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
                   </button>
                 </div>
               </div>
+            ) : (
+              activeChat.groupChat?.allow_member_edit && (
+                <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden border border-white/5 shadow-xl">
+                  <div className="flex items-center p-5">
+                    <span className="text-[15px] font-medium text-white/50 leading-snug text-center w-full">Every user in this chat can edit the group picture and name</span>
+                  </div>
+                </div>
+              )
             )}
 
             <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden mt-6 border border-white/5 shadow-xl">
@@ -292,7 +309,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
       <AnimatePresence>
         {viewingImage && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[110] bg-black flex flex-col">
-            <div className="absolute top-0 left-0 right-0 p-4 pt-safe flex items-center justify-between z-10 bg-gradient-to-b from-black/50 to-transparent">
+            <div className="absolute top-0 left-0 right-0 p-4 pt-safe flex items-center justify-end z-10 bg-gradient-to-b from-black/50 to-transparent">
               <button 
                 onClick={() => setViewingImage(null)} 
                 className="w-10 h-10 bg-black/50 hover:bg-black/70 rounded-full flex items-center justify-center text-white backdrop-blur-md transition-colors"
@@ -312,6 +329,11 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
          currentUserId={currentUserId}
          isAdmin={isAdmin}
          onRemoved={handleRemovedMembers}
+         onMakeAdmin={(newAdminId: string) => {
+           setIsAdmin(false);
+           setCanEdit(activeChat.groupChat?.allow_member_edit || false);
+           onUpdate({ ...activeChat, admin_id: newAdminId }); // Optional
+         }}
       />
       
       <GroupAddMembersModal

@@ -44,8 +44,8 @@ export default {
     try {
       const payload = await request.json();
       
-      if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
-        throw new Error('Firebase environment variables are missing in Cloudflare settings');
+      if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY || !env.FIREBASE_DATABASE_URL) {
+        throw new Error('Firebase environment variables are missing (Make sure FIREBASE_DATABASE_URL is set!)');
       }
 
       // 2. Generate JWT for Firebase REST API Authentication
@@ -115,8 +115,11 @@ export default {
          else bodyText = 'Sent a media message';
       }
 
-      // Firebase RTDB URL (defaults to standard format, but override using ENV if needed)
-      const dbUrl = env.FIREBASE_DATABASE_URL || `https://${env.FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`;
+      // Firebase RTDB URL (must be provided via ENV and NO trailing slash)
+      let dbUrl = env.FIREBASE_DATABASE_URL;
+      if (dbUrl.endsWith('/')) {
+         dbUrl = dbUrl.slice(0, -1);
+      }
 
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`;
       let successCount = 0;

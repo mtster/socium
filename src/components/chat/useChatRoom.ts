@@ -8,6 +8,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const [newMessage, setNewMessage] = useState('');
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const isSendingRef = useRef(false);
   const [pullProgress, setPullProgress] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
@@ -146,7 +147,8 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || isSendingRef.current) return;
+    isSendingRef.current = true;
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: newMessage.trim(), created_at: new Date().toISOString() };
     setMessages(prev => [...prev, temp]);
@@ -169,6 +171,8 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       alert("Failed to send message: " + e.message);
       setMessages(prev => prev.filter(m => m.id !== temp.id)); 
       setNewMessage(storedContent);
+    } finally {
+      isSendingRef.current = false;
     }
   };
 

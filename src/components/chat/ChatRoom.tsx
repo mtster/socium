@@ -73,7 +73,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                 {activeChat.isGroup ? (
                    <div className="w-full h-full relative">
-                     {activeChat.participants && activeChat.participants.length > 0 ? (
+                     {activeChat.avatar_url ? (
+                       <img src={activeChat.avatar_url} className="w-full h-full object-cover" />
+                     ) : activeChat.participants && activeChat.participants.length > 0 ? (
                        activeChat.participants.slice(0,3).map((p, i, arr) => (
                          <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-6 h-6" : "bottom-0 right-0 w-6 h-6") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-5 h-5 z-20" : i === 1 ? "bottom-0 left-0 w-5 h-5 z-10" : "bottom-0 right-0 w-5 h-5 z-10"))}>
                            {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[8px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
@@ -129,7 +131,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            <div className="flex items-center gap-3">
              <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
              <div className="relative flex-1 flex items-center">
-               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e as any); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
+               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.closest('form')?.requestSubmit(); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
                <button type="submit" disabled={!newMessage.trim()} className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"><SendHorizonal size={18} /></button>
              </div>
            </div>

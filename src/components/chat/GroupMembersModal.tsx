@@ -4,7 +4,7 @@ import { X, Shield, Trash2, ArrowLeft, MoreHorizontal, UserCog } from 'lucide-re
 import { cn } from '@/src/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 
-export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, isAdmin, onRemoved }: any) {
+export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, isAdmin, onRemoved, onMakeAdmin }: any) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
@@ -43,6 +43,9 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
          activeChat.groupChat.admin_id = userId;
       }
       activeChat.admin_id = userId;
+      if (typeof onRemoved === 'function' && onMakeAdmin) {
+          onMakeAdmin(userId);
+      }
       
     } catch (e: any) {
        alert("Failed to make admin: " + e.message);

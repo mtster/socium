@@ -38,24 +38,23 @@ export const openInAppleMaps = (lat: number | null, lng: number | null, original
 export const openInGoogleMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
-    window.location.href = `comgooglemaps://?q=${dest}&center=${dest}`;
-    // Fallback if app is not installed
-    setTimeout(() => {
-      window.location.href = `https://www.google.com/maps/search/?api=1&query=${dest}`;
-    }, 500);
+    window.location.href = `comgooglemaps://?q=${dest}`;
   } else if (originalUrl) {
-    window.location.href = originalUrl;
+    // If we can't extract coordinates, try to open the URL via Universal Link by creating a hidden anchor
+    // Or we can try the comgooglemapsurl scheme 
+    const isGoogleMaps = originalUrl.includes('google') || originalUrl.includes('goo.gl');
+    if (isGoogleMaps) {
+       const urlWithoutProtocol = originalUrl.replace(/^https?:\/\//, '');
+       window.location.href = `comgooglemapsurl://${urlWithoutProtocol}`;
+    } else {
+       // generic
+       window.location.href = originalUrl;
+    }
   }
 };
 
 export const openInNativeMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
-  const isApple = originalUrl && (originalUrl.includes('apple.com') || originalUrl.includes('apple.com/maps'));
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  
-  if (isApple || isIOS) {
-    openInAppleMaps(lat, lng, originalUrl);
-  } else {
-    openInGoogleMaps(lat, lng, originalUrl);
-  }
+  // User explicitly wants Google Maps
+  openInGoogleMaps(lat, lng, originalUrl);
 };
 
