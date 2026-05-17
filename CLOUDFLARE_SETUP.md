@@ -135,10 +135,14 @@ export default {
             fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
          ]);
 
-         const location = locResp.ok ? await locResp.json() : null;
-         const inboxSeen = inboxResp.ok ? await inboxResp.json() : null;
-         let badgeCount = (unseenResp.ok ? await unseenResp.json() : 0) || 0;
-         const isOnline = precResp.ok ? await precResp.json() : false;
+         if (!locResp.ok || !inboxResp.ok || !unseenResp.ok || !precResp.ok) {
+           throw new Error(`RTDB fetch failed for user ${userId}. loc:${locResp.status} inbox:${inboxResp.status} unseen:${unseenResp.status} prec:${precResp.status}`);
+         }
+
+         const location = await locResp.json();
+         const inboxSeen = await inboxResp.json();
+         let badgeCount = (await unseenResp.json()) || 0;
+         const isOnline = await precResp.json();
 
          let shouldSendNotification = false;
 
@@ -199,10 +203,6 @@ export default {
                const messageBody = {
                  message: {
                    token: token,
-                   notification: {
-                     title: title,
-                     body: bodyText
-                   },
                    apns: {
                      payload: {
                        aps: {

@@ -13,7 +13,8 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
   const participants = activeChat.participants || [];
 
   const handleRemoveUser = async (userId: string) => {
-    if (userId === currentUserId) return;
+    if (userId === currentUserId || !isAdmin) return;
+    setMenuOpenId(null); // Instantly close
     setLoadingId(userId);
     try {
       const { error } = await supabase.from('group_chat_participants').delete()
@@ -25,12 +26,12 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
        alert("Failed to remove: " + e.message);
     } finally {
        setLoadingId(null);
-       setMenuOpenId(null);
     }
   };
 
   const handleMakeAdmin = async (userId: string) => {
-    if (userId === currentUserId) return;
+    if (userId === currentUserId || !isAdmin) return;
+    setMenuOpenId(null); // Instantly close the menu
     setLoadingId(userId);
     try {
       const { error } = await supabase.from('group_chats')
@@ -51,7 +52,6 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
        alert("Failed to make admin: " + e.message);
     } finally {
        setLoadingId(null);
-       setMenuOpenId(null);
     }
   };
 
