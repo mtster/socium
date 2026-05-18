@@ -48,6 +48,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     }
   }, [initialActiveChat]);
 
+  useEffect(() => {
+    if (activeChat) {
+      const updatedChat = chats.find(c => c.id === activeChat.id);
+      if (updatedChat && (updatedChat.name !== activeChat.name || updatedChat.avatar_url !== activeChat.avatar_url || updatedChat.groupChat !== activeChat.groupChat)) {
+        setActiveChat(updatedChat);
+      }
+    }
+  }, [chats, activeChat]);
+
   const filteredConnections = chats.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (

@@ -46,9 +46,9 @@ export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, active
     }
 
     return (
-      <div className="flex w-full justify-center my-5 select-none">
-         <span className="text-[11px] border border-current text-white/50 px-4 py-1.5 rounded-full text-center tracking-[0.02em] max-w-[85%] leading-snug font-light lowercase">
-            <span className="font-medium text-white/80 capitalize">{actorName}</span>{' '}{text}
+      <div className="flex w-full justify-center my-2 select-none">
+         <span className="text-[11px] border border-current text-white/50 px-4 py-1.5 rounded-full text-center tracking-[0.02em] max-w-[85%] leading-snug font-light">
+            <span className="font-medium text-white/80">{actorName}</span>{' '}{text}
          </span>
       </div>
     );

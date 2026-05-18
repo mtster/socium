@@ -219,6 +219,36 @@ export function useChatList(currentUserId: string) {
           }
         });
       })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_chats' }, (payload) => {
+        const updatedGroup = payload.new;
+        setChats(prev => {
+          let updated = false;
+          const newChats = prev.map(chat => {
+            if (chat.isGroup && chat.id === updatedGroup.id) {
+              updated = true;
+              return { 
+                ...chat, 
+                name: updatedGroup.name || chat.name, 
+                avatar_url: updatedGroup.avatar_url,
+                groupChat: { ...chat.groupChat, ...updatedGroup }
+              };
+            }
+            return chat;
+          });
+          if (updated) chatListCache = newChats;
+          return newChats;
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chat_participants' }, (payload) => {
+         // Whenever a participant is added, removed or muted, we should reload the chats to keep it simple and accurate
+         if (payload.new && (payload.new as any).user_id === currentUserId) return; // avoid unnecessary reload if it's just our read state, but wait, last_read_at updates too.
+         // Actually, any change to group_chat_participants (like add/remove) might be worth refreshing.
+         // Let's debounce it or just setTimeout.
+         // But last_read_at updates on every message! That would cause infinite fetch loop.
+         if (payload.eventType === 'INSERT' || payload.eventType === 'DELETE') {
+            setTimeout(fetchChats, 500);
+         }
+      })
       .subscribe();
 
     return () => {
