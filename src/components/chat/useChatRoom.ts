@@ -99,7 +99,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const channel = supabase.channel(`chat_${activeChat.id}_active`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
-        if (msg.sender_id === currentUserId && msg.id !== 'temp') return; // our own msg handles optimistic update from this device
+        if (msg.sender_id === currentUserId && msg.id !== 'temp' && msg.media_type !== 'system') return; // our own msg handles optimistic update from this device
         
         let shouldAdd = false;
         if (activeChat.isGroup) {

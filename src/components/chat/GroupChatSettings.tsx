@@ -37,29 +37,18 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
         .eq('user_id', currentUserId)
         .maybeSingle();
         
+      if (data) setIsMuted(!!data.is_muted);
+
       setIsAdmin(activeChat.groupChat?.admin_id === currentUserId || activeChat.admin_id === currentUserId);
       setCanEdit(activeChat.groupChat?.admin_id === currentUserId || activeChat.admin_id === currentUserId || !!(activeChat.groupChat?.allow_member_edit));
-      
-      // Read Mute status from RTDB
-      import('@/src/lib/firebase').then(({ rtdb }) => {
-         import('firebase/database').then(({ ref, get }) => {
-            get(ref(rtdb, `muted_chats/${currentUserId}/${activeChat.id}`)).then(s => {
-               setIsMuted(!!s.val());
-            });
-         });
-      });
     };
     fetchRole();
   }, [activeChat.id, currentUserId]);
 
-  const handleToggleMute = () => {
+  const handleToggleMute = async () => {
     const newVal = !isMuted;
     setIsMuted(newVal);
-    import('@/src/lib/firebase').then(({ rtdb }) => {
-       import('firebase/database').then(({ ref, set }) => {
-          set(ref(rtdb, `muted_chats/${currentUserId}/${activeChat.id}`), newVal ? true : null);
-       });
-    });
+    await supabase.from('group_chat_participants').update({ is_muted: newVal }).eq('chat_id', activeChat.id).eq('user_id', currentUserId);
   };
 
   const handleUpdateName = async () => {

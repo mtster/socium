@@ -29,56 +29,27 @@ export const parseLocation = (content: string) => {
 export const openInAppleMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
-    const a = document.createElement('a');
-    a.href = `maps://?q=${dest}&ll=${dest}`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    window.location.href = `maps://?q=${dest}&ll=${dest}`;
   } else if (originalUrl) {
-    const a = document.createElement('a');
-    a.href = originalUrl;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    window.location.href = originalUrl;
   }
 };
 
 export const openInGoogleMaps = (lat: number | null, lng: number | null, originalUrl?: string) => {
   if (lat !== null && lng !== null) {
     const dest = `${lat},${lng}`;
-    // Create an invisible anchor tag and click it to avoid altering window.location directly
-    const a = document.createElement('a');
-    a.href = `comgooglemaps://?q=${dest}`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    
-    // Timeout fallback just in case they don't have it installed
-    setTimeout(() => {
-        const fallback = document.createElement('a');
-        fallback.href = `https://www.google.com/maps/search/?api=1&query=${dest}`;
-        fallback.target = '_blank';
-        document.body.appendChild(fallback);
-        fallback.click();
-        document.body.removeChild(fallback);
-    }, 500);
+    window.location.href = `comgooglemaps://?q=${dest}`;
   } else if (originalUrl) {
-    // Try to open via Universal Link but using a tag with _blank to prevent current page navigation
-    const a = document.createElement('a');
+    // If we can't extract coordinates, try to open the URL via Universal Link by creating a hidden anchor
+    // Or we can try the comgooglemapsurl scheme 
     const isGoogleMaps = originalUrl.includes('google') || originalUrl.includes('goo.gl');
     if (isGoogleMaps) {
        const urlWithoutProtocol = originalUrl.replace(/^https?:\/\//, '');
-       a.href = `comgooglemapsurl://${urlWithoutProtocol}`;
+       window.location.href = `comgooglemapsurl://${urlWithoutProtocol}`;
     } else {
-       a.href = originalUrl;
+       // generic
+       window.location.href = originalUrl;
     }
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
   }
 };
 

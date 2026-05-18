@@ -104,7 +104,11 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           <ChatRoom 
             currentUserId={currentUserId} 
             activeChat={activeChat} 
-            onClose={() => { setActiveChat(null); onCloseChat?.(); }} 
+            onClose={() => { 
+                updateChatList(prev => prev.map(c => c.id === activeChat.id ? { ...c, unreadCount: 0 } : c));
+                setActiveChat(null); 
+                onCloseChat?.(); 
+            }} 
             onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id } }))}
             openSettings={() => setIsGroupSettingsOpen(true)}
           />
@@ -124,6 +128,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         />
       )}
 
+      <AnimatePresence>
       {isGroupSettingsOpen && activeChat?.isGroup && (
         <GroupChatSettings
           currentUserId={currentUserId}
@@ -140,6 +145,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           }}
         />
       )}
+      </AnimatePresence>
     </div>
   );
 }

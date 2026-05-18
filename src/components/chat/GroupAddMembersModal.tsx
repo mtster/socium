@@ -6,6 +6,36 @@ import { supabase } from '@/src/lib/supabase';
 
 export function GroupAddMembersModal({ isOpen, onClose, activeChat, currentUserId, onAdded }: any) {
   const [query, setQuery] = useState('');
+  const [results, setResults] = useState<any[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchUsers = async () => {
+      setLoading(true);
+      
+      let data = [];
+      if (query.trim().length >= 1) {
+        const res = await supabase.from('profiles').select('*')
+          .or(`full_name.ilike.%${query}%,username.ilike.%${query}%`)
+          .neq('id', currentUserId)
+          .limit(20);
+        data = res.data || [];
+      } else {
+        const res = await supabase.from('profiles').select('*').neq('id', currentUserId).limit(20);
+        data = res.data || [];
+      }
+      
+      if (active) {
+        setResults(data);
+        setLoading(false);
+      }
+    };
+    fetchUsers();
+    return () => { active = false; };
+  }, [query, currentUserId]);
 
   const existingIds = (activeChat.participants || []).map((p: any) => p.id);
 

@@ -110,22 +110,15 @@ export default {
       const pushOperations = recipient_tokens.map(async (recipient) => {
          const userId = recipient.userId;
          
-         const [locResp, inboxResp, unseenResp, precResp, muteResp] = await Promise.all([
+         const [locResp, inboxResp, unseenResp, precResp] = await Promise.all([
             fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
             fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
             fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`),
-            fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`),
-            fetch(`${dbUrl}/muted_chats/${userId}/${group_chat_id}.json?access_token=${access_token}`)
+            fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
          ]);
 
-         if (!locResp.ok || !inboxResp.ok || !unseenResp.ok || !precResp.ok || !muteResp.ok) {
-           throw new Error(`RTDB fetch failed for user ${userId}`);
-         }
-
-         const isMuted = await muteResp.json();
-         if (isMuted) {
-           // Skip everything if the chat is muted by this user
-           return null;
+         if (!locResp.ok || !inboxResp.ok || !unseenResp.ok || !precResp.ok) {
+           throw new Error(`RTDB fetch failed for user ${userId}. loc:${locResp.status} inbox:${inboxResp.status} unseen:${unseenResp.status} prec:${precResp.status}`);
          }
 
          const location = await locResp.json();

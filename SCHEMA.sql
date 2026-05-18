@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS group_chats (
 CREATE TABLE IF NOT EXISTS group_chat_participants (
   chat_id UUID REFERENCES group_chats(id) ON DELETE CASCADE,
   user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  is_muted BOOLEAN DEFAULT false,
   last_read_at TIMESTAMPTZ DEFAULT now(),
   joined_at TIMESTAMPTZ DEFAULT now(),
   PRIMARY KEY(chat_id, user_id)
@@ -218,6 +219,9 @@ CREATE POLICY "Users can create group chats" ON group_chats FOR INSERT WITH CHEC
 
 DROP POLICY IF EXISTS "Admin or permitted members can update group chats" ON group_chats;
 CREATE POLICY "Admin or permitted members can update group chats" ON group_chats FOR UPDATE USING (
+  auth.uid() = admin_id OR 
+  (allow_member_edit = true AND id IN (SELECT chat_id FROM group_chat_participants WHERE user_id = auth.uid()))
+) WITH CHECK (
   auth.uid() = admin_id OR 
   (allow_member_edit = true AND id IN (SELECT chat_id FROM group_chat_participants WHERE user_id = auth.uid()))
 );
@@ -290,7 +294,7 @@ BEGIN
   IF NEW.group_chat_id IS NOT NULL THEN
     SELECT array_agg(user_id) INTO recipients 
     FROM public.group_chat_participants 
-    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id;
+    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id AND is_muted = false;
     
     IF recipients IS NOT NULL AND array_length(recipients, 1) > 0 THEN
       -- Fetch FCM tokens for the recipients grouped by user_id
