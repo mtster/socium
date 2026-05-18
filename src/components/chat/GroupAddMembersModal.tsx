@@ -64,10 +64,11 @@ export function GroupAddMembersModal({ isOpen, onClose, activeChat, currentUserI
       // but let's just insert a message with a specific text.
       const namesStr = profiles?.map(p => p.full_name).join(', ') || 'members';
       await supabase.from('messages').insert({
-         sender_id: currentUserId,
+         sender_id: null,
          group_chat_id: activeChat.id,
-         content: `added ${namesStr} to the group.`,
-         media_type: 'system'
+         content: null,
+         media_type: 'system',
+         metadata: { type: 'USER_ADDED', actorId: currentUserId, addedNames: namesStr }
       });
 
       onAdded(profiles || []);

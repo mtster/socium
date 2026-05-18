@@ -16,11 +16,39 @@ export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, active
   }
 
   if (msg.media_type === 'system') {
-    const senderName = isMine ? 'You' : (senderProfile?.full_name?.split(' ')[0] || senderProfile?.username || 'Someone');
+    let text = msg.content;
+    let actorName = 'Someone';
+    
+    if (msg.metadata) {
+       const m = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+       const actorId = m.actorId;
+       const isActorMe = actorId === currentUserId;
+       
+       let actorProfile = null;
+       if (!isActorMe && activeChat.participants) {
+         actorProfile = activeChat.participants.find((p: any) => p.id === actorId);
+       }
+       actorName = isActorMe ? 'You' : (actorProfile?.full_name?.split(' ')[0] || actorProfile?.username || 'Someone');
+       
+       switch(m.type) {
+         case 'USER_ADDED': text = `added ${m.addedNames} to the group`; break;
+         case 'USER_REMOVED': text = `removed ${m.removedName}`; break;
+         case 'ADMIN_ASSIGNED': text = `made ${m.newAdminName} the group admin`; break;
+         case 'GROUP_NAME_CHANGED': text = `changed group name to "${m.newName}"`; break;
+         case 'EDIT_PERMISSION_CHANGED': text = m.newValue ? 'allowed everyone to edit group settings' : 'restricted editing to admins'; break;
+         case 'AVATAR_CHANGED': text = `changed the group picture`; break;
+         case 'AVATAR_REMOVED': text = `removed the group picture`; break;
+         case 'USER_LEFT': text = `left the group`; break;
+         default: break;
+       }
+    } else {
+       actorName = isMine ? 'You' : (senderProfile?.full_name?.split(' ')[0] || senderProfile?.username || 'Someone');
+    }
+
     return (
-      <div className="flex w-full justify-center my-4 select-none">
-         <span className="text-[11px] text-white/40 bg-[#1c1c1c]/50 border border-white/5 px-3 py-1.5 rounded-full text-center shadow-sm">
-            <span className="font-medium text-white/50">{senderName}</span> {msg.content}
+      <div className="flex w-full justify-center my-5 select-none">
+         <span className="text-[11px] border border-current text-white/50 px-4 py-1.5 rounded-full text-center tracking-[0.02em] max-w-[85%] leading-snug font-light lowercase">
+            <span className="font-medium text-white/80 capitalize">{actorName}</span>{' '}{text}
          </span>
       </div>
     );

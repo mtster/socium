@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS messages (
   receiver_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   content TEXT,
   media_url TEXT,
-  media_type TEXT CHECK (media_type IN ('image', 'audio', 'location')),
+  media_type TEXT,
+  metadata JSONB,
   created_at TIMESTAMPTZ DEFAULT now(),
   read_at TIMESTAMPTZ
 );
@@ -162,13 +163,18 @@ BEGIN
     ALTER TABLE messages ADD COLUMN media_url TEXT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='media_type') THEN 
-    ALTER TABLE messages ADD COLUMN media_type TEXT CHECK (media_type IN ('image', 'audio', 'location'));
+    ALTER TABLE messages ADD COLUMN media_type TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='metadata') THEN 
+    ALTER TABLE messages ADD COLUMN metadata JSONB;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='messages' AND column_name='group_chat_id') THEN 
     ALTER TABLE messages ADD COLUMN group_chat_id UUID;
   END IF;
   ALTER TABLE messages ALTER COLUMN content DROP NOT NULL;
+  ALTER TABLE messages ALTER COLUMN sender_id DROP NOT NULL;
   ALTER TABLE messages ALTER COLUMN receiver_id DROP NOT NULL;
+  ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_media_type_check;
 END $$;
 
 -- Group Chats Table

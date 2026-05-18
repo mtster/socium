@@ -32,10 +32,11 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
 
       const userProfile = participants.find((p: any) => p.id === userId);
       await supabase.from('messages').insert({
-         sender_id: currentUserId,
+         sender_id: null,
          group_chat_id: activeChat.id,
-         content: `removed ${userProfile?.full_name || 'a member'}.`,
-         media_type: 'system'
+         content: null,
+         media_type: 'system',
+         metadata: { type: 'USER_REMOVED', actorId: currentUserId, removedName: userProfile?.full_name || 'a member' }
       });
 
       onRemoved([userId]);
@@ -58,10 +59,11 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
       
       const userProfile = participants.find((p: any) => p.id === userId);
       await supabase.from('messages').insert({
-         sender_id: currentUserId,
+         sender_id: null,
          group_chat_id: activeChat.id,
-         content: `made ${userProfile?.full_name || 'a member'} the new group admin.`,
-         media_type: 'system'
+         content: null,
+         media_type: 'system',
+         metadata: { type: 'ADMIN_ASSIGNED', actorId: currentUserId, newAdminName: userProfile?.full_name || 'a member' }
       });
 
       // Update local state if needed
@@ -80,6 +82,12 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
     }
   };
 
+  const sortedParticipants = [...participants].sort((a, b) => {
+     if (a.id === currentUserId) return -1;
+     if (b.id === currentUserId) return 1;
+     return 0;
+  });
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -91,7 +99,7 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
            <h2 className="text-lg font-bold text-white flex-1">Chat Members</h2>
         </div>
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3" onClick={() => setMenuOpenId(null)}>
-          {participants.map((p: any) => {
+          {sortedParticipants.map((p: any) => {
              const isSelf = p.id === currentUserId;
              const isUserAdmin = p.id === (activeChat.groupChat?.admin_id || activeChat.admin_id); 
              return (
