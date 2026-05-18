@@ -198,6 +198,13 @@ CREATE TABLE IF NOT EXISTS group_chat_participants (
   PRIMARY KEY(chat_id, user_id)
 );
 
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='group_chat_participants' AND column_name='is_muted') THEN 
+    ALTER TABLE group_chat_participants ADD COLUMN is_muted BOOLEAN DEFAULT false;
+  END IF;
+END $$;
+
 -- Foreign Key for messages->group_chat_id (delayed to avoid cross-dependency if we re-order, but fine here)
 DO $$ 
 BEGIN 

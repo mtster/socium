@@ -32,9 +32,9 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
 
       const userProfile = participants.find((p: any) => p.id === userId);
       await supabase.from('messages').insert({
-         sender_id: null,
+         sender_id: currentUserId,
          group_chat_id: activeChat.id,
-         content: null,
+         content: 'removed a member',
          media_type: 'system',
          metadata: { type: 'USER_REMOVED', actorId: currentUserId, removedName: userProfile?.full_name || 'a member' }
       });
@@ -59,9 +59,9 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
       
       const userProfile = participants.find((p: any) => p.id === userId);
       await supabase.from('messages').insert({
-         sender_id: null,
+         sender_id: currentUserId,
          group_chat_id: activeChat.id,
-         content: null,
+         content: 'assigned a new admin',
          media_type: 'system',
          metadata: { type: 'ADMIN_ASSIGNED', actorId: currentUserId, newAdminName: userProfile?.full_name || 'a member' }
       });
@@ -85,6 +85,9 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
   const sortedParticipants = [...participants].sort((a, b) => {
      if (a.id === currentUserId) return -1;
      if (b.id === currentUserId) return 1;
+     const adminId = activeChat.groupChat?.admin_id || activeChat.admin_id;
+     if (a.id === adminId) return -1;
+     if (b.id === adminId) return 1;
      return 0;
   });
 

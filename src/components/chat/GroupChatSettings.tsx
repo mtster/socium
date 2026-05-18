@@ -57,9 +57,9 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     const { error } = await supabase.from('group_chats').update({ name: newName }).eq('id', activeChat.id);
     if (!error) {
       await supabase.from('messages').insert({
-         sender_id: null,
+         sender_id: currentUserId,
          group_chat_id: activeChat.id,
-         content: null,
+         content: 'changed the group name',
          media_type: 'system',
          metadata: { type: 'GROUP_NAME_CHANGED', actorId: currentUserId, newName: newName }
       });
@@ -74,9 +74,9 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     const { error } = await supabase.from('group_chats').update({ allow_member_edit: newValue }).eq('id', activeChat.id);
     if (!error) {
        await supabase.from('messages').insert({
-          sender_id: null,
+          sender_id: currentUserId,
           group_chat_id: activeChat.id,
-          content: null,
+          content: 'changed editing permissions',
           media_type: 'system',
           metadata: { type: 'EDIT_PERMISSION_CHANGED', actorId: currentUserId, newValue: newValue }
        });
@@ -107,9 +107,9 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
       const { error } = await supabase.from('group_chats').update({ avatar_url: data.secure_url }).eq('id', activeChat.id);
       if (!error) {
         await supabase.from('messages').insert({
-           sender_id: null,
+           sender_id: currentUserId,
            group_chat_id: activeChat.id,
-           content: null,
+           content: 'changed the group picture',
            media_type: 'system',
            metadata: { type: 'AVATAR_CHANGED', actorId: currentUserId }
         });
@@ -132,9 +132,9 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
       const { error } = await supabase.from('group_chats').update({ avatar_url: null }).eq('id', activeChat.id);
       if (!error) {
         await supabase.from('messages').insert({
-           sender_id: null,
+           sender_id: currentUserId,
            group_chat_id: activeChat.id,
-           content: null,
+           content: 'removed the group picture',
            media_type: 'system',
            metadata: { type: 'AVATAR_REMOVED', actorId: currentUserId }
         });
@@ -150,9 +150,9 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     try {
       await supabase.from('group_chat_participants').delete().eq('chat_id', activeChat.id).eq('user_id', currentUserId);
       await supabase.from('messages').insert({
-         sender_id: null,
+         sender_id: currentUserId,
          group_chat_id: activeChat.id,
-         content: null,
+         content: 'left the group',
          media_type: 'system',
          metadata: { type: 'USER_LEFT', actorId: currentUserId }
       });
