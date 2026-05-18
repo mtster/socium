@@ -73,7 +73,10 @@ self.addEventListener('notificationclick', function(event) {
 
   let urlToOpen = event.notification.data?.url || '/';
   const senderId = event.notification.data?.senderId || '';
-  if (senderId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
+  const groupChatId = event.notification.data?.groupChatId || '';
+  if (groupChatId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
+    urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${groupChatId}`;
+  } else if (senderId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
     urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chat_with=${senderId}`;
   }
 
@@ -86,7 +89,9 @@ self.addEventListener('notificationclick', function(event) {
         const client = windowClients[i];
         if ('focus' in client) {
           client.focus();
-          if (senderId) {
+          if (groupChatId) {
+            client.postMessage({ type: 'OPEN_CHAT', groupChatId });
+          } else if (senderId) {
             client.postMessage({ type: 'OPEN_CHAT', senderId });
           } else {
             client.navigate(absoluteUrl);

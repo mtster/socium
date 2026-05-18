@@ -7,10 +7,6 @@ import { AudioPlayer } from './AudioPlayer';
 import { Linkify } from './Linkify';
 
 export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, activeChat, setViewingImage, onTouchStart, onTouchMove, onTouchEnd, onCloseChat, contextMenuId, currentUserId }: any) => {
-  const isConsecutive = nextMsg?.sender_id === msg.sender_id;
-  const isPrevConsecutive = prevMsg?.sender_id === msg.sender_id;
-  const showAvatar = !isMine && !isConsecutive;
-  
   let senderProfile = null;
   if (!isMine && activeChat.isGroup && activeChat.participants) {
     senderProfile = activeChat.participants.find((p: any) => p.id === msg.sender_id);
@@ -18,6 +14,21 @@ export const MessageBubble = React.memo(({ msg, isMine, nextMsg, prevMsg, active
     senderProfile = activeChat; // In 1v1, activeChat is basically the profile (or we use activeChat.profile)
     if (activeChat.profile) senderProfile = activeChat.profile;
   }
+
+  if (msg.media_type === 'system') {
+    const senderName = isMine ? 'You' : (senderProfile?.full_name?.split(' ')[0] || senderProfile?.username || 'Someone');
+    return (
+      <div className="flex w-full justify-center my-4 select-none">
+         <span className="text-[11px] text-white/40 bg-[#1c1c1c]/50 border border-white/5 px-3 py-1.5 rounded-full text-center shadow-sm">
+            <span className="font-medium text-white/50">{senderName}</span> {msg.content}
+         </span>
+      </div>
+    );
+  }
+
+  const isConsecutive = nextMsg?.sender_id === msg.sender_id && nextMsg?.media_type !== 'system';
+  const isPrevConsecutive = prevMsg?.sender_id === msg.sender_id && prevMsg?.media_type !== 'system';
+  const showAvatar = !isMine && !isConsecutive;
 
   let rounded = 'rounded-[20px]';
   if (isMine) {

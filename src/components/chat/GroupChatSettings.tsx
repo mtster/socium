@@ -26,6 +26,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
   const [nameEditMode, setNameEditMode] = useState(false);
   const [tempName, setTempName] = useState(activeChat.name || '');
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
   
   useEffect(() => {
     const fetchRole = async () => {
@@ -38,15 +39,40 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
         
       setIsAdmin(activeChat.groupChat?.admin_id === currentUserId || activeChat.admin_id === currentUserId);
       setCanEdit(activeChat.groupChat?.admin_id === currentUserId || activeChat.admin_id === currentUserId || !!(activeChat.groupChat?.allow_member_edit));
+      
+      // Read Mute status from RTDB
+      import('@/src/lib/firebase').then(({ rtdb }) => {
+         import('firebase/database').then(({ ref, get }) => {
+            get(ref(rtdb, `muted_chats/${currentUserId}/${activeChat.id}`)).then(s => {
+               setIsMuted(!!s.val());
+            });
+         });
+      });
     };
     fetchRole();
   }, [activeChat.id, currentUserId]);
+
+  const handleToggleMute = () => {
+    const newVal = !isMuted;
+    setIsMuted(newVal);
+    import('@/src/lib/firebase').then(({ rtdb }) => {
+       import('firebase/database').then(({ ref, set }) => {
+          set(ref(rtdb, `muted_chats/${currentUserId}/${activeChat.id}`), newVal ? true : null);
+       });
+    });
+  };
 
   const handleUpdateName = async () => {
     if (!canEdit || tempName.trim() === activeChat.name) return setNameEditMode(false);
     const newName = tempName.trim();
     const { error } = await supabase.from('group_chats').update({ name: newName }).eq('id', activeChat.id);
     if (!error) {
+      await supabase.from('messages').insert({
+         sender_id: currentUserId,
+         group_chat_id: activeChat.id,
+         content: `changed the group name to "${newName}".`,
+         media_type: 'system'
+      });
       onUpdate({ ...activeChat, name: newName, groupChat: { ...activeChat.groupChat!, name: newName } });
     }
     setNameEditMode(false);
@@ -57,6 +83,12 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     const newValue = !activeChat.groupChat?.allow_member_edit;
     const { error } = await supabase.from('group_chats').update({ allow_member_edit: newValue }).eq('id', activeChat.id);
     if (!error) {
+       await supabase.from('messages').insert({
+          sender_id: currentUserId,
+          group_chat_id: activeChat.id,
+          content: newValue ? 'allowed everyone to edit the group setting.' : 'restricted editing to admins only.',
+          media_type: 'system'
+       });
        onUpdate({ ...activeChat, groupChat: { ...activeChat.groupChat!, allow_member_edit: newValue } } as any);
     }
   };
@@ -83,6 +115,12 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
       
       const { error } = await supabase.from('group_chats').update({ avatar_url: data.secure_url }).eq('id', activeChat.id);
       if (!error) {
+        await supabase.from('messages').insert({
+           sender_id: currentUserId,
+           group_chat_id: activeChat.id,
+           content: `changed the group picture.`,
+           media_type: 'system'
+        });
         onUpdate({ ...activeChat, avatar_url: data.secure_url });
       }
     } catch (err) {
@@ -101,6 +139,12 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     try {
       const { error } = await supabase.from('group_chats').update({ avatar_url: null }).eq('id', activeChat.id);
       if (!error) {
+        await supabase.from('messages').insert({
+           sender_id: currentUserId,
+           group_chat_id: activeChat.id,
+           content: `removed the group picture.`,
+           media_type: 'system'
+        });
         onUpdate({ ...activeChat, avatar_url: null });
       }
     } finally {
@@ -112,6 +156,12 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
     if (!confirm("Are you sure you want to leave this group?")) return;
     try {
       await supabase.from('group_chat_participants').delete().eq('chat_id', activeChat.id).eq('user_id', currentUserId);
+      await supabase.from('messages').insert({
+         sender_id: currentUserId,
+         group_chat_id: activeChat.id,
+         content: `left the group.`,
+         media_type: 'system'
+      });
       onLeave();
     } catch (e) {
       alert("Failed to leave group.");
@@ -271,6 +321,18 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
                   <span className="text-[17px] font-medium tracking-tight">Add Member</span>
                   <ChevronRight size={20} className="text-white/20" />
                </button>
+            </div>
+
+            <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden border border-white/5 shadow-xl">
+              <div className="flex items-center justify-between p-5">
+                <span className="text-[17px] font-medium text-white max-w-[70%] leading-snug">Mute Notifications</span>
+                <button 
+                  onClick={handleToggleMute}
+                  className={cn("w-[52px] h-[32px] rounded-full transition-colors relative flex-shrink-0", isMuted ? "bg-white" : "bg-white/20")}
+                >
+                  <div className={cn("w-[28px] h-[28px] rounded-full bg-[#121212] absolute top-[2px] transition-all shadow-sm", isMuted ? "left-[22px]" : "left-[2px]")} />
+                </button>
+              </div>
             </div>
 
             {isAdmin ? (

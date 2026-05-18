@@ -6,38 +6,6 @@ import { supabase } from '@/src/lib/supabase';
 
 export function GroupAddMembersModal({ isOpen, onClose, activeChat, currentUserId, onAdded }: any) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    const fetchUsers = async () => {
-      setLoading(true);
-      
-      let data = [];
-      if (query.trim().length >= 1) {
-        const res = await supabase.from('profiles').select('*')
-          .or(`full_name.ilike.%${query}%,username.ilike.%${query}%`)
-          .neq('id', currentUserId)
-          .limit(20);
-        data = res.data || [];
-      } else {
-        const res = await supabase.from('profiles').select('*').neq('id', currentUserId).limit(20);
-        data = res.data || [];
-      }
-      
-      if (active) {
-        setResults(data);
-        setLoading(false);
-      }
-    };
-    fetchUsers();
-    return () => { active = false; };
-  }, [query, currentUserId]);
-
-  if (!isOpen) return null;
 
   const existingIds = (activeChat.participants || []).map((p: any) => p.id);
 
@@ -53,13 +21,25 @@ export function GroupAddMembersModal({ isOpen, onClose, activeChat, currentUserI
     try {
       const inserts = selectedIds.map(id => ({
          chat_id: activeChat.id,
-         user_id: id,
-         role: 'member'
+         user_id: id
       }));
       const { error } = await supabase.from('group_chat_participants').insert(inserts);
       if (error) throw error;
       
       const { data: profiles } = await supabase.from('profiles').select('*').in('id', selectedIds);
+      
+      // Insert a system message letting everyone know
+      const currentUserName = document.querySelector('header')?.textContent?.includes('Socium') ? 'Someone' : 'Someone'; 
+      // Actually we have currentUserId, we can fetch our own profile name if needed, 
+      // but let's just insert a message with a specific text.
+      const namesStr = profiles?.map(p => p.full_name).join(', ') || 'members';
+      await supabase.from('messages').insert({
+         sender_id: currentUserId,
+         group_chat_id: activeChat.id,
+         content: `added ${namesStr} to the group.`,
+         media_type: 'system'
+      });
+
       onAdded(profiles || []);
       onClose();
     } catch (e: any) {
@@ -71,7 +51,8 @@ export function GroupAddMembersModal({ isOpen, onClose, activeChat, currentUserI
 
   return (
     <AnimatePresence>
-      <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }} className="fixed inset-0 z-[90] bg-[#121212] flex flex-col pt-safe">
+      {isOpen && (
+      <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'tween', duration: 0.3 }} className="fixed inset-0 z-[90] bg-[#121212] flex flex-col pt-safe">
         <div className="flex items-center gap-4 p-4 border-b border-white/10 shrink-0">
            <button onClick={onClose} className="p-2 -ml-2 text-white/50 active:scale-95"><X size={24} /></button>
            <h2 className="text-lg font-bold text-white flex-1">Add Members</h2>
@@ -120,6 +101,7 @@ export function GroupAddMembersModal({ isOpen, onClose, activeChat, currentUserI
           )}
         </div>
       </motion.div>
+      )}
     </AnimatePresence>
   );
 }

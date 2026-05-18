@@ -8,8 +8,6 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
-  if (!isOpen) return null;
-
   const participants = activeChat.participants || [];
 
   const handleRemoveUser = async (userId: string) => {
@@ -21,6 +19,25 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
         .eq('chat_id', activeChat.id)
         .eq('user_id', userId);
       if (error) throw error;
+      
+      // Clean up RTDB optionally (via an edge function or directly from client if auth allows it, but RTDB allows us)
+      // We will do it in Cloudflare if possible or just ignore for now as they will not get pushes if not in participants
+      // Wait, we need to remove it from RTDB for the inbox so it doesn't clutter.
+      // We'll dispatch a background RTDB delete if allowed.
+      import('@/src/lib/firebase').then(({ rtdb }) => {
+         import('firebase/database').then(({ ref, remove }) => {
+            if (rtdb) remove(ref(rtdb, `inboxes/${userId}/${activeChat.id}`)).catch(console.warn);
+         });
+      });
+
+      const userProfile = participants.find((p: any) => p.id === userId);
+      await supabase.from('messages').insert({
+         sender_id: currentUserId,
+         group_chat_id: activeChat.id,
+         content: `removed ${userProfile?.full_name || 'a member'}.`,
+         media_type: 'system'
+      });
+
       onRemoved([userId]);
     } catch (e: any) {
        alert("Failed to remove: " + e.message);
@@ -39,6 +56,14 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
         .eq('id', activeChat.id);
       if (error) throw error;
       
+      const userProfile = participants.find((p: any) => p.id === userId);
+      await supabase.from('messages').insert({
+         sender_id: currentUserId,
+         group_chat_id: activeChat.id,
+         content: `made ${userProfile?.full_name || 'a member'} the new group admin.`,
+         media_type: 'system'
+      });
+
       // Update local state if needed
       if (activeChat.groupChat) {
          activeChat.groupChat.admin_id = userId;
@@ -57,7 +82,8 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
 
   return (
     <AnimatePresence>
-      <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'tween', duration: 0.35 }} className="fixed inset-0 z-[80] bg-black flex flex-col pt-safe">
+      {isOpen && (
+      <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'tween', duration: 0.3 }} className="fixed inset-0 z-[80] bg-black flex flex-col pt-safe">
         <div className="flex items-center gap-4 p-4 border-b border-white/10 shrink-0">
            <button onClick={onClose} className="p-2 -ml-2 text-white/50 active:scale-95">
              <ArrowLeft size={24} />
@@ -127,6 +153,7 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
           })}
         </div>
       </motion.div>
+      )}
     </AnimatePresence>
   );
 }

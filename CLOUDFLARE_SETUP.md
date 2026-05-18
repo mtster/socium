@@ -1,22 +1,3 @@
-# Cloudflare Worker Setup for iPhone Users (No Terminal Required)
-
-This guide shows you how to deploy the notification worker directly from your iPhone browser, without needing `npm`, `wrangler`, or a terminal. We use pure Javascript with the native Web Crypto API, so no external libraries are needed.
-
-## Postgres Setup
-Your Supabase `messages` table already has a trigger set up. Please copy the latest `CREATE OR REPLACE FUNCTION public.notify_cloudflare_worker()` from `SCHEMA.sql` and run it in the Supabase SQL editor to ensure your profile/group names get sent to Cloudflare! Also ensure `pg_net` is enabled if not already (`CREATE EXTENSION IF NOT EXISTS pg_net;`).
-
-## 1. Setup in Cloudflare Dashboard
-
-1. Log into your Cloudflare account in your browser.
-2. Go to **Workers & Pages** -> **Create application** -> **Create Worker**.
-3. Name it (e.g., `socium-group-notifications`) and click **Deploy**.
-4. Once deployed, click **Edit Code**.
-5. Make sure your file is a Javascript file (like `worker.js`). If it gave you `worker.ts`, right click it and rename it to `worker.js`.
-6. Delete everything inside the editor and paste the completely standalone code below.
-
-### The Worker Code:
-
-```javascript
 // Base64URL Encoding utilities
 function b64u(str) {
   return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -56,7 +37,8 @@ export default {
         aud: 'https://oauth2.googleapis.com/token',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
-        scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/firebase.messaging'
+        // FIXED: Added userinfo.email scope required for valid REST token routing mapping
+        scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/userinfo.email'
       }));
 
       const privateKeyText = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
@@ -128,15 +110,22 @@ export default {
       const pushOperations = recipient_tokens.map(async (recipient) => {
          const userId = recipient.userId;
          
-         const [locResp, inboxResp, unseenResp, precResp] = await Promise.all([
+         const [locResp, inboxResp, unseenResp, precResp, muteResp] = await Promise.all([
             fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
             fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
             fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`),
-            fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
+            fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`),
+            fetch(`${dbUrl}/muted_chats/${userId}/${group_chat_id}.json?access_token=${access_token}`)
          ]);
 
-         if (!locResp.ok || !inboxResp.ok || !unseenResp.ok || !precResp.ok) {
-           throw new Error(`RTDB fetch failed for user ${userId}. loc:${locResp.status} inbox:${inboxResp.status} unseen:${unseenResp.status} prec:${precResp.status}`);
+         if (!locResp.ok || !inboxResp.ok || !unseenResp.ok || !precResp.ok || !muteResp.ok) {
+           throw new Error(`RTDB fetch failed for user ${userId}`);
+         }
+
+         const isMuted = await muteResp.json();
+         if (isMuted) {
+           // Skip everything if the chat is muted by this user
+           return null;
          }
 
          const location = await locResp.json();
@@ -146,7 +135,7 @@ export default {
 
          let shouldSendNotification = false;
 
-         // if the global presence of recipient is false
+         // Scenario A: If the global presence of recipient is false (completely offline)
          if (!isOnline) {
              // 1. update the inbox node for that users uuid
              await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
@@ -166,17 +155,15 @@ export default {
              // 3. send notification payload
              shouldSendNotification = true;
          } 
+         // Scenario B: If recipient is online but looking at a DIFFERENT chat room or dashboard area
          else if (isOnline && location !== group_chat_id) {
-             // If global presence of recipient is true but location of the recipient is not the group chat uuid
-             // it means they are browsing through the app.
-             
              // 1. update the inbox node for that users uuid
              await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
                method: 'PUT',
                body: 'false'
              });
              
-             // 2. increment unseen chat count node for the recipient by +1 (if needed)
+             // 2. increment unseen chat count node for the recipient by +1
              if (inboxSeen !== false) {
                  badgeCount += 1;
                  await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
@@ -185,17 +172,17 @@ export default {
                  });
              }
              
-             // No notification needed for users online looking at other parts of the app
-             shouldSendNotification = false;
+             // FIXED: Set to true so the worker fires the data-only push. 
+             // This wakes up the client service worker to change the iOS badge safely!
+             shouldSendNotification = true;
          }
+         // Scenario C: If recipient is online and in the exact same chat room
          else if (isOnline && location === group_chat_id) {
-             // If global presence of recipient is true and the location of that recipient is the same as the new messages chat uuid
-             // nothing needs to be updated and no notification must be sent.
+             // Already looking at the chat room, do nothing
              shouldSendNotification = false;
          }
 
          if (shouldSendNotification) {
-             // Determine title: "SenderName in GroupName"
              const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
 
              // Loop over each token for this user
@@ -214,7 +201,8 @@ export default {
                      title: title,
                      body: bodyText,
                      url: `/?chatId=${group_chat_id}`,
-                     senderId: group_chat_id || "",
+                     groupChatId: group_chat_id || "",
+                      senderId: (payload.record ? payload.record.sender_id : payload.sender_id) || "",
                      badge: String(badgeCount)
                    }
                  }
@@ -253,20 +241,3 @@ export default {
     }
   }
 };
-```
-
-7. Click **Save and deploy** in the corner.
-
-## 2. Add Secrets/Variables in Cloudflare
-
-1. Go back to your Worker's settings page (click its name in the breadcrumbs).
-2. Go to **Settings** -> **Variables and Secrets**.
-3. Add the Environmental Variables (**Secret** text type):
-   * `FIREBASE_PROJECT_ID`
-   * `FIREBASE_CLIENT_EMAIL` 
-   * `FIREBASE_PRIVATE_KEY`
-   * `FIREBASE_DATABASE_URL` (Get this from Firebase Console > Realtime Database)
-4. Click Save.
-
-## 3. Verify Supabase Extension
-Go to your Supabase Dashboard -> Database -> Extensions and make sure `pg_net` is enabled. You no longer need to use Database Webhooks in the UI because the SQL trigger handles everything efficiently!

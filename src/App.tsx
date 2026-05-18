@@ -333,15 +333,12 @@ export default function App() {
               event.ports[0].postMessage('VISIBLE');
             }
           }
-          if (event.data && event.data.type === 'OPEN_CHAT' && event.data.senderId) {
-            const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', event.data.senderId).single();
-            if (senderProfile) {
-               setFloatingAvatar(null);
-               setInitialActiveChat(senderProfile);
-               setViewingProfileId(null);
-               setActiveTab('chat');
-            } else {
-               const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', event.data.senderId).single();
+          if (event.data && event.data.type === 'OPEN_CHAT') {
+            const senderId = event.data.senderId;
+            const groupChatId = event.data.groupChatId;
+            
+            if (groupChatId) {
+               const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
                if (groupChat) {
                  setFloatingAvatar(null);
                  setInitialActiveChat({
@@ -354,6 +351,28 @@ export default function App() {
                  setViewingProfileId(null);
                  setActiveTab('chat');
                }
+            } else if (senderId) {
+              const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
+              if (senderProfile) {
+                 setFloatingAvatar(null);
+                 setInitialActiveChat(senderProfile);
+                 setViewingProfileId(null);
+                 setActiveTab('chat');
+              } else {
+                 const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', senderId).single();
+                 if (groupChat) {
+                   setFloatingAvatar(null);
+                   setInitialActiveChat({
+                     id: groupChat.id,
+                     username: groupChat.name || 'Group',
+                     full_name: groupChat.name || 'Group',
+                     avatar_url: groupChat.avatar_url || null,
+                     isGroup: true
+                   } as any);
+                   setViewingProfileId(null);
+                   setActiveTab('chat');
+                 }
+              }
             }
           }
           if (event.data && event.data.type === 'OPEN_REQUESTS') {
@@ -369,6 +388,15 @@ export default function App() {
     }, []);
 
   const [notifPermission, setNotifPermission] = useState(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+  const [hasPushSubscription, setHasPushSubscription] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (session?.user?.id) {
+       supabase.from('push_subscriptions').select('id', { count: 'exact' }).eq('user_id', session.user.id).then(({ count, error }) => {
+          setHasPushSubscription(!error && count !== null && count > 0);
+       });
+    }
+  }, [session]);
 
   const registerPush = async (userId: string, isUserAction = false) => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -405,6 +433,7 @@ export default function App() {
         console.error('Error upserting DB:', error);
       } else {
         console.log('Successfully saved FCM token to database');
+        setHasPushSubscription(true);
       }
       
     } catch (e: any) {
@@ -620,14 +649,14 @@ export default function App() {
               <button 
                 onClick={() => {
                   setShowNotifPromoPopup(false);
-                  if ('Notification' in window && notifPermission !== 'granted') {
+                  if (typeof window !== 'undefined' && 'Notification' in window && (notifPermission !== 'granted' || hasPushSubscription !== true)) {
                     registerPush(session.user.id, true);
                   }
                 }}
                 className="text-white hover:text-white/80 transition-colors relative"
               >
                 <Bell size={24} />
-                {notifPermission === 'granted' && (
+                {notifPermission === 'granted' && hasPushSubscription === true && (
                   <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
                 )}
               </button>
