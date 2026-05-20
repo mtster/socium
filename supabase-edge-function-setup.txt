@@ -130,7 +130,9 @@ serve(async (req) => {
     const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
 
     let bodyText = message.content;
-    if (!bodyText) {
+    if (message.media_type === 'shared_post') {
+      bodyText = 'Has shared a post';
+    } else if (!bodyText) {
       if (message.media_type === 'image') {
         bodyText = 'Sent you an image';
       } else if (message.media_type === 'audio') {

@@ -9,7 +9,9 @@ interface AppState {
   feedScrollPos: number;
   totalUnread: number;
   pendingRequestsCount: number;
+  hasUnseenRequest: boolean;
   floatingAvatar: Profile | null;
+  sharePost: Post | null;
   
   setProfile: (profile: Profile | null) => void;
   setUserPosts: (posts: Post[]) => void;
@@ -17,13 +19,16 @@ interface AppState {
   setFeedScrollPos: (pos: number) => void;
   setTotalUnread: (count: number) => void;
   setPendingRequestsCount: (count: number) => void;
+  setHasUnseenRequest: (val: boolean) => void;
   setFloatingAvatar: (profile: Profile | null) => void;
+  setSharePost: (post: Post | null) => void;
   
   fetchProfile: (userId: string) => Promise<void>;
   fetchUserPosts: (userId: string, currentUserId: string) => Promise<void>;
   fetchFeedPosts: (currentUserId: string) => Promise<void>;
   fetchUnreadCount: (userId: string) => Promise<void>;
   fetchPendingRequestsCount: (userId: string) => Promise<void>;
+  markPendingRequestsAsSeen: (userId: string) => Promise<void>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -33,7 +38,9 @@ export const useStore = create<AppState>((set, get) => ({
   feedScrollPos: 0,
   totalUnread: 0,
   pendingRequestsCount: 0,
+  hasUnseenRequest: false,
   floatingAvatar: null,
+  sharePost: null,
 
   setProfile: (profile) => set({ profile }),
   setUserPosts: (userPosts) => set({ userPosts }),
@@ -41,7 +48,9 @@ export const useStore = create<AppState>((set, get) => ({
   setFeedScrollPos: (feedScrollPos) => set({ feedScrollPos }),
   setTotalUnread: (totalUnread) => set({ totalUnread }),
   setPendingRequestsCount: (pendingRequestsCount) => set({ pendingRequestsCount }),
+  setHasUnseenRequest: (hasUnseenRequest) => set({ hasUnseenRequest }),
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
+  setSharePost: (sharePost) => set({ sharePost }),
 
   fetchProfile: async (userId) => {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
@@ -134,14 +143,30 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchPendingRequestsCount: async (userId) => {
-    const { count } = await supabase
+    const { data } = await supabase
       .from('connections')
-      .select('*', { count: 'exact', head: true })
+      .select('id, is_seen')
       .eq('receiver_id', userId)
       .eq('status', 'pending');
     
-    if (count !== null) {
-      set({ pendingRequestsCount: count });
+    if (data) {
+      const hasUnseen = data.some((r: any) => r.is_seen === false);
+      set({ 
+        pendingRequestsCount: data.length, 
+        hasUnseenRequest: hasUnseen 
+      });
+    }
+  },
+
+  markPendingRequestsAsSeen: async (userId) => {
+    const { error } = await supabase
+      .from('connections')
+      .update({ is_seen: true })
+      .eq('receiver_id', userId)
+      .eq('status', 'pending');
+      
+    if (!error) {
+      set({ hasUnseenRequest: false });
     }
   }
 }));

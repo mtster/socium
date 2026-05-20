@@ -77,3 +77,26 @@
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+@keyframes highlightGlow {
+  0% {
+    box-shadow: 0 0 0 0px rgba(234, 179, 8, 0);
+    background-color: rgba(234, 179, 8, 0);
+  }
+  20% {
+    box-shadow: 0 0 30px 8px rgba(234, 179, 8, 0.35);
+    background-color: rgba(234, 179, 8, 0.05);
+  }
+  70% {
+    box-shadow: 0 0 30px 8px rgba(234, 179, 8, 0.35);
+    background-color: rgba(234, 179, 8, 0.05);
+  }
+  100% {
+    box-shadow: 0 0 0 0px rgba(234, 179, 8, 0);
+    background-color: rgba(234, 179, 8, 0);
+  }
+}
+
+.animate-highlight-glow {
+  animation: highlightGlow 2.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}

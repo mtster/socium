@@ -15,7 +15,7 @@ interface BottomNavProps {
 }
 
 const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar, showFirstTimeChatDot = false }: BottomNavProps) => {
-  const { pendingRequestsCount } = useStore();
+  const { pendingRequestsCount, hasUnseenRequest } = useStore();
 
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
@@ -53,8 +53,8 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                 {tab.id === 'chat' && ((unreadCount > 0 && !floatingAvatar) || showFirstTimeChatDot) && (
                   <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
                 )}
-                {tab.id === 'profile' && pendingRequestsCount > 0 && (
-                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
+                {tab.id === 'profile' && hasUnseenRequest && pendingRequestsCount > 0 && (
+                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-yellow-500 rounded-full border border-black shadow" />
                 )}
                 
                 <AnimatePresence>

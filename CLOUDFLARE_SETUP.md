@@ -90,7 +90,9 @@ export default {
       }
 
       let bodyText = content;
-      if (!bodyText) {
+      if (payload.media_type === 'shared_post') {
+         bodyText = 'Has shared a post';
+      } else if (!bodyText) {
          if (payload.media_type === 'image') bodyText = 'Sent an image';
          else if (payload.media_type === 'audio') bodyText = 'Sent a voice message';
          else if (payload.media_type === 'location') bodyText = 'Sent a location';

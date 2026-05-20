@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS connections (
   requester_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   receiver_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'accepted')),
+  is_seen BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(requester_id, receiver_id)
 );
@@ -175,6 +176,13 @@ BEGIN
   ALTER TABLE messages ALTER COLUMN sender_id DROP NOT NULL;
   ALTER TABLE messages ALTER COLUMN receiver_id DROP NOT NULL;
   ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_media_type_check;
+END $$;
+
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='connections' AND column_name='is_seen') THEN 
+    ALTER TABLE connections ADD COLUMN is_seen BOOLEAN DEFAULT false;
+  END IF;
 END $$;
 
 -- Group Chats Table

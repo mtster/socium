@@ -51,11 +51,17 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       profileConnectionsTime[profile.id] = Date.now();
       setConnections(filteredConnections);
 
-      const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');
+       const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');
       setPendingRequests(pending || []);
       
-      if (profile.id === currentUserId && useStore.getState().setPendingRequestsCount) {
-        useStore.getState().setPendingRequestsCount(pending?.length || 0);
+      if (profile.id === currentUserId) {
+        const hasUnseen = pending?.some(r => r.is_seen === false) || false;
+        if (useStore.getState().setPendingRequestsCount) {
+          useStore.getState().setPendingRequestsCount(pending?.length || 0);
+        }
+        if (useStore.getState().setHasUnseenRequest) {
+          useStore.getState().setHasUnseenRequest(hasUnseen);
+        }
       }
     } else {
       const { data: rel } = await supabase.from('connections')

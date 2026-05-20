@@ -38,7 +38,7 @@ let profileConnectionsTime: Record<string, number> = {};
 import { useStore } from '../store/useStore';
 
 export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
-  const { userPosts, fetchUserPosts } = useStore();
+  const { userPosts, fetchUserPosts, hasUnseenRequest, markPendingRequestsAsSeen } = useStore();
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,6 +48,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [showConnectedMenu, setShowConnectedMenu] = useState(false);
   const [showRequestsSlide, setShowRequestsSlide] = useState(false);
+
+  useEffect(() => {
+    if (showRequestsSlide && isOwnProfile && currentUserId && markPendingRequestsAsSeen) {
+      markPendingRequestsAsSeen(currentUserId);
+    }
+  }, [showRequestsSlide, isOwnProfile, currentUserId, markPendingRequestsAsSeen]);
   
   useEffect(() => {
     const handleRequestsUI = () => setShowRequestsSlide(true);
@@ -79,6 +85,29 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   useEffect(() => {
     setLocalAvatar(profile.avatar_url);
   }, [profile.avatar_url]);
+
+  useEffect(() => {
+    const targetPostId = sessionStorage.getItem('scroll_to_post_id');
+    if (targetPostId) {
+      sessionStorage.removeItem('scroll_to_post_id');
+      
+      let attempts = 0;
+      const interval = setInterval(() => {
+        const element = document.getElementById(`post-card-${targetPostId}`);
+        attempts++;
+        if (element) {
+          clearInterval(interval);
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('animate-highlight-glow');
+          setTimeout(() => {
+            element.classList.remove('animate-highlight-glow');
+          }, 3000);
+        } else if (attempts > 30) {
+          clearInterval(interval);
+        }
+      }, 150);
+    }
+  }, [posts]);
 
   const {
     connections,
@@ -456,7 +485,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
               <div className="flex items-center space-x-2">
                 <button 
                   onClick={() => setShowRequestsSlide(true)}
-                  className={`flex items-center space-x-1 px-3 py-1.5 border rounded-full active:scale-95 transition-all ${
+                  className={`flex items-center space-x-1 px-3 py-1.5 border rounded-full active:scale-95 transition-all relative ${
                     pendingRequests.length > 0 
                       ? 'bg-white text-black border-white hover:bg-white/90' 
                       : 'bg-white/5 text-white/50 border-white/10 hover:bg-white/10'
@@ -464,6 +493,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                 >
                   <Users size={14} className={pendingRequests.length > 0 ? 'text-black' : 'text-white/50'} />
                   <span className="text-xs font-bold">Requests {pendingRequests.length > 0 && `(${pendingRequests.length})`}</span>
+                  {isOwnProfile && hasUnseenRequest && pendingRequests.length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-yellow-500 rounded-full border border-black shadow animate-pulse" />
+                  )}
                 </button>
                 <button 
                   onClick={() => setShowSearchModal(true)}

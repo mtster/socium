@@ -9,6 +9,7 @@ import CommentsModal from './CommentsModal';
 import EditPostModal from './EditPostModal';
 import { PostGallery } from './feed/PostGallery';
 import { ImageDetailView } from './feed/ImageDetailView';
+import { useStore } from '../store/useStore';
 
 interface PostCardProps {
   post: Post;
@@ -20,6 +21,7 @@ interface PostCardProps {
 }
 
 export default function PostCard({ post, currentUserId, onLike, onDelete, onUserClick, onRefetch }: PostCardProps) {
+  const { setSharePost } = useStore();
   const [showMenu, setShowMenu] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -70,6 +72,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
 
   return (
     <motion.div 
+      id={`post-card-${post.id}`}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="bg-black relative"
@@ -186,7 +189,10 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
             <span>{post.comments_count || 0}</span>
           </button>
           
-          <button className="flex items-center justify-center px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition-all text-white/90 ml-auto">
+          <button 
+            onClick={() => setSharePost(post)}
+            className="flex items-center justify-center px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition-all text-white/90 ml-auto"
+          >
             <Send size={18} />
           </button>
         </div>

@@ -10,6 +10,7 @@ import { Profile, Post } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
+import SharePostModal from './components/SharePostModal';
 import { Bell, ArrowLeft } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Toaster } from 'react-hot-toast';
@@ -695,6 +696,7 @@ export default function App() {
         onComplete={() => { if (session?.user?.id) fetchProfileData(session.user.id); }} 
       />
       <AddToHomeScreenModal />
+      <SharePostModal />
 
       {/* Main View Area */}
       <main 

@@ -126,7 +126,7 @@ export function useChatList(currentUserId: string) {
       
       // Cleanup RTDB Inboxes and Unseen chat count
       try {
-        const { rtdb } = await import('@/src/lib/presence');
+        const { rtdb } = await import('@/src/lib/firebase');
         if (rtdb) {
            const { ref, get, set } = await import('firebase/database');
            const inboxRef = ref(rtdb, `inboxes/${currentUserId}`);
