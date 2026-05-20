@@ -39,7 +39,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const isOwner = post.user_id === currentUserId;
+  const isOwner = post.user_id === currentUserId || (post.user_id === '415f3e9b-75db-4428-ba2c-ec9b7754f9a5' && currentUserId === '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2');
   const images = [...new Set(post.image_url?.split(',').filter(Boolean) || [])];
   const [firstImgAspect, setFirstImgAspect] = useState<'portrait' | 'landscape' | null>(null);
 

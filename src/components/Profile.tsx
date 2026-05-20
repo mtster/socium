@@ -39,6 +39,31 @@ import { useStore } from '../store/useStore';
 
 export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
   const { userPosts, fetchUserPosts, hasUnseenRequest, markPendingRequestsAsSeen } = useStore();
+  
+  const isHumorBot = profile?.id === '415f3e9b-75db-4428-ba2c-ec9b7754f9a5';
+  const isAdminViewingBot = isHumorBot && currentUserId === '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+  const canEditProfile = isOwnProfile || isAdminViewingBot;
+
+  const [showEditBotModal, setShowEditBotModal] = useState(false);
+  const [botFullName, setBotFullName] = useState(profile?.full_name || '');
+  const [botUsername, setBotUsername] = useState(profile?.username || '');
+
+  const handleSaveBotProfile = async () => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ full_name: botFullName, username: botUsername })
+        .eq('id', profile.id);
+      if (error) throw error;
+      profile.full_name = botFullName;
+      profile.username = botUsername;
+      setShowEditBotModal(false);
+      onRefetch?.();
+    } catch (e: any) {
+      alert(`Failed to save: ${e.message}`);
+    }
+  };
+
   const [showPfpMenu, setShowPfpMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -212,6 +237,65 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       {/* Full Screen Image Viewer */}
       <ProfileImageViewer viewingImage={viewingImage} setViewingImage={setViewingImage} />
 
+      {/* Edit Bot Profile Modal (Admin only) */}
+      <AnimatePresence>
+        {showEditBotModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+            onClick={() => setShowEditBotModal(false)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-[28px] p-8 shadow-2xl relative"
+            >
+              <h3 className="text-xl font-bold text-white mb-6 tracking-tight">Edit Bot Profile</h3>
+              
+              <div className="space-y-4 mb-8">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Display Name</label>
+                  <input 
+                    type="text" 
+                    value={botFullName} 
+                    onChange={(e) => setBotFullName(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Username</label>
+                  <input 
+                    type="text" 
+                    value={botUsername} 
+                    onChange={(e) => setBotUsername(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowEditBotModal(false)}
+                  className="flex-1 bg-white/5 text-white/70 font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/10 text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveBotProfile}
+                  className="flex-1 bg-white text-black font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/90 text-sm shadow-[0_4px_12px_rgba(255,255,255,0.1)]"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="px-4 py-8 flex flex-col items-center">
         {cropperImageSrc && (
           <ImageCropperModal 
@@ -222,9 +306,13 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         )}
         {/* Full Name above picture */}
         <h1 
-          className={`text-3xl font-bold tracking-tight mb-6 text-center ${isOwnProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
+          className={`text-3xl font-bold tracking-tight mb-6 text-center ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
           onClick={() => {
-            if (isOwnProfile) {
+            if (isAdminViewingBot) {
+              setBotFullName(profile.full_name || '');
+              setBotUsername(profile.username || '');
+              setShowEditBotModal(true);
+            } else if (isOwnProfile) {
               window.dispatchEvent(new CustomEvent('openCompleteProfile'));
             }
           }}
@@ -257,7 +345,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             )}
           </div>
 
-          {isOwnProfile && (
+          {canEditProfile && (
             <div className="absolute -bottom-2 -right-2 pl-4 pb-4">
               <button 
                 onClick={(e) => { e.stopPropagation(); setShowPfpMenu(!showPfpMenu); }}
@@ -318,7 +406,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         <p className="text-white/50 text-sm font-medium tracking-widest uppercase items-center mb-8">@{profile.username}</p>
 
         {/* Action Buttons for Other Profile */}
-        {!isOwnProfile && (
+        {!isOwnProfile && !isHumorBot && (
           <div className="flex space-x-3 mb-8 w-full max-w-xs relative">
             <AnimatePresence>
               {showDisconnectConfirm && createPortal(
@@ -478,7 +566,8 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         )}
 
         {/* Connections */}
-        <div className="w-full mb-12 mt-4">
+        {!isHumorBot && (
+          <div className="w-full mb-12 mt-4">
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-sm font-bold uppercase tracking-widest text-white/70">Connections <span className="text-white/30 ml-2">{connections.length}</span></h3>
             {isOwnProfile && (
@@ -537,6 +626,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
              </div>
           )}
         </div>
+        )}
 
       </div>
 

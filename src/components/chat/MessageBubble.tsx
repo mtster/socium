@@ -253,10 +253,16 @@ export const MessageBubble = React.memo(
                     key="shared-loading"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-center gap-2 text-xs text-white/40 min-w-[200px]"
+                    exit={{ opacity: 0 }}
+                    className="w-56 h-64 p-4 bg-zinc-950/40 border border-white/10 rounded-[20px] flex flex-col gap-3 min-w-[224px] select-none"
                   >
-                    <span className="w-3.5 h-3.5 border border-white/20 border-t-white rounded-full animate-spin" /> 
-                    <span>Loading...</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-white/10 animate-pulse" />
+                      <div className="h-3 w-20 bg-white/10 rounded animate-pulse" />
+                    </div>
+                    <div className="flex-1 bg-white/5 rounded-xl animate-pulse flex items-center justify-center">
+                      <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    </div>
                   </motion.div>
                 ) : !sharedPost ? (
                   <div className="p-4 bg-white/5 border border-white/10 rounded-2xl text-xs text-white/30 select-none">
@@ -270,14 +276,7 @@ export const MessageBubble = React.memo(
                     transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                     onClick={() => {
                       sessionStorage.setItem("scroll_to_post_id", sharedPost.id);
-                      window.dispatchEvent(
-                        new CustomEvent("openProfile", {
-                          detail: { userId: sharedPost.user_id },
-                        })
-                      );
-                      setTimeout(() => {
-                        onCloseChat?.();
-                      }, 80);
+                      onOpenProfile?.(sharedPost.user_id);
                     }}
                     className="w-56 cursor-pointer overflow-hidden rounded-[20px] bg-black border border-white/10 active:scale-98 transition-all duration-200"
                   >

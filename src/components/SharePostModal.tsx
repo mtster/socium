@@ -176,7 +176,7 @@ export default function SharePostModal() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.22, ease: "easeInOut" }}
+          transition={{ duration: 0.35, ease: [0.32, 0.94, 0.6, 1] }}
           className="fixed inset-0 bg-black z-[999] flex flex-col"
         >
           <motion.div 
@@ -184,64 +184,64 @@ export default function SharePostModal() {
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
-            transition={{ type: 'spring', stiffness: 380, damping: 38 }}
-            className="flex-1 bg-black flex flex-col h-full px-6 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
+            transition={{ type: 'spring', damping: 32, stiffness: 280 }}
+            className="flex-1 bg-black flex flex-col h-full px-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))]"
           >
             {/* Header */}
-            <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
-              <h2 className="text-xl font-bold text-white tracking-tight">Share Post</h2>
+            <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/10">
+              <h2 className="text-2xl font-extrabold text-white tracking-tight">Share Post</h2>
               <button 
                 onClick={handleClose}
-                className="p-2 rounded-full bg-white/5 border border-white/10 text-white/70 hover:text-white active:scale-95 transition-all outline-none"
+                className="p-2.5 rounded-full bg-white/5 border border-white/10 text-white/70 hover:text-white active:scale-95 transition-all outline-none"
               >
-                <X size={20} />
+                <X size={22} />
               </button>
             </div>
 
             {/* Mini Post Card Preview */}
-            <div className="bg-white/[0.03] border border-white/5 p-4 rounded-2xl flex items-center gap-4 mb-6 select-none">
+            <div className="bg-white/[0.03] border border-white/5 p-5 rounded-2xl flex items-center gap-5 mb-8 select-none">
               {hasImage ? (
                 <img 
                   src={images[0]} 
-                  className="w-16 h-16 rounded-xl object-cover shrink-0 border border-white/10" 
+                  className="w-20 h-20 rounded-xl object-cover shrink-0 border border-white/10" 
                   alt="" 
                 />
               ) : (
-                <div className="w-16 h-16 bg-white/5 border border-white/5 rounded-xl flex items-center justify-center shrink-0">
-                  <Send size={24} className="text-white/30" />
+                <div className="w-20 h-20 bg-white/5 border border-white/5 rounded-xl flex items-center justify-center shrink-0">
+                  <Send size={28} className="text-white/30" />
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-white tracking-tight truncate">
+                <p className="text-base font-bold text-white tracking-tight truncate">
                   {sharePost.profiles?.full_name || sharePost.profiles?.username || 'Author'}
                 </p>
-                <p className="text-xs text-white/50 truncate mt-1">
+                <p className="text-sm text-white/50 truncate mt-1.5 leading-relaxed">
                   {sharePost.caption || 'No caption text'}
                 </p>
               </div>
             </div>
 
             {/* Search */}
-            <div className="relative mb-6">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" />
+            <div className="relative mb-8">
+              <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-white/40" />
               <input
                 type="text"
                 placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-sm font-medium bg-white/[0.04] border border-white/10 rounded-full py-3.5 pl-11 pr-4 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20 focus:bg-white/[0.06] transition-all"
+                className="w-full text-base font-medium bg-white/[0.04] border border-white/10 rounded-full py-4 pl-13 pr-5 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20 focus:bg-white/[0.06] transition-all"
               />
             </div>
 
             {/* Chats List */}
-            <div className="flex-1 overflow-y-auto pr-1 space-y-3 custom-scrollbar scroll-smooth">
+            <div className="flex-1 overflow-y-auto pr-1 space-y-4 custom-scrollbar scroll-smooth">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
-                  <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  <span className="text-xs text-white/40">Loading conversations...</span>
+                  <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                  <span className="text-sm text-white/40 font-medium">Loading conversations...</span>
                 </div>
               ) : filteredTargets.length === 0 ? (
-                <div className="text-center py-20 text-white/30 text-xs">
+                <div className="text-center py-20 text-white/30 text-sm">
                   No conversations found
                 </div>
               ) : (
@@ -252,10 +252,10 @@ export default function SharePostModal() {
                   return (
                     <div 
                       key={target.id} 
-                      className="flex items-center justify-between py-3 px-3.5 hover:bg-white/[0.015] border border-transparent hover:border-white/[0.02] rounded-2xl transition-all duration-200"
+                      className="flex items-center justify-between py-4 px-4.5 hover:bg-white/[0.015] border border-transparent hover:border-white/[0.02] rounded-2xl transition-all duration-200"
                     >
-                      <div className="flex items-center gap-4 min-w-0">
-                        <div className="w-12 h-12 rounded-full overflow-hidden bg-white/5 flex items-center justify-center shrink-0 border border-white/10">
+                      <div className="flex items-center gap-5 min-w-0">
+                        <div className="w-14 h-14 rounded-full overflow-hidden bg-white/5 flex items-center justify-center shrink-0 border border-white/10">
                           {target.avatar_url ? (
                             <img 
                               src={target.avatar_url} 
@@ -263,16 +263,16 @@ export default function SharePostModal() {
                               alt="" 
                             />
                           ) : (
-                            <span className="text-sm text-white/40 font-bold uppercase">
+                            <span className="text-lg text-white/40 font-bold uppercase">
                               {target.name.charAt(0)}
                             </span>
                           )}
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-bold text-white tracking-tight truncate">
+                          <p className="text-base font-bold text-white tracking-tight truncate">
                             {target.name}
                           </p>
-                          <p className="text-xs text-white/40 truncate mt-0.5">
+                          <p className="text-sm text-white/45 truncate mt-1">
                             {target.isGroup 
                               ? 'Group Chat' 
                               : target.username 
@@ -286,12 +286,12 @@ export default function SharePostModal() {
                       <button
                         disabled={sending || sent}
                         onClick={() => handleSend(target)}
-                        className={`h-9 min-w-[76px] px-4 rounded-full text-xs font-bold active:scale-95 transition-all duration-300 ease-in-out border select-none flex items-center justify-center ${
+                        className={`h-10 min-w-[84px] px-5 rounded-full text-xs font-bold active:scale-95 border select-none flex items-center justify-center transition-all duration-300 ease-in-out ${
                           sent
-                            ? 'bg-black text-white border-white/25 shadow-sm shadow-white/5'
+                            ? 'bg-black text-white border-white/30 shadow-[0_0_12px_rgba(255,255,255,0.06)]'
                             : sending
-                              ? 'bg-white/10 text-white/50 border-transparent cursor-not-allowed'
-                              : 'bg-white text-black border-transparent hover:bg-white/90'
+                              ? 'bg-white/10 text-white/40 border-transparent cursor-not-allowed'
+                              : 'bg-white text-black border-transparent hover:bg-white/90 brightness-100'
                         }`}
                       >
                         {sent ? (
