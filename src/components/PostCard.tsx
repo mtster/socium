@@ -39,7 +39,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const isOwner = post.user_id === currentUserId || (post.user_id === '415f3e9b-75db-4428-ba2c-ec9b7754f9a5' && currentUserId === '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2');
+  const isOwner = post.user_id === currentUserId || (post.user_id === '00000000-0000-0000-0000-000000000001' && currentUserId === '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2');
   const images = [...new Set(post.image_url?.split(',').filter(Boolean) || [])];
   const [firstImgAspect, setFirstImgAspect] = useState<'portrait' | 'landscape' | null>(null);
 
@@ -80,7 +80,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-0 pb-3">
         <div 
-          className="flex items-center space-x-3 cursor-pointer group"
+          className={cn("flex items-center space-x-3 group", onUserClick ? "cursor-pointer" : "cursor-default")}
           onClick={() => onUserClick?.(post.user_id)}
         >
           <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 ring-1 ring-white/20 group-active:scale-95 transition-transform">

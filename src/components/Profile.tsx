@@ -40,23 +40,25 @@ import { useStore } from '../store/useStore';
 export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
   const { userPosts, fetchUserPosts, hasUnseenRequest, markPendingRequestsAsSeen } = useStore();
   
-  const isHumorBot = profile?.id === '415f3e9b-75db-4428-ba2c-ec9b7754f9a5';
+  const isHumorBot = profile?.id === '00000000-0000-0000-0000-000000000001';
   const isAdminViewingBot = isHumorBot && currentUserId === '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
   const canEditProfile = isOwnProfile || isAdminViewingBot;
 
   const [showEditBotModal, setShowEditBotModal] = useState(false);
   const [botFullName, setBotFullName] = useState(profile?.full_name || '');
   const [botUsername, setBotUsername] = useState(profile?.username || '');
+  const [botBio, setBotBio] = useState(profile?.bio || '');
 
   const handleSaveBotProfile = async () => {
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ full_name: botFullName, username: botUsername })
+        .update({ full_name: botFullName, username: botUsername, bio: botBio })
         .eq('id', profile.id);
       if (error) throw error;
       profile.full_name = botFullName;
       profile.username = botUsername;
+      profile.bio = botBio;
       setShowEditBotModal(false);
       onRefetch?.();
     } catch (e: any) {
@@ -275,6 +277,16 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Bio / Description</label>
+                  <textarea 
+                    value={botBio} 
+                    onChange={(e) => setBotBio(e.target.value)}
+                    rows={3}
+                    className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all resize-none"
+                    placeholder="E.g. Official jokes and memes teller."
+                  />
+                </div>
               </div>
 
               <div className="flex gap-3">
@@ -311,6 +323,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             if (isAdminViewingBot) {
               setBotFullName(profile.full_name || '');
               setBotUsername(profile.username || '');
+              setBotBio(profile.bio || '');
               setShowEditBotModal(true);
             } else if (isOwnProfile) {
               window.dispatchEvent(new CustomEvent('openCompleteProfile'));
@@ -639,7 +652,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
             <PostCard 
               post={post} 
               currentUserId={currentUserId as string}
-              onUserClick={onUserClick}
+              onUserClick={undefined}
               onDelete={onDeletePost}
               onLike={onLikePost}
               onRefetch={onRefetch}

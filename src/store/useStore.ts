@@ -58,17 +58,11 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchUserPosts: async (userId, currentUserId) => {
-    let query = supabase
+    const { data } = await supabase
       .from('posts')
       .select('*, profiles(*), likes(user_id), comments(id)')
-      .eq('user_id', userId);
-
-    // Filter out future-scheduled posts for non-admins (Humor Department scheduled releases)
-    if (currentUserId !== '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2') {
-      query = query.lte('created_at', new Date().toISOString());
-    }
-
-    const { data } = await query.order('created_at', { ascending: false });
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
     if (data) {
       const viewerId = currentUserId;
@@ -99,11 +93,11 @@ export const useStore = create<AppState>((set, get) => ({
       .eq('status', 'accepted')
       .or(`requester_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
       
-    // Always include currentUserId, Admin ID and Humor Bot ('415f3e9b-75db-4428-ba2c-ec9b7754f9a5') in feed connections
+    // Always include currentUserId, Admin ID and Humor Bot ('00000000-0000-0000-0000-000000000001') in feed connections
     const connectionIds = [
       currentUserId, 
       '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', 
-      '415f3e9b-75db-4428-ba2c-ec9b7754f9a5'
+      '00000000-0000-0000-0000-000000000001'
     ];
     if (connectionsData) {
       connectionsData.forEach(c => {
@@ -112,17 +106,10 @@ export const useStore = create<AppState>((set, get) => ({
       });
     }
 
-    let query = supabase
+    const { data } = await supabase
       .from('posts')
       .select('*, profiles:user_id (*), likes(user_id), comments(id)')
-      .in('user_id', connectionIds);
-
-    // Highly efficient indexing check to hide future-scheduled Humor Bot posts for non-admins
-    if (currentUserId !== '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2') {
-      query = query.lte('created_at', new Date().toISOString());
-    }
-
-    const { data } = await query
+      .in('user_id', connectionIds)
       .order('created_at', { ascending: false })
       .limit(30);
 

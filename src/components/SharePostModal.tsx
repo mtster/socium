@@ -176,72 +176,72 @@ export default function SharePostModal() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.35, ease: [0.32, 0.94, 0.6, 1] }}
-          className="fixed inset-0 bg-black z-[999] flex flex-col"
+          transition={{ duration: 0.25 }}
+          className="fixed inset-0 bg-black/80 backdrop-blur-md z-[999] flex items-center justify-center p-0 sm:p-4 md:p-6"
         >
           <motion.div 
             id="share-post-modal"
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 32, stiffness: 280 }}
-            className="flex-1 bg-black flex flex-col h-full px-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))]"
+            initial={{ y: '100%', scale: 0.95 }}
+            animate={{ y: 0, scale: 1 }}
+            exit={{ y: '100%', scale: 0.95 }}
+            transition={{ type: 'spring', damping: 30, stiffness: 280 }}
+            className="w-full max-w-lg sm:h-[80vh] md:max-h-[80vh] h-full sm:border sm:border-white/10 sm:rounded-[28px] bg-black bg-gradient-to-b from-[#0e0e0e] to-black flex flex-col p-6 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl overflow-hidden"
           >
             {/* Header */}
-            <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/10">
-              <h2 className="text-2xl font-extrabold text-white tracking-tight">Share Post</h2>
+            <div className="flex items-center justify-between pb-4 border-b border-white/[0.08] mb-5">
+              <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-white/90">Share Post</h2>
               <button 
                 onClick={handleClose}
-                className="p-2.5 rounded-full bg-white/5 border border-white/10 text-white/70 hover:text-white active:scale-95 transition-all outline-none"
+                className="p-2 rounded-full text-white/50 hover:text-white hover:bg-white/5 transition-colors active:scale-95"
               >
-                <X size={22} />
+                <X size={18} />
               </button>
             </div>
 
             {/* Mini Post Card Preview */}
-            <div className="bg-white/[0.03] border border-white/5 p-5 rounded-2xl flex items-center gap-5 mb-8 select-none">
+            <div className="bg-white/[0.02] border border-white/[0.06] p-4 rounded-xl flex items-center gap-4 mb-5 select-none">
               {hasImage ? (
                 <img 
                   src={images[0]} 
-                  className="w-20 h-20 rounded-xl object-cover shrink-0 border border-white/10" 
+                  className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/10" 
                   alt="" 
                 />
               ) : (
-                <div className="w-20 h-20 bg-white/5 border border-white/5 rounded-xl flex items-center justify-center shrink-0">
-                  <Send size={28} className="text-white/30" />
+                <div className="w-12 h-12 bg-white/5 border border-white/[0.06] rounded-lg flex items-center justify-center shrink-0">
+                  <Send size={18} className="text-white/30" />
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-base font-bold text-white tracking-tight truncate">
+                <p className="text-xs font-bold text-white/85 tracking-normal truncate">
                   {sharePost.profiles?.full_name || sharePost.profiles?.username || 'Author'}
                 </p>
-                <p className="text-sm text-white/50 truncate mt-1.5 leading-relaxed">
+                <p className="text-xs text-white/45 truncate mt-0.5 leading-normal">
                   {sharePost.caption || 'No caption text'}
                 </p>
               </div>
             </div>
 
             {/* Search */}
-            <div className="relative mb-8">
-              <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-white/40" />
+            <div className="relative mb-5">
+              <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" />
               <input
                 type="text"
                 placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-base font-medium bg-white/[0.04] border border-white/10 rounded-full py-4 pl-13 pr-5 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20 focus:bg-white/[0.06] transition-all"
+                className="w-full text-xs font-medium bg-white/[0.03] border border-white/[0.06] rounded-full py-2.5 pl-10 pr-4 text-white placeholder:text-white/20 focus:outline-none focus:border-white/20 focus:bg-white/[0.05] transition-all"
               />
             </div>
 
             {/* Chats List */}
-            <div className="flex-1 overflow-y-auto pr-1 space-y-4 custom-scrollbar scroll-smooth">
+            <div className="flex-1 overflow-y-auto pr-1 space-y-2.5 custom-scrollbar scroll-smooth">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
-                  <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  <span className="text-sm text-white/40 font-medium">Loading conversations...</span>
+                  <div className="w-6 h-6 border-2 border-white/10 border-t-white rounded-full animate-spin" />
+                  <span className="text-xs text-white/30 font-medium">Loading conversations...</span>
                 </div>
               ) : filteredTargets.length === 0 ? (
-                <div className="text-center py-20 text-white/30 text-sm">
+                <div className="text-center py-20 text-white/20 text-xs uppercase tracking-wider">
                   No conversations found
                 </div>
               ) : (
@@ -252,10 +252,10 @@ export default function SharePostModal() {
                   return (
                     <div 
                       key={target.id} 
-                      className="flex items-center justify-between py-4 px-4.5 hover:bg-white/[0.015] border border-transparent hover:border-white/[0.02] rounded-2xl transition-all duration-200"
+                      className="flex items-center justify-between py-2.5 px-3.5 hover:bg-white/[0.02] border border-white/[0.04] bg-white/[0.01] rounded-xl transition-all duration-200"
                     >
-                      <div className="flex items-center gap-5 min-w-0">
-                        <div className="w-14 h-14 rounded-full overflow-hidden bg-white/5 flex items-center justify-center shrink-0 border border-white/10">
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-white/5 flex items-center justify-center shrink-0 border border-white/[0.08]">
                           {target.avatar_url ? (
                             <img 
                               src={target.avatar_url} 
@@ -263,16 +263,16 @@ export default function SharePostModal() {
                               alt="" 
                             />
                           ) : (
-                            <span className="text-lg text-white/40 font-bold uppercase">
+                            <span className="text-xs text-white/45 font-bold uppercase p-1">
                               {target.name.charAt(0)}
                             </span>
                           )}
                         </div>
                         <div className="min-w-0">
-                          <p className="text-base font-bold text-white tracking-tight truncate">
+                          <p className="text-xs font-bold text-white/90 tracking-tight truncate">
                             {target.name}
                           </p>
-                          <p className="text-sm text-white/45 truncate mt-1">
+                          <p className="text-[10px] text-white/40 truncate mt-0.5">
                             {target.isGroup 
                               ? 'Group Chat' 
                               : target.username 
@@ -286,18 +286,18 @@ export default function SharePostModal() {
                       <button
                         disabled={sending || sent}
                         onClick={() => handleSend(target)}
-                        className={`h-10 min-w-[84px] px-5 rounded-full text-xs font-bold active:scale-95 border select-none flex items-center justify-center transition-all duration-300 ease-in-out ${
+                        className={`h-8 min-w-[72px] px-3 rounded-lg text-[10px] font-bold tracking-wider uppercase active:scale-[0.97] border select-none flex items-center justify-center transition-all duration-300 ease-in-out ${
                           sent
-                            ? 'bg-black text-white border-white/30 shadow-[0_0_12px_rgba(255,255,255,0.06)]'
+                            ? 'bg-black text-white/40 border-white/10'
                             : sending
-                              ? 'bg-white/10 text-white/40 border-transparent cursor-not-allowed'
-                              : 'bg-white text-black border-transparent hover:bg-white/90 brightness-100'
+                              ? 'bg-white/5 text-white/20 border-transparent cursor-not-allowed'
+                              : 'bg-white text-black border-transparent hover:bg-white/90 font-bold active:scale-95'
                         }`}
                       >
                         {sent ? (
                           'Sent'
                         ) : sending ? (
-                          <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                          <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                         ) : (
                           'Send'
                         )}
