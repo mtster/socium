@@ -243,21 +243,41 @@ export const MessageBubble = React.memo(
             )}
           >
             {msg.media_type === "shared_post" && (
-              <>
+              <motion.div 
+                layout 
+                transition={{ type: "spring", stiffness: 220, damping: 26 }} 
+                className="overflow-hidden rounded-[20px]"
+              >
                 {loadingPost ? (
-                  <div className="p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-center gap-2 text-xs text-white/40">
-                    <span className="w-3.5 h-3.5 border border-white/20 border-t-white rounded-full animate-spin" /> Loading shared post...
-                  </div>
+                  <motion.div 
+                    key="shared-loading"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-center gap-2 text-xs text-white/40 min-w-[200px]"
+                  >
+                    <span className="w-3.5 h-3.5 border border-white/20 border-t-white rounded-full animate-spin" /> 
+                    <span>Loading...</span>
+                  </motion.div>
                 ) : !sharedPost ? (
                   <div className="p-4 bg-white/5 border border-white/10 rounded-2xl text-xs text-white/30 select-none">
                     Post unavailable or deleted
                   </div>
                 ) : (
-                  <div 
+                  <motion.div 
+                    key="shared-loaded"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                     onClick={() => {
                       sessionStorage.setItem("scroll_to_post_id", sharedPost.id);
-                      onCloseChat?.();
-                      onOpenProfile?.(sharedPost.user_id);
+                      window.dispatchEvent(
+                        new CustomEvent("openProfile", {
+                          detail: { userId: sharedPost.user_id },
+                        })
+                      );
+                      setTimeout(() => {
+                        onCloseChat?.();
+                      }, 80);
                     }}
                     className="w-56 cursor-pointer overflow-hidden rounded-[20px] bg-black border border-white/10 active:scale-98 transition-all duration-200"
                   >
@@ -298,9 +318,9 @@ export const MessageBubble = React.memo(
                         </p>
                       </div>
                     )}
-                  </div>
+                  </motion.div>
                 )}
-              </>
+              </motion.div>
             )}
             {msg.media_type === "image" && msg.media_url && (
               <div className="relative group">
