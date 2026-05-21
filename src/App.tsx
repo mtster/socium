@@ -479,7 +479,12 @@ export default function App() {
       return;
     }
     
-    const { data: postsData } = await supabase.from('posts').select('*, profiles(*)').eq('user_id', userId).order('created_at', { ascending: false });
+    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+    let query = supabase.from('posts').select('*, profiles(*)').eq('user_id', userId);
+    if (session?.user?.id !== ADMIN_ID) {
+      query = query.lte('created_at', new Date().toISOString());
+    }
+    const { data: postsData } = await query.order('created_at', { ascending: false });
     
     setViewingProfileData({ profile: pData, posts: postsData as any || [] });
   };

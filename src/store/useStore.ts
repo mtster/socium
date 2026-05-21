@@ -58,15 +58,21 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchUserPosts: async (userId, currentUserId) => {
-    const { data } = await supabase
+    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+    
+    let query = supabase
       .from('posts')
       .select('*, profiles(*), likes(user_id), comments(id)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+      .eq('user_id', userId);
+
+    if (currentUserId !== ADMIN_ID) {
+      query = query.lte('created_at', new Date().toISOString());
+    }
+
+    const { data } = await query.order('created_at', { ascending: false });
 
     if (data) {
       const viewerId = currentUserId;
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
       let processed = data.map((p: any) => ({
         ...p,
         likes_count: p.likes?.length || 0,
@@ -106,15 +112,22 @@ export const useStore = create<AppState>((set, get) => ({
       });
     }
 
-    const { data } = await supabase
+    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+
+    let query = supabase
       .from('posts')
-      .select('*, profiles:user_id (*), likes(user_id), comments(id)')
-      .in('user_id', connectionIds)
+      .select('*, profiles(*), likes(user_id), comments(id)')
+      .in('user_id', connectionIds);
+
+    if (currentUserId !== ADMIN_ID) {
+      query = query.lte('created_at', new Date().toISOString());
+    }
+
+    const { data } = await query
       .order('created_at', { ascending: false })
       .limit(30);
 
     if (data) {
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
       let processed = data.map((p: any) => ({
         ...p,
         likes_count: p.likes?.length || 0,

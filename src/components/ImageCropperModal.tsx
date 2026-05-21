@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { X } from 'lucide-react';
 import { getCroppedImg } from '@/src/lib/cropImage';
 import imageCompression from 'browser-image-compression';
+import { createPortal } from 'react-dom';
 
 interface ImageCropperModalProps {
   imageSrc: string;
@@ -46,12 +47,12 @@ export default function ImageCropperModal({ imageSrc, onClose, onComplete }: Ima
     }
   };
 
-  return (
+  return createPortal(
     <motion.div 
       initial={{ opacity: 0, y: 50 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 50 }}
-      className="fixed inset-0 z-[100] bg-black flex flex-col pt-safe pb-safe"
+      className="fixed inset-0 z-[10000] bg-black flex flex-col pt-safe pb-safe"
     >
       <div className="flex items-center justify-between px-4 h-16 shrink-0 relative z-10 bg-black/50 backdrop-blur">
         <button onClick={onClose} className="text-white/60 p-2" disabled={isProcessing}>
@@ -84,6 +85,7 @@ export default function ImageCropperModal({ imageSrc, onClose, onComplete }: Ima
           }}
         />
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }

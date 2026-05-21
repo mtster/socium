@@ -2,6 +2,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { createPortal } from 'react-dom';
 
 interface ProfileImageViewerProps {
   viewingImage: string | null;
@@ -11,12 +12,12 @@ interface ProfileImageViewerProps {
 export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileImageViewerProps) {
   return (
     <AnimatePresence>
-      {viewingImage && (
+      {viewingImage && createPortal(
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
+          className="fixed inset-0 z-[10000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
           onClick={() => setViewingImage(null)}
         >
           <button 
@@ -54,7 +55,8 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
               </TransformComponent>
             </TransformWrapper>
           </div>
-        </motion.div>
+        </motion.div>,
+        document.body
       )}
     </AnimatePresence>
   );
