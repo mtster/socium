@@ -211,104 +211,27 @@ export function useChatList(currentUserId: string) {
   }, [fetchChats]);
 
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
-    
-    const initRtdbListener = async () => {
-      try {
-        const { rtdb } = await import('@/src/lib/firebase');
-        if (rtdb) {
-          const { ref, onValue } = await import('firebase/database');
-          const inboxRef = ref(rtdb, `inboxes/${currentUserId}`);
-          unsubscribe = onValue(inboxRef, (snapshot) => {
-            // Unread changes detected, do a background update
-            fetchChats(true);
-          });
-        }
-      } catch (err) {
-        console.warn("Failed to set up RTDB mailbox listener:", err);
-      }
-    };
-
-    initRtdbListener();
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [currentUserId, fetchChats]);
-
-  useEffect(() => {
-    // Add real-time listener for ALL messages to update the chat list last message
+    // Live Supabase updates for messages, groups, and participants
     const channel = supabase.channel(`chat_list_updates_${currentUserId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        const msg = payload.new;
-        
-        setChats(prev => {
-          let updated = false;
-          const newChats = prev.map(chat => {
-            if (chat.isGroup) {
-              if (chat.id === msg.group_chat_id) {
-                updated = true;
-                return { ...chat, lastMessage: msg, unreadCount: msg.sender_id !== currentUserId ? (chat.unreadCount || 0) + 1 : chat.unreadCount };
-              }
-            } else {
-              if (!msg.group_chat_id && ((msg.sender_id === chat.id && msg.receiver_id === currentUserId) || (msg.sender_id === currentUserId && msg.receiver_id === chat.id))) {
-                updated = true;
-                return { ...chat, lastMessage: msg, unreadCount: msg.sender_id !== currentUserId ? (chat.unreadCount || 0) + 1 : chat.unreadCount };
-              }
-            }
-            return chat;
-          });
-          
-          if (updated) {
-            newChats.sort((a, b) => new Date(b.lastMessage?.created_at || 0).getTime() - new Date(a.lastMessage?.created_at || 0).getTime());
-            chatListCache = newChats;
-            // Trigger a quick fetch in background to ensure database unread counts/read_at match perfectly
-            setTimeout(fetchChats, 300);
-            return newChats;
-          } else {
-            // New message from a completely new chat, trigger a full fetch
-            setTimeout(fetchChats, 500);
-            return prev;
-          }
-        });
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
+        // Fetch on any message insertion, updates (such as read receipt changes), or deletion
+        fetchChats(true);
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_chats' }, (payload) => {
-        const updatedGroup = payload.new;
-        setChats(prev => {
-          let updated = false;
-          const newChats = prev.map(chat => {
-            if (chat.isGroup && chat.id === updatedGroup.id) {
-              updated = true;
-              return { 
-                ...chat, 
-                name: updatedGroup.name || chat.name, 
-                avatar_url: updatedGroup.avatar_url,
-                groupChat: { ...chat.groupChat, ...updatedGroup }
-              };
-            }
-            return chat;
-          });
-          if (updated) chatListCache = newChats;
-          return newChats;
-        });
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chats' }, () => {
+        fetchChats(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chat_participants' }, (payload) => {
-         // Whenever a participant is added, removed or muted, we should reload the chats to keep it simple and accurate
-         if (payload.new && (payload.new as any).user_id === currentUserId) return; // avoid unnecessary reload if it's just our read state, but wait, last_read_at updates too.
-         // Actually, any change to group_chat_participants (like add/remove) might be worth refreshing.
-         // Let's debounce it or just setTimeout.
-         // But last_read_at updates on every message! That would cause infinite fetch loop.
-         if (payload.eventType === 'INSERT' || payload.eventType === 'DELETE') {
-            setTimeout(fetchChats, 500);
-         }
+        // Only refresh of general participants insertion/deletion, not read receipt updates
+        if (payload.eventType === 'INSERT' || payload.eventType === 'DELETE') {
+          fetchChats(true);
+        }
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUserId]);
+  }, [currentUserId, fetchChats]);
 
   const updateChatList = useCallback((updater: (prev: ChatListItemType[]) => ChatListItemType[]) => {
     setChats(prev => {

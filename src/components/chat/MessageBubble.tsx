@@ -276,14 +276,7 @@ export const MessageBubble = React.memo(
                     transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                     onClick={() => {
                       sessionStorage.setItem("scroll_to_post_id", sharedPost.id);
-                      if (sharedPost.user_id === currentUserId) {
-                        onOpenProfile?.(sharedPost.user_id);
-                        setTimeout(() => {
-                          onCloseChat?.();
-                        }, 50);
-                      } else {
-                        onOpenProfile?.(sharedPost.user_id);
-                      }
+                      onOpenProfile?.(sharedPost.user_id);
                     }}
                     className="w-56 cursor-pointer overflow-hidden rounded-[20px] bg-black border border-white/10 active:scale-98 transition-all duration-200"
                   >

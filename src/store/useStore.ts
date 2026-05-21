@@ -145,15 +145,41 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchUnreadCount: async (userId) => {
-    const { data } = await supabase
-      .from('messages')
-      .select('sender_id')
-      .eq('receiver_id', userId)
-      .is('read_at', null);
-      
-    if (data) {
-      const unreadCount = new Set(data.map(d => d.sender_id)).size;
-      set({ totalUnread: unreadCount });
+    try {
+      // 1. Unread 1-on-1 direct messages (number of distinct sender_ids)
+      const { data: dms } = await supabase
+        .from('messages')
+        .select('sender_id')
+        .eq('receiver_id', userId)
+        .is('read_at', null);
+
+      const unreadDMs = new Set(dms?.map(d => d.sender_id) || []).size;
+
+      // 2. Unread Group chats
+      const { data: participants } = await supabase
+        .from('group_chat_participants')
+        .select('chat_id, last_read_at')
+        .eq('user_id', userId);
+
+      let unreadGroups = 0;
+      if (participants && participants.length > 0) {
+        const promises = participants.map(async (part) => {
+          if (!part.last_read_at) return 0;
+          const { count } = await supabase
+            .from('messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('group_chat_id', part.chat_id)
+            .neq('sender_id', userId)
+            .gt('created_at', part.last_read_at);
+          return (count && count > 0) ? 1 : 0;
+        });
+        const results = await Promise.all(promises);
+        unreadGroups = results.reduce((acc, val) => acc + val, 0);
+      }
+
+      set({ totalUnread: unreadDMs + unreadGroups });
+    } catch (e) {
+      console.warn("Error fetching unread count from Supabase:", e);
     }
   },
 

@@ -131,9 +131,8 @@ export const checkRecipientPresenceAndNotify = async (
     const inboxRef = ref(rtdb, `inboxes/${receiverId}/${chatId}`);
     
     // We get unseen_chat_count to include in payload, but wait until we increment it
-    const [locSnapshot, inboxSnapshot, precSnapshot] = await Promise.all([
+    const [locSnapshot, precSnapshot] = await Promise.all([
       get(ref(rtdb, `location/${receiverId}`)),
-      get(inboxRef),
       get(ref(rtdb, `global_presence/${receiverId}`))
     ]);
     
@@ -144,15 +143,20 @@ export const checkRecipientPresenceAndNotify = async (
       return;
     }
     
-    // Case B & Case A: recipient has the chat closed - unseen chat number must be incremented.
-    const isSeen = inboxSnapshot.val();
+    // Case B & Case A: recipient has the chat closed - unseen chat number must be incremented atomically.
+    let needsIncrement = false;
+    await runTransaction(inboxRef, (currentVal) => {
+      if (currentVal === false) {
+        return; // already false, abort transaction
+      }
+      needsIncrement = true;
+      return false; // set to false
+    });
+
+    const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
     let updatedUnseenCount = 0;
     
-    // We increment in a transaction
-    const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
-    
-    if (isSeen !== false) {
-      set(inboxRef, false).catch(console.error);
+    if (needsIncrement) {
       const transactionResult = await runTransaction(countRef, (currentVal) => (currentVal || 0) + 1);
       updatedUnseenCount = transactionResult.snapshot.val() || 0;
     } else {
@@ -199,22 +203,24 @@ export const checkGroupPresenceAndNotify = async (
           const locationRef = ref(rtdb, `location/${receiverId}`);
           const inboxRef = ref(rtdb, `inboxes/${receiverId}/${groupId}`);
           
-          const [locSnap, inboxSnap] = await Promise.all([
-            get(locationRef),
-            get(inboxRef)
-          ]);
-          
+          const locSnap = await get(locationRef);
           const location = locSnap.val();
           if (location === groupId) {
             // Recipient is active in this group chat room right now, do not notify/set unseen
             return;
           }
           
-          const isSeen = inboxSnap.val();
-          const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
-          
-          if (isSeen !== false) {
-            await set(inboxRef, false);
+          let needsIncrement = false;
+          await runTransaction(inboxRef, (currentVal) => {
+            if (currentVal === false) {
+              return; // already false, abort transaction
+            }
+            needsIncrement = true;
+            return false; // set to false
+          });
+
+          if (needsIncrement) {
+            const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
             await runTransaction(countRef, (currentVal) => {
               return (currentVal || 0) + 1;
             });

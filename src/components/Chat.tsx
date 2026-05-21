@@ -118,7 +118,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 setActiveChat(null); 
                 onCloseChat?.(); 
             }} 
-            onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id } }))}
+            onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id, forcePopup: true } }))}
             openSettings={() => setIsGroupSettingsOpen(true)}
           />
         )}

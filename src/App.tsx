@@ -81,10 +81,11 @@ export default function App() {
     };
     const handleOpenProfile = (e: any) => {
       const targetUserId = e.detail?.userId;
-      if (session?.user?.id && targetUserId === session.user.id) {
+      const forcePopup = e.detail?.forcePopup || false;
+      if (session?.user?.id && targetUserId === session.user.id && !forcePopup) {
         setInitialActiveChat(null);
       }
-      handleUserClick(targetUserId);
+      handleUserClick(targetUserId, forcePopup);
     };
     const handleViewerState = (e: any) => {
       setIsImageViewerOpen(e.detail.isOpen);
@@ -463,9 +464,9 @@ export default function App() {
     return outputArray;
   }
 
-  const handleUserClick = async (userId: string) => {
+  const handleUserClick = async (userId: string, forcePopup = false) => {
     if (!session) return;
-    if (userId === session.user.id) {
+    if (userId === session.user.id && !forcePopup) {
       setViewingProfileId(null);
       setActiveTab('profile');
       mainRef.current?.scrollTo(0, 0);
@@ -827,7 +828,7 @@ export default function App() {
                  <ProfileView 
                    profile={viewingProfileData.profile} 
                    posts={viewingProfileData.posts} 
-                   isOwnProfile={false}
+                   isOwnProfile={viewingProfileData.profile.id === session.user.id}
                    currentUserId={session.user.id}
                    onUserClick={handleUserClick}
                    onDeletePost={handleDeletePost}

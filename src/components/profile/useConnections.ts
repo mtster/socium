@@ -121,7 +121,7 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         if (pushRecs && pushRecs.length > 0) {
           const tokens = pushRecs.map(r => r.endpoint);
           const senderName = senderInfo ? (senderInfo.full_name || senderInfo.username) : 'Someone';
-          const workerUrl = import.meta.env.VITE_CLOUDFLARE_REQUEST_WORKER_URL || 'https://socium-connection-requests.brare-black.workers.dev/';
+          const workerUrl = import.meta.env.VITE_CLOUDFLARE_REQUEST_WORKER_URL || 'https://socium-request-notifications.brare-black.workers.dev/';
           
           fetch(workerUrl, {
             method: 'POST',
