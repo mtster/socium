@@ -115,14 +115,17 @@ self.addEventListener('notificationclick', function(event) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
-          client.focus();
+          // Robust Navigation & Focus:
+          // We always navigate the existing client to the absolute url with query parameters,
+          // then send the postMessage to trigger an instant route transition if the app's script is fully active,
+          // and finally call focus. This ensures 100% reliable routing even if the app was suspended in the background.
+          client.navigate(absoluteUrl);
           if (groupChatId) {
             client.postMessage({ type: 'OPEN_CHAT', groupChatId });
           } else if (senderId) {
             client.postMessage({ type: 'OPEN_CHAT', senderId });
-          } else {
-            client.navigate(absoluteUrl);
           }
+          client.focus();
           return;
         }
       }

@@ -162,6 +162,11 @@ serve(async (req) => {
           title: senderName,
           body: bodyText
         },
+        webpush: {
+          fcm_options: {
+            link: `/?chat_with=${message.sender_id}`
+          }
+        },
         apns: {
           payload: {
             aps: {

@@ -81,14 +81,10 @@ export const initPresence = (userId: string) => {
       }
     });
 
-    // Auto-align unseen_chat_count to perfectly match actual false inboxes count inside database
+    // Auto-align unseen_chat_count dynamically to perfectly match the actual count of false (unseen) inboxes inside the database.
+    // Core constraint check: actualFalseCount can never be negative (starts at 0 and increments), ensuring unseen_chat_count never drops below 0.
     const uCountRef = ref(rtdb, `unseen_chat_count/${userId}`);
-    get(uCountRef).then((countSnap) => {
-      const currentCount = countSnap.val() || 0;
-      if (currentCount !== actualFalseCount) {
-        set(uCountRef, actualFalseCount).catch(console.error);
-      }
-    }).catch(console.error);
+    set(uCountRef, actualFalseCount).catch(console.error);
   });
 
   return () => {
@@ -108,7 +104,7 @@ export const setChatLocation = (userId: string, chatId: string | null) => {
   const locationRef = ref(rtdb, `location/${userId}`);
   if (chatId) {
     set(locationRef, chatId);
-    // When they enter a chat, ensure it's marked as seen and decrement unread if needed
+    // When they enter a chat, ensure it's marked as seen
     markChatAsSeen(userId, chatId);
   } else {
     set(locationRef, 'none');
@@ -124,39 +120,20 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
 
   const inboxRef = ref(rtdb, `inboxes/${userId}/${chatId}`);
 
-  // Fetch true state from server before transaction to populate local cache and prevent early aborts!
+  // Fetch true state from server before updating to populate local cache and prevent early aborts!
   get(inboxRef).then((snapshot) => {
     const val = snapshot.val();
     if (val === false) {
-      runTransaction(inboxRef, (currentVal) => {
-        // Since we did 'get', local cache is populated.
-        if (currentVal === false || currentVal === null) {
-          return true;
-        }
-        return; // Already true, abort
-      }).then((result) => {
-        seenProcessing.delete(chatId);
-        if (result.committed) {
-          const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
-          runTransaction(countRef, (currentVal) => {
-            return Math.max(0, (currentVal || 0) - 1);
-          }).then((countResult) => {
-            if (countResult.committed) {
-              const newCount = countResult.snapshot.val() || 0;
-              if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator) {
-                if (newCount > 0) {
-                  (navigator as any).setAppBadge(newCount).catch(console.warn);
-                } else {
-                  (navigator as any).clearAppBadge().catch(console.warn);
-                }
-              }
-            }
-          }).catch(console.warn);
-        }
-      }).catch((err) => {
-        seenProcessing.delete(chatId);
-        console.warn("markChatAsSeen transaction failed:", err);
-      });
+      set(inboxRef, true)
+        .then(() => {
+          seenProcessing.delete(chatId);
+          // Note: Decrementing unseen_chat_count is fully handled by the onValue(inboxesRef) subscription!
+          // This entirely prevents dual-decrement/race-condition bugs, ensuring a rock-solid, accurate badge.
+        })
+        .catch((err) => {
+          seenProcessing.delete(chatId);
+          console.warn("failed to set inbox to true:", err);
+        });
     } else {
       seenProcessing.delete(chatId);
     }

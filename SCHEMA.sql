@@ -318,7 +318,7 @@ BEGIN
   IF NEW.group_chat_id IS NOT NULL THEN
     SELECT array_agg(user_id) INTO recipients 
     FROM public.group_chat_participants 
-    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id AND is_muted = false;
+    WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id AND COALESCE(is_muted, false) = false;
     
     IF recipients IS NOT NULL AND array_length(recipients, 1) > 0 THEN
       -- Fetch FCM tokens for the recipients grouped by user_id
