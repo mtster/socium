@@ -10,9 +10,11 @@ export function useChatList(currentUserId: string) {
   const [chats, setChats] = useState<ChatListItemType[]>(chatListCache || []);
   const [loading, setLoading] = useState(!chatListCache);
 
-  const fetchChats = useCallback(async () => {
+  const fetchChats = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
 
       // 1. Fetch 1-on-1 Connections
       const { data: rel1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', currentUserId).eq('status', 'accepted');
@@ -124,7 +126,7 @@ export function useChatList(currentUserId: string) {
       lastChatListFetch = Date.now();
       setChats(chatItems);
       
-      // Cleanup RTDB Inboxes and Unseen chat count
+      // Cleanup and Sync RTDB Inboxes and Unseen chat count
       try {
         const { rtdb } = await import('@/src/lib/firebase');
         if (rtdb) {
@@ -138,6 +140,18 @@ export function useChatList(currentUserId: string) {
               let computedUnseenCount = 0;
               
               const updatedInboxes = { ...inboxes };
+              
+              // Standardize values with actual Postgres unread states
+              for (const chat of chatItems) {
+                 const currentVal = updatedInboxes[chat.id];
+                 if (chat.unreadCount === 0 && currentVal === false) {
+                    updatedInboxes[chat.id] = true;
+                    needsUpdate = true;
+                 } else if (chat.unreadCount > 0 && (currentVal === undefined || currentVal === true)) {
+                    updatedInboxes[chat.id] = false;
+                    needsUpdate = true;
+                 }
+              }
               
               // Remove old UUIDs
               for (const key of Object.keys(updatedInboxes)) {
@@ -195,6 +209,33 @@ export function useChatList(currentUserId: string) {
       window.removeEventListener('focus', handleVisibility);
     };
   }, [fetchChats]);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+    
+    const initRtdbListener = async () => {
+      try {
+        const { rtdb } = await import('@/src/lib/firebase');
+        if (rtdb) {
+          const { ref, onValue } = await import('firebase/database');
+          const inboxRef = ref(rtdb, `inboxes/${currentUserId}`);
+          unsubscribe = onValue(inboxRef, (snapshot) => {
+            // Unread changes detected, do a background update
+            fetchChats(true);
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to set up RTDB mailbox listener:", err);
+      }
+    };
+
+    initRtdbListener();
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [currentUserId, fetchChats]);
 
   useEffect(() => {
     // Add real-time listener for ALL messages to update the chat list last message

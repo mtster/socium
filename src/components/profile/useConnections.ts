@@ -112,6 +112,31 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       if (error) throw error;
       setConnectionStatus('pending_sent');
       setConnectionId(data.id);
+
+      // Trigger client-side connection request notification to Cloudflare!
+      try {
+        const { data: senderInfo } = await supabase.from('profiles').select('full_name, username').eq('id', currentUserId).maybeSingle();
+        const { data: pushRecs } = await supabase.from('push_subscriptions').select('endpoint').eq('user_id', profile.id);
+        
+        if (pushRecs && pushRecs.length > 0) {
+          const tokens = pushRecs.map(r => r.endpoint);
+          const senderName = senderInfo ? (senderInfo.full_name || senderInfo.username) : 'Someone';
+          const workerUrl = import.meta.env.VITE_CLOUDFLARE_REQUEST_WORKER_URL || 'https://socium-connection-requests.brare-black.workers.dev/';
+          
+          fetch(workerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sender_id: currentUserId,
+              sender_name: senderName,
+              receiver_id: profile.id,
+              recipient_tokens: [{ userId: profile.id, tokens }]
+            })
+          }).catch(e => console.error("Cloudflare requests worker post error:", e));
+        }
+      } catch (e) {
+        console.error("Failed to send connection request notification trigger:", e);
+      }
     } catch (e: any) {
       alert(e.message);
     }

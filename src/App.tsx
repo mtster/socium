@@ -80,8 +80,11 @@ export default function App() {
       setActiveTab('chat');
     };
     const handleOpenProfile = (e: any) => {
-      setInitialActiveChat(null);
-      handleUserClick(e.detail.userId);
+      const targetUserId = e.detail?.userId;
+      if (session?.user?.id && targetUserId === session.user.id) {
+        setInitialActiveChat(null);
+      }
+      handleUserClick(targetUserId);
     };
     const handleViewerState = (e: any) => {
       setIsImageViewerOpen(e.detail.isOpen);

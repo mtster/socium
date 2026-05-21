@@ -81,28 +81,39 @@ export const setChatLocation = (userId: string, chatId: string | null) => {
   }
 };
 
+const seenProcessing = new Set<string>();
+
 export const markChatAsSeen = (userId: string, chatId: string) => {
   if (!rtdb) return;
+  if (seenProcessing.has(chatId)) return;
+  seenProcessing.add(chatId);
+
   const inboxRef = ref(rtdb, `inboxes/${userId}/${chatId}`);
-  get(inboxRef).then((snapshot) => {
-    const isSeen = snapshot.val();
-    if (isSeen === false) {
-      // Mark as seen and decrease unseen count
-      set(inboxRef, true);
+  runTransaction(inboxRef, (currentVal) => {
+    if (currentVal === false) {
+      return true;
+    }
+    return; // Already true, or doesn't exist, abort transaction
+  }).then((result) => {
+    seenProcessing.delete(chatId);
+    if (result.committed && result.snapshot.val() === true) {
       const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
       runTransaction(countRef, (currentVal) => {
         return Math.max(0, (currentVal || 0) - 1);
-      }).then((result) => {
-        if (result.committed) { // Update app badge
-           const newCount = result.snapshot.val() || 0;
-           if (newCount > 0 && 'setAppBadge' in navigator) {
-             (navigator as any).setAppBadge(newCount);
-           } else if (newCount <= 0 && 'clearAppBadge' in navigator) {
-             (navigator as any).clearAppBadge();
-           }
+      }).then((countResult) => {
+        if (countResult.committed) {
+          const newCount = countResult.snapshot.val() || 0;
+          if (newCount > 0 && 'setAppBadge' in navigator) {
+            (navigator as any).setAppBadge(newCount).catch(console.warn);
+          } else if (newCount <= 0 && 'clearAppBadge' in navigator) {
+            (navigator as any).clearAppBadge().catch(console.warn);
+          }
         }
-      });
+      }).catch(console.warn);
     }
+  }).catch((err) => {
+    seenProcessing.delete(chatId);
+    console.warn("markChatAsSeen transaction failed:", err);
   });
 };
 
@@ -172,3 +183,50 @@ export const checkRecipientPresenceAndNotify = async (
     }).catch(console.error);
   }
 };
+
+export const checkGroupPresenceAndNotify = async (
+  senderId: string,
+  groupId: string,
+  participantIds: string[],
+  messageData: any
+) => {
+  if (!rtdb) return;
+  try {
+    const promises = participantIds
+      .filter(id => id !== senderId)
+      .map(async (receiverId) => {
+        try {
+          const locationRef = ref(rtdb, `location/${receiverId}`);
+          const inboxRef = ref(rtdb, `inboxes/${receiverId}/${groupId}`);
+          
+          const [locSnap, inboxSnap] = await Promise.all([
+            get(locationRef),
+            get(inboxRef)
+          ]);
+          
+          const location = locSnap.val();
+          if (location === groupId) {
+            // Recipient is active in this group chat room right now, do not notify/set unseen
+            return;
+          }
+          
+          const isSeen = inboxSnap.val();
+          const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
+          
+          if (isSeen !== false) {
+            await set(inboxRef, false);
+            await runTransaction(countRef, (currentVal) => {
+              return (currentVal || 0) + 1;
+            });
+          }
+        } catch (err) {
+          console.error(`Group notifier failed for participant ${receiverId} in group ${groupId}:`, err);
+        }
+      });
+      
+    await Promise.all(promises);
+  } catch (error) {
+    console.warn("Error in checkGroupPresenceAndNotify:", error);
+  }
+};
+

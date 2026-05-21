@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
-import { setChatLocation, checkRecipientPresenceAndNotify } from '@/src/lib/presence';
+import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAndNotify } from '@/src/lib/presence';
 import { ChatListItemType } from '@/src/types/chat';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
@@ -138,6 +138,11 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
       if (!activeChat.isGroup) {
         checkRecipientPresenceAndNotify(currentUserId, activeChat.id, currentUserId, data);
+      } else {
+        const participantIds = activeChat.participants?.map((p: any) => p.id || p.user_id) || [];
+        if (participantIds.length > 0) {
+          checkGroupPresenceAndNotify(currentUserId, activeChat.id, participantIds, data);
+        }
       }
     } catch (e: any) { 
       console.error("sendSpecialMessage error", e);
@@ -165,6 +170,11 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       // Trigger notification for 1-on-1 chats
       if (!activeChat.isGroup) {
         checkRecipientPresenceAndNotify(currentUserId, activeChat.id, currentUserId, data);
+      } else {
+        const participantIds = activeChat.participants?.map((p: any) => p.id || p.user_id) || [];
+        if (participantIds.length > 0) {
+          checkGroupPresenceAndNotify(currentUserId, activeChat.id, participantIds, data);
+        }
       }
     } catch (e: any) { 
       console.error("handleSendMessage exception:", e);
