@@ -58,6 +58,7 @@ export default function App() {
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [showNotifPromoPopup, setShowNotifPromoPopup] = useState(false);
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
+  const [isHeaderHidden, setIsHeaderHidden] = useState(false);
   const mainRef = React.useRef<HTMLElement>(null);
 
   // Inside useEffect where auth state is handled, or a new useEffect
@@ -100,11 +101,15 @@ export default function App() {
         mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
+    const handleSetHeaderHidden = (e: any) => {
+      setIsHeaderHidden(!!e.detail);
+    };
 
     window.addEventListener('openChat', handleOpenChat);
     window.addEventListener('openProfile', handleOpenProfile);
     window.addEventListener('viewerState', handleViewerState);
     window.addEventListener('resetTab', handleResetTab);
+    window.addEventListener('set-header-hidden', handleSetHeaderHidden);
 
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
     if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
@@ -184,6 +189,7 @@ export default function App() {
       window.removeEventListener('openProfile', handleOpenProfile);
       window.removeEventListener('viewerState', handleViewerState);
       window.removeEventListener('resetTab', handleResetTab);
+      window.removeEventListener('set-header-hidden', handleSetHeaderHidden);
     };
   }, []);
 
@@ -629,7 +635,7 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">

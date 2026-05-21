@@ -117,11 +117,8 @@ export const useStore = create<AppState>((set, get) => ({
     let query = supabase
       .from('posts')
       .select('*, profiles(*), likes(user_id), comments(id)')
-      .in('user_id', connectionIds);
-
-    if (currentUserId !== ADMIN_ID) {
-      query = query.lte('created_at', new Date().toISOString());
-    }
+      .in('user_id', connectionIds)
+      .lte('created_at', new Date().toISOString());
 
     const { data } = await query
       .order('created_at', { ascending: false })

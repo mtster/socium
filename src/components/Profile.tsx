@@ -178,7 +178,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       
       const fileExt = 'jpg';
       const fileName = `${profile.id}-${Math.random()}.${fileExt}`;
-      const filePath = `${profile.id}/${fileName}`;
+      const filePath = `${currentUserId}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')

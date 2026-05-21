@@ -48,7 +48,8 @@ messaging.onBackgroundMessage(function(payload) {
     icon: '/icon-192.png',
     data: {
       url: payload.data?.url || '/',
-      senderId: payload.data?.senderId || ''
+      senderId: payload.data?.senderId || payload.data?.sender_id || '',
+      groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
     }
   };
 

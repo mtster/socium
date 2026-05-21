@@ -180,14 +180,25 @@ export function useChatList(currentUserId: string) {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!chatListCache || Date.now() - lastChatListFetch > 60000) {
-      fetchChats();
-    }
+    // Always fetch on mount/focus to get latest messages and keep main chat list updated
+    fetchChats();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchChats();
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+    };
   }, [fetchChats]);
 
   useEffect(() => {
     // Add real-time listener for ALL messages to update the chat list last message
-    const channel = supabase.channel('chat_list_updates')
+    const channel = supabase.channel(`chat_list_updates_${currentUserId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
         
@@ -211,6 +222,8 @@ export function useChatList(currentUserId: string) {
           if (updated) {
             newChats.sort((a, b) => new Date(b.lastMessage?.created_at || 0).getTime() - new Date(a.lastMessage?.created_at || 0).getTime());
             chatListCache = newChats;
+            // Trigger a quick fetch in background to ensure database unread counts/read_at match perfectly
+            setTimeout(fetchChats, 300);
             return newChats;
           } else {
             // New message from a completely new chat, trigger a full fetch

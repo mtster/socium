@@ -18,6 +18,13 @@ export default function ImageCropperModal({ imageSrc, onClose, onComplete }: Ima
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  React.useEffect(() => {
+    window.dispatchEvent(new CustomEvent('set-header-hidden', { detail: true }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('set-header-hidden', { detail: false }));
+    };
+  }, []);
+
   const onCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
     setCroppedAreaPixels(croppedAreaPixels);
   }, []);
@@ -62,9 +69,9 @@ export default function ImageCropperModal({ imageSrc, onClose, onComplete }: Ima
         <button 
           onClick={handleSave} 
           disabled={isProcessing}
-          className="text-white font-bold p-2 active:scale-95 transition-transform"
+          className="bg-white text-black px-4 py-1.5 rounded-full font-bold text-xs active:scale-95 transition-transform hover:bg-white/90 disabled:opacity-50"
         >
-          {isProcessing ? 'Saving...' : 'Done'}
+          {isProcessing ? 'Saving...' : 'Submit'}
         </button>
       </div>
 
