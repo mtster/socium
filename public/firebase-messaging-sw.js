@@ -45,13 +45,15 @@ function getBadgeCount() {
       })
       .then((uid) => {
         if (uid) {
-          firebase.database().ref('/unseen_chat_count/' + uid).once('value')
-            .then((snapshot) => {
-              const count = snapshot.val() || 0;
-              resolve(count);
-            })
+          const fetchPromise = firebase.database().ref('/unseen_chat_count/' + uid).once('value')
+            .then((snapshot) => snapshot.val() || 0);
+          
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+          
+          Promise.race([fetchPromise, timeoutPromise])
+            .then((count) => resolve(count))
             .catch((err) => {
-              console.error('Failed to get unseen count:', err);
+              console.error('[firebase-messaging-sw.js] Failed to fetch unseen count in time:', err);
               resolve(null);
             });
         } else {
@@ -65,13 +67,34 @@ function getBadgeCount() {
   });
 }
 
+// Intercept all raw push events (including FCM group chat multicasts) to ensure
+// the application badge count is always updated dynamically in the background.
+self.addEventListener('push', function(event) {
+  console.log('[firebase-messaging-sw.js] Custom push event intercepted:', event);
+  
+  event.waitUntil(
+    getBadgeCount().then((badgeCount) => {
+      console.log('[firebase-messaging-sw.js] Custom push calculated badgeCount:', badgeCount);
+      if (badgeCount !== null) {
+        const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
+        if (nav && 'setAppBadge' in nav) {
+          return nav.setAppBadge(parseInt(badgeCount)).catch((err) => {
+            console.warn('[firebase-messaging-sw.js] Failed to setAppBadge:', err);
+          });
+        }
+      }
+    })
+  );
+});
+
 messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
   const promiseChain = getBadgeCount().then((badgeCount) => {
     if (badgeCount !== null) {
-      if ('setAppBadge' in navigator) {
-        navigator.setAppBadge(parseInt(badgeCount)).catch(() => {});
+      const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
+      if (nav && 'setAppBadge' in nav) {
+        nav.setAppBadge(parseInt(badgeCount)).catch(() => {});
       }
     }
 
@@ -99,15 +122,34 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   let urlToOpen = event.notification.data?.url || '/';
-  const senderId = event.notification.data?.senderId || '';
-  const groupChatId = event.notification.data?.groupChatId || '';
+  
+  // Extract custom payload fields supporting multiple casing formats (camelCase & snake_case)
+  let senderId = event.notification.data?.senderId || event.notification.data?.sender_id || '';
+  let groupChatId = event.notification.data?.groupChatId || event.notification.data?.group_chat_id || '';
+
+  // Fail-safe: extract search parameters directly from the payload's url
+  try {
+    const parsedUrl = new URL(urlToOpen, self.location.origin);
+    if (!groupChatId) {
+      groupChatId = parsedUrl.searchParams.get('chatId') || '';
+    }
+    if (!senderId) {
+      senderId = parsedUrl.searchParams.get('chat_with') || parsedUrl.searchParams.get('chatId') || '';
+    }
+  } catch (e) {
+    console.warn('[firebase-messaging-sw.js] URL parsing exception in notificationclick:', e);
+  }
+
+  // Inject proper query parameters to ensure SPA initial load knows which route to mount
   if (groupChatId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
     urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chatId=${groupChatId}`;
   } else if (senderId && !urlToOpen.includes('chat_with=') && !urlToOpen.includes('chatId=')) {
     urlToOpen += (urlToOpen.includes('?') ? '&' : '?') + `chat_with=${senderId}`;
   }
 
-  const baseUrl = 'https://sociumx.vercel.app';
+  // Use dynamic self.location.origin instead of a hardcoded string!
+  // This enables perfect routing across all preview URLs, development containers, and custom domains.
+  const baseUrl = self.location.origin;
   const absoluteUrl = new URL(urlToOpen, baseUrl).href;
 
   event.waitUntil(
@@ -115,16 +157,9 @@ self.addEventListener('notificationclick', function(event) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
-          // Robust Navigation & Focus:
-          // We always navigate the existing client to the absolute url with query parameters,
-          // then send the postMessage to trigger an instant route transition if the app's script is fully active,
-          // and finally call focus. This ensures 100% reliable routing even if the app was suspended in the background.
-          client.navigate(absoluteUrl);
-          if (groupChatId) {
-            client.postMessage({ type: 'OPEN_CHAT', groupChatId });
-          } else if (senderId) {
-            client.postMessage({ type: 'OPEN_CHAT', senderId });
-          }
+          // If the page is already open, focus it and trigger an instant routing transition.
+          // By utilizing postMessage, we completely bypass sluggish full page reloads in SPA!
+          client.postMessage({ type: 'OPEN_CHAT', senderId, groupChatId });
           client.focus();
           return;
         }

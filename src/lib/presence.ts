@@ -111,35 +111,11 @@ export const setChatLocation = (userId: string, chatId: string | null) => {
   }
 };
 
-const seenProcessing = new Set<string>();
-
 export const markChatAsSeen = (userId: string, chatId: string) => {
   if (!rtdb) return;
-  if (seenProcessing.has(chatId)) return;
-  seenProcessing.add(chatId);
-
   const inboxRef = ref(rtdb, `inboxes/${userId}/${chatId}`);
-
-  // Fetch true state from server before updating to populate local cache and prevent early aborts!
-  get(inboxRef).then((snapshot) => {
-    const val = snapshot.val();
-    if (val === false) {
-      set(inboxRef, true)
-        .then(() => {
-          seenProcessing.delete(chatId);
-          // Note: Decrementing unseen_chat_count is fully handled by the onValue(inboxesRef) subscription!
-          // This entirely prevents dual-decrement/race-condition bugs, ensuring a rock-solid, accurate badge.
-        })
-        .catch((err) => {
-          seenProcessing.delete(chatId);
-          console.warn("failed to set inbox to true:", err);
-        });
-    } else {
-      seenProcessing.delete(chatId);
-    }
-  }).catch((err) => {
-    seenProcessing.delete(chatId);
-    console.warn("get inbox failed in markChatAsSeen:", err);
+  set(inboxRef, true).catch((err) => {
+    console.warn("failed to set inbox to true in markChatAsSeen:", err);
   });
 };
 
@@ -191,28 +167,33 @@ export const checkRecipientPresenceAndNotify = async (
     const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
     let updatedUnseenCount = 0;
     
-    if (needsIncrement) {
-      const transactionResult = await runTransaction(countRef, (currentVal) => (currentVal || 0) + 1);
-      updatedUnseenCount = transactionResult.snapshot.val() || 0;
-    } else {
-      updatedUnseenCount = (await get(countRef)).val() || 0;
-    }
-    
     const isOnline = precSnapshot.val() === true;
     
-    // Case A: if global presence is false, trigger edge function
-    if (!isOnline) {
-       // Only trigger edge function for offline users
-        supabase.functions.invoke('send-push', {
-          body: {
-             ...messageData,
-             badgeCount: updatedUnseenCount,
-             chatUrl: 'https://sociumx.vercel.app'
-          }
-        }).catch(e => console.error("Error invoking edge function:", e));
+    if (isOnline) {
+      // If receiver is online, we do NOT increment countRef from the sender side!
+      // This is because the receiver's active onValue(inboxes) listener will automatically
+      // calculate the accurate count of false keys and write it to countRef securely.
+      // This entirely prevents dual-write race-condition bugs!
+      updatedUnseenCount = (await get(countRef)).val() || 0;
+    } else {
+      // If receiver is offline, the receiver's listener is NOT running.
+      // The sender MUST atomically increment countRef to ensure the correct badge persists in RTDB.
+      if (needsIncrement) {
+        const transactionResult = await runTransaction(countRef, (currentVal) => (currentVal || 0) + 1);
+        updatedUnseenCount = transactionResult.snapshot.val() || 0;
+      } else {
+        updatedUnseenCount = (await get(countRef)).val() || 0;
+      }
+      
+      // Since the receiver is offline, trigger push notification
+      supabase.functions.invoke('send-push', {
+        body: {
+           ...messageData,
+           badgeCount: updatedUnseenCount,
+           chatUrl: 'https://sociumx.vercel.app'
+        }
+      }).catch(e => console.error("Error invoking edge function:", e));
     }
-    // Case B: global presence is true, but location is not chat uuid. 
-    // We only update unseen count (done above) and do NOT trigger edge function.
 
   } catch (dbError) {
     console.error("RTDB error for user", receiverId, dbError);

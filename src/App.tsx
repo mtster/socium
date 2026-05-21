@@ -356,8 +356,8 @@ export default function App() {
             }
           }
           if (event.data && event.data.type === 'OPEN_CHAT') {
-            const senderId = event.data.senderId;
-            const groupChatId = event.data.groupChatId;
+            const senderId = event.data.senderId || event.data.sender_id;
+            const groupChatId = event.data.groupChatId || event.data.group_chat_id;
             
             if (groupChatId) {
                const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
