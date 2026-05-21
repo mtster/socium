@@ -147,7 +147,11 @@ export function useChatList(currentUserId: string) {
                  if (chat.unreadCount === 0 && currentVal === false) {
                     updatedInboxes[chat.id] = true;
                     needsUpdate = true;
-                 } else if (chat.unreadCount > 0 && (currentVal === undefined || currentVal === true)) {
+                  } else if (chat.unreadCount > 0 && currentVal === undefined) {
+                     // Only initialize to false if it has not been set yet.
+                     // NEVER transition from true (seen) to false (unseen) within the chat list fetch
+                     // because the recipient may have just marked it seen, and Postgres has propagation latency.
+                     // The sender's checkRecipientPresenceAndNotify or Cloudflare Worker handles setting to false on new messages.
                     updatedInboxes[chat.id] = false;
                     needsUpdate = true;
                  }
@@ -158,22 +162,6 @@ export function useChatList(currentUserId: string) {
                  if (!validIds.has(key)) {
                     delete updatedInboxes[key];
                     needsUpdate = true;
-                 } else if (updatedInboxes[key] === false) {
-                    computedUnseenCount++;
-                 }
-              }
-              
-              // Force check badge count match
-              const countRef = ref(rtdb, `unseen_chat_count/${currentUserId}`);
-              const countSnap = await get(countRef);
-              const currentUnseen = countSnap.val() || 0;
-              
-              if (currentUnseen !== computedUnseenCount) {
-                 await set(countRef, computedUnseenCount);
-                 if (computedUnseenCount > 0 && 'setAppBadge' in navigator) {
-                   (navigator as any).setAppBadge(computedUnseenCount);
-                 } else if (computedUnseenCount <= 0 && 'clearAppBadge' in navigator) {
-                   (navigator as any).clearAppBadge();
                  }
               }
 

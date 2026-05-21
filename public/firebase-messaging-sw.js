@@ -73,16 +73,27 @@ self.addEventListener('push', function(event) {
   console.log('[firebase-messaging-sw.js] Custom push event intercepted:', event);
   
   event.waitUntil(
-    getBadgeCount().then((badgeCount) => {
-      console.log('[firebase-messaging-sw.js] Custom push calculated badgeCount:', badgeCount);
-      if (badgeCount !== null) {
-        const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
-        if (nav && 'setAppBadge' in nav) {
-          return nav.setAppBadge(parseInt(badgeCount)).catch((err) => {
-            console.warn('[firebase-messaging-sw.js] Failed to setAppBadge:', err);
-          });
-        }
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // If there is an active visible foreground window client, do NOT update badge
+      // from the background service worker! The active client has real-time sockets
+      // and will maintain a pristine badge, eliminating foreground/background racing.
+      const isAnyVisible = windowClients.some(client => client.visibilityState === 'visible');
+      if (isAnyVisible) {
+        console.log('[firebase-messaging-sw.js] Visible window found. Foreground client handles badge updates.');
+        return;
       }
+
+      return getBadgeCount().then((badgeCount) => {
+        console.log('[firebase-messaging-sw.js] Custom push calculated badgeCount:', badgeCount);
+        if (badgeCount !== null) {
+          const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
+          if (nav && 'setAppBadge' in nav) {
+            return nav.setAppBadge(parseInt(badgeCount)).catch((err) => {
+              console.warn('[firebase-messaging-sw.js] Failed to setAppBadge:', err);
+            });
+          }
+        }
+      });
     })
   );
 });
@@ -90,28 +101,32 @@ self.addEventListener('push', function(event) {
 messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
-  const promiseChain = getBadgeCount().then((badgeCount) => {
-    if (badgeCount !== null) {
-      const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
-      if (nav && 'setAppBadge' in nav) {
-        nav.setAppBadge(parseInt(badgeCount)).catch(() => {});
-      }
-    }
-
-    // ONLY display manual notification if payload.notification is ABSENT (i.e. a data-only message)
-    if (!payload.notification) {
-      const notificationTitle = payload.data?.title || 'New Message';
-      const notificationOptions = {
-        body: payload.data?.body || '',
-        icon: '/icon-192.png',
-        data: {
-          url: payload.data?.url || '/',
-          senderId: payload.data?.senderId || payload.data?.sender_id || '',
-          groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
+  const promiseChain = clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+    const isAnyVisible = windowClients.some(client => client.visibilityState === 'visible');
+    
+    return getBadgeCount().then((badgeCount) => {
+      if (badgeCount !== null && !isAnyVisible) {
+        const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
+        if (nav && 'setAppBadge' in nav) {
+          nav.setAppBadge(parseInt(badgeCount)).catch(() => {});
         }
-      };
-      return self.registration.showNotification(notificationTitle, notificationOptions);
-    }
+      }
+
+      // ONLY display manual notification if payload.notification is ABSENT (i.e. a data-only message)
+      if (!payload.notification) {
+        const notificationTitle = payload.data?.title || 'New Message';
+        const notificationOptions = {
+          body: payload.data?.body || '',
+          icon: '/icon-192.png',
+          data: {
+            url: payload.data?.url || '/',
+            senderId: payload.data?.senderId || payload.data?.sender_id || '',
+            groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
+          }
+        };
+        return self.registration.showNotification(notificationTitle, notificationOptions);
+      }
+    });
   });
 
   return promiseChain;

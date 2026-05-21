@@ -155,13 +155,13 @@ export const checkRecipientPresenceAndNotify = async (
     // Case B & Case A: recipient has the chat closed - unseen chat number must be incremented atomically.
     let needsIncrement = false;
     if (!isAlreadyInFlight) {
-      await runTransaction(inboxRef, (currentVal) => {
+      const txResult = await runTransaction(inboxRef, (currentVal) => {
         if (currentVal === false) {
           return; // already false, abort transaction
         }
-        needsIncrement = true;
         return false; // set to false
       });
+      needsIncrement = txResult.committed;
     }
 
     const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
