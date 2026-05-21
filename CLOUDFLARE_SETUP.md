@@ -109,116 +109,115 @@ export default {
       // 5. Query Unread Counts & Send Pushes concurrently per user
       const pushOperations = recipient_tokens.map(async (recipient) => {
          const userId = recipient.userId;
-         
-         const [locResp, inboxResp, unseenResp, precResp] = await Promise.all([
-            fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
-            fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
-            fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`),
-            fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
-         ]);
+         try {
+             const [locResp, inboxResp, precResp] = await Promise.all([
+                fetch(`${dbUrl}/location/${userId}.json?access_token=${access_token}`),
+                fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`),
+                fetch(`${dbUrl}/global_presence/${userId}.json?access_token=${access_token}`)
+             ]);
 
-         if (!locResp.ok || !inboxResp.ok || !unseenResp.ok || !precResp.ok) {
-           throw new Error(`RTDB fetch failed for user ${userId}. loc:${locResp.status} inbox:${inboxResp.status} unseen:${unseenResp.status} prec:${precResp.status}`);
-         }
+             if (!locResp.ok || !inboxResp.ok || !precResp.ok) {
+               console.error(`RTDB fetch failed for user ${userId}. loc:${locResp.status} inbox:${inboxResp.status} prec:${precResp.status}`);
+               return;
+             }
 
-         const location = await locResp.json();
-         const inboxSeen = await inboxResp.json();
-         let badgeCount = (await unseenResp.json()) || 0;
-         const isOnline = await precResp.json();
+             const location = await locResp.json();
+             const inboxSeen = await inboxResp.json();
+             const isOnline = (await precResp.json()) === true;
 
-         let shouldSendNotification = false;
+             let shouldSendNotification = false;
 
-         // Scenario A: If the global presence of recipient is false (completely offline)
-         if (!isOnline) {
-              // 1. update the inbox node for that users uuid
-              await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
-                method: 'PUT',
-                body: 'false'
-              });
-              
-              // 2. increment unseen chat count node for the recipient by +1 (only if inbox was not already false)
-              if (inboxSeen !== false) {
-                  badgeCount += 1;
-                  await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+             // Scenario C: If recipient is online and in the exact same chat room
+             if (isOnline && location === group_chat_id) {
+                  // Already looking at the chat room, do nothing
+                  shouldSendNotification = false;
+             }
+             // Scenario B: If recipient is online but looking at a DIFFERENT chat room or dashboard area
+             else if (isOnline && location !== group_chat_id) {
+                  // 1. update the inbox node for that user's uuid
+                  await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
                     method: 'PUT',
-                    body: String(badgeCount)
+                    body: 'false'
                   });
-              }
-              
-              // 3. send notification payload
-              shouldSendNotification = true;
-         } 
-         // Scenario B: If recipient is online but looking at a DIFFERENT chat room or dashboard area
-         else if (isOnline && location !== group_chat_id) {
-              // 1. update the inbox node for that users uuid
-              await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
-                method: 'PUT',
-                body: 'false'
-              });
-              
-              // 2. increment unseen chat count node for the recipient by +1
-              if (inboxSeen !== false) {
-                  badgeCount += 1;
-                  await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                  
+                  // 2. increment unseen chat count node for the recipient by +1 atomically
+                  if (inboxSeen !== false) {
+                      await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                        method: 'POST',
+                        headers: { 'X-HTTP-Method-Override': 'PATCH', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ".sv": { "increment": 1 } })
+                      });
+                  }
+                  shouldSendNotification = false; // Do not send push notification if user is online in app
+             }
+             // Scenario A: If the global presence of recipient is false (completely offline)
+             else {
+                  // 1. update the inbox node for that user's uuid
+                  await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
                     method: 'PUT',
-                    body: String(badgeCount)
+                    body: 'false'
                   });
-              }
-              
-              // FIXED: Set to true so the worker fires the push. 
-              // This wakes up the client service worker to change the iOS badge safely!
-              shouldSendNotification = true;
-         }
-         // Scenario C: If recipient is online and in the exact same chat room
-         else if (isOnline && location === group_chat_id) {
-              // Already looking at the chat room, do nothing
-              shouldSendNotification = false;
-         }
+                  
+                  // 2. increment unseen chat count node for the recipient by +1 atomically (only if inbox was not already false)
+                  if (inboxSeen !== false) {
+                      await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                        method: 'POST',
+                        headers: { 'X-HTTP-Method-Override': 'PATCH', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ".sv": { "increment": 1 } })
+                      });
+                  }
+                  
+                  // 3. send notification payload
+                  shouldSendNotification = true;
+             }
 
-         if (shouldSendNotification) {
-              const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
+             if (shouldSendNotification) {
+                  const title = `${sender_name || 'Someone'} in ${group_name || 'Group'}`;
 
-              // Loop over each token for this user
-              const tokenOperations = recipient.tokens.map(async (token) => {
-                const messageBody = {
-                  message: {
-                    token: token,
-                    notification: {
-                      title: title,
-                      body: bodyText
-                    },
-                    apns: {
-                      payload: {
-                        aps: {
-                          badge: badgeCount,
-                          sound: 'default'
+                  // Loop over each token for this user
+                  const tokenOperations = recipient.tokens.map(async (token) => {
+                    const messageBody = {
+                      message: {
+                        token: token,
+                        notification: {
+                          title: title,
+                          body: bodyText
+                        },
+                        apns: {
+                          payload: {
+                            aps: {
+                              // We omit badge because different recipients have different badges.
+                              // The service worker on each client's device will fetch their precise badge.
+                              sound: 'default'
+                            }
+                          }
+                        },
+                        data: {
+                          title: title,
+                          body: bodyText,
+                          url: `/?chatId=${group_chat_id}`,
+                          groupChatId: group_chat_id || "",
+                          senderId: (payload.record ? payload.record.sender_id : payload.sender_id) || ""
                         }
                       }
-                    },
-                    data: {
-                      title: title,
-                      body: bodyText,
-                      url: `/?chatId=${group_chat_id}`,
-                      groupChatId: group_chat_id || "",
-                      senderId: (payload.record ? payload.record.sender_id : payload.sender_id) || "",
-                      badge: String(badgeCount)
-                    }
-                  }
-                };
+                    };
 
-                const fcmResp = await fetch(fcmUrl, {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${access_token}`,
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify(messageBody)
-                });
-                
-                if (fcmResp.ok) successCount++;
-              });
-              
-              await Promise.all(tokenOperations);
+                    const fcmResp = await fetch(fcmUrl, {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${access_token}`,
+                        'Content-Type': 'application/json'
+                      },
+                      body: JSON.stringify(messageBody)
+                    });
+                    
+                    if (fcmResp.ok) successCount++;
+                  });
+                  
+                  await Promise.all(tokenOperations);
+             }
+         } catch (userErr) {
+             console.error(`Failed to process pushes for user ID ${userId}:`, userErr);
          }
       });
 

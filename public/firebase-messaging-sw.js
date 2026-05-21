@@ -17,54 +17,80 @@ const messaging = firebase.messaging();
 
 function getBadgeCount() {
   return new Promise((resolve) => {
-    firebase.auth().onAuthStateChanged(function(user) {
-      if (user) {
-        const uid = user.uid;
-        firebase.database().ref('/unseen_chat_count/' + uid).once('value')
-          .then((snapshot) => {
-            const count = snapshot.val() || 0;
-            resolve(count);
-          })
-          .catch((err) => {
-            console.error('Failed to get unseen count:', err);
-            resolve(null);
+    // Try Cache Storage first (instant and reliable in background)
+    caches.open('user-meta')
+      .then(cache => cache.match('/uid'))
+      .then(response => {
+        if (response) {
+          return response.text();
+        }
+        return null;
+      })
+      .then((cacheUid) => {
+        if (cacheUid) {
+          return cacheUid;
+        }
+        // Fallback to Auth
+        return new Promise((innerResolve) => {
+          const unsubscribe = firebase.auth().onAuthStateChanged(function(user) {
+            if (user) {
+              innerResolve(user.uid);
+            } else {
+              innerResolve(null);
+            }
+            unsubscribe();
           });
-      } else {
+          setTimeout(() => innerResolve(null), 1000);
+        });
+      })
+      .then((uid) => {
+        if (uid) {
+          firebase.database().ref('/unseen_chat_count/' + uid).once('value')
+            .then((snapshot) => {
+              const count = snapshot.val() || 0;
+              resolve(count);
+            })
+            .catch((err) => {
+              console.error('Failed to get unseen count:', err);
+              resolve(null);
+            });
+        } else {
+          resolve(null);
+        }
+      })
+      .catch((err) => {
+        console.error('Cache or direct read failed:', err);
         resolve(null);
-      }
-    });
-    
-    // Fallback if auth state doesn't resolve quickly
-    setTimeout(() => resolve(null), 3000);
+      });
   });
 }
 
 messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
-  const notificationTitle = payload.data?.title || 'New Message';
-  const notificationOptions = {
-    body: payload.data?.body || '',
-    icon: '/icon-192.png',
-    data: {
-      url: payload.data?.url || '/',
-      senderId: payload.data?.senderId || payload.data?.sender_id || '',
-      groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
-    }
-  };
-
   const promiseChain = getBadgeCount().then((badgeCount) => {
     if (badgeCount !== null) {
-      notificationOptions.data.badge = badgeCount;
       if ('setAppBadge' in navigator) {
         navigator.setAppBadge(parseInt(badgeCount)).catch(() => {});
       }
     }
-    return self.registration.showNotification(notificationTitle, notificationOptions);
+
+    // ONLY display manual notification if payload.notification is ABSENT (i.e. a data-only message)
+    if (!payload.notification) {
+      const notificationTitle = payload.data?.title || 'New Message';
+      const notificationOptions = {
+        body: payload.data?.body || '',
+        icon: '/icon-192.png',
+        data: {
+          url: payload.data?.url || '/',
+          senderId: payload.data?.senderId || payload.data?.sender_id || '',
+          groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
+        }
+      };
+      return self.registration.showNotification(notificationTitle, notificationOptions);
+    }
   });
 
-  // Use waitUntil if possible in standard SW, but Firebase onBackgroundMessage wraps things.
-  // Actually, returning a Promise blocks the SW until it's done, which acts like waitUntil.
   return promiseChain;
 });
 

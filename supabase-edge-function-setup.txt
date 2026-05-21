@@ -131,7 +131,7 @@ serve(async (req) => {
 
     let bodyText = message.content;
     if (message.media_type === 'shared_post') {
-      bodyText = 'Has shared a post';
+      bodyText = 'Shared a post with you';
     } else if (!bodyText) {
       if (message.media_type === 'image') {
         bodyText = 'Sent you an image';

@@ -256,55 +256,7 @@ export const checkGroupPresenceAndNotify = async (
   participantIds: string[],
   messageData: any
 ) => {
-  if (!rtdb) return;
-  try {
-    const promises = participantIds
-      .filter(id => id !== senderId)
-      .map(async (receiverId) => {
-        const mailKey = `${receiverId}:${groupId}`;
-        const isAlreadyInFlight = inFlightMails.has(mailKey);
-        inFlightMails.add(mailKey);
-
-        try {
-          const locationRef = ref(rtdb, `location/${receiverId}`);
-          const inboxRef = ref(rtdb, `inboxes/${receiverId}/${groupId}`);
-          
-          const locSnap = await get(locationRef);
-          const location = locSnap.val();
-          if (location === groupId) {
-            inFlightMails.delete(mailKey);
-            return;
-          }
-          
-          let needsIncrement = false;
-          if (!isAlreadyInFlight) {
-            await runTransaction(inboxRef, (currentVal) => {
-              if (currentVal === false) {
-                return; // already false, abort transaction
-              }
-              needsIncrement = true;
-              return false; // set to false
-            });
-          }
-
-          if (needsIncrement) {
-            const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
-            await runTransaction(countRef, (currentVal) => {
-              return (currentVal || 0) + 1;
-            });
-          }
-        } catch (err) {
-          console.error(`Group notifier failed for participant ${receiverId} in group ${groupId}:`, err);
-        } finally {
-          setTimeout(() => {
-            inFlightMails.delete(mailKey);
-          }, 1500);
-        }
-      });
-      
-    await Promise.all(promises);
-  } catch (error) {
-    console.warn("Error in checkGroupPresenceAndNotify:", error);
-  }
+  // Group chat RTDB states and pushes are completely handled by the Cloudflare Worker server-side.
+  return;
 };
 

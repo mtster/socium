@@ -66,6 +66,17 @@ export default function App() {
     let unmountPresence: (() => void) | undefined;
     if (session?.user?.id) {
       unmountPresence = initPresence(session.user.id);
+      if (typeof window !== 'undefined' && 'caches' in window) {
+        caches.open('user-meta').then(cache => {
+          cache.put('/uid', new Response(session.user.id));
+        }).catch(err => console.error('Failed to cache UID:', err));
+      }
+    } else {
+      if (typeof window !== 'undefined' && 'caches' in window) {
+        caches.open('user-meta').then(cache => {
+          cache.delete('/uid');
+        }).catch(err => console.error('Failed to clear cached UID:', err));
+      }
     }
     return () => {
       if (unmountPresence) unmountPresence();
