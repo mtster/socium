@@ -158,6 +158,18 @@ serve(async (req) => {
 
       const payload = {
         token: fcmToken,
+        notification: {
+          title: senderName,
+          body: bodyText
+        },
+        apns: {
+          payload: {
+            aps: {
+              badge: badgeCount,
+              sound: 'default'
+            }
+          }
+        },
         data: {
           title: senderName,
           body: bodyText,

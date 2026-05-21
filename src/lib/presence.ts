@@ -58,10 +58,44 @@ export const initPresence = (userId: string) => {
     }
   });
 
+  // Track inboxes in real-time to immediately clear unread state if user is inside that chat room,
+  // and maintain strict, correct self-healed unseen_chat_count even with concurrent messages.
+  const inboxesRef = ref(rtdb, `inboxes/${userId}`);
+  const unsubscribeInboxes = onValue(inboxesRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      const uCountRef = ref(rtdb, `unseen_chat_count/${userId}`);
+      set(uCountRef, 0).catch(console.error);
+      return;
+    }
+    const inboxes = snapshot.val();
+    let actualFalseCount = 0;
+    
+    Object.keys(inboxes).forEach((chatId) => {
+      if (inboxes[chatId] === false) {
+        const currentOpenChatId = (window as any).currentChatUserId;
+        if (currentOpenChatId === chatId) {
+          markChatAsSeen(userId, chatId);
+        } else {
+          actualFalseCount++;
+        }
+      }
+    });
+
+    // Auto-align unseen_chat_count to perfectly match actual false inboxes count inside database
+    const uCountRef = ref(rtdb, `unseen_chat_count/${userId}`);
+    get(uCountRef).then((countSnap) => {
+      const currentCount = countSnap.val() || 0;
+      if (currentCount !== actualFalseCount) {
+        set(uCountRef, actualFalseCount).catch(console.error);
+      }
+    }).catch(console.error);
+  });
+
   return () => {
     set(globalPresenceRef, false).catch(console.error);
     set(locationRef, 'none').catch(console.error);
     unsubscribeCount();
+    unsubscribeInboxes();
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
@@ -89,33 +123,50 @@ export const markChatAsSeen = (userId: string, chatId: string) => {
   seenProcessing.add(chatId);
 
   const inboxRef = ref(rtdb, `inboxes/${userId}/${chatId}`);
-  runTransaction(inboxRef, (currentVal) => {
-    if (currentVal === false) {
-      return true;
-    }
-    return; // Already true, or doesn't exist, abort transaction
-  }).then((result) => {
-    seenProcessing.delete(chatId);
-    if (result.committed && result.snapshot.val() === true) {
-      const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
-      runTransaction(countRef, (currentVal) => {
-        return Math.max(0, (currentVal || 0) - 1);
-      }).then((countResult) => {
-        if (countResult.committed) {
-          const newCount = countResult.snapshot.val() || 0;
-          if (newCount > 0 && 'setAppBadge' in navigator) {
-            (navigator as any).setAppBadge(newCount).catch(console.warn);
-          } else if (newCount <= 0 && 'clearAppBadge' in navigator) {
-            (navigator as any).clearAppBadge().catch(console.warn);
-          }
+
+  // Fetch true state from server before transaction to populate local cache and prevent early aborts!
+  get(inboxRef).then((snapshot) => {
+    const val = snapshot.val();
+    if (val === false) {
+      runTransaction(inboxRef, (currentVal) => {
+        // Since we did 'get', local cache is populated.
+        if (currentVal === false || currentVal === null) {
+          return true;
         }
-      }).catch(console.warn);
+        return; // Already true, abort
+      }).then((result) => {
+        seenProcessing.delete(chatId);
+        if (result.committed) {
+          const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
+          runTransaction(countRef, (currentVal) => {
+            return Math.max(0, (currentVal || 0) - 1);
+          }).then((countResult) => {
+            if (countResult.committed) {
+              const newCount = countResult.snapshot.val() || 0;
+              if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator) {
+                if (newCount > 0) {
+                  (navigator as any).setAppBadge(newCount).catch(console.warn);
+                } else {
+                  (navigator as any).clearAppBadge().catch(console.warn);
+                }
+              }
+            }
+          }).catch(console.warn);
+        }
+      }).catch((err) => {
+        seenProcessing.delete(chatId);
+        console.warn("markChatAsSeen transaction failed:", err);
+      });
+    } else {
+      seenProcessing.delete(chatId);
     }
   }).catch((err) => {
     seenProcessing.delete(chatId);
-    console.warn("markChatAsSeen transaction failed:", err);
+    console.warn("get inbox failed in markChatAsSeen:", err);
   });
 };
+
+const inFlightMails = new Set<string>();
 
 export const checkRecipientPresenceAndNotify = async (
   senderId: string, 
@@ -126,6 +177,10 @@ export const checkRecipientPresenceAndNotify = async (
   if (!rtdb) return;
 
   if (receiverId === senderId) return;
+  
+  const mailKey = `${receiverId}:${chatId}`;
+  const isAlreadyInFlight = inFlightMails.has(mailKey);
+  inFlightMails.add(mailKey);
   
   try {
     const inboxRef = ref(rtdb, `inboxes/${receiverId}/${chatId}`);
@@ -140,18 +195,21 @@ export const checkRecipientPresenceAndNotify = async (
     
     // Case C: recipient has the chat open - nothing gets updated.
     if (location === chatId) {
+      inFlightMails.delete(mailKey);
       return;
     }
     
     // Case B & Case A: recipient has the chat closed - unseen chat number must be incremented atomically.
     let needsIncrement = false;
-    await runTransaction(inboxRef, (currentVal) => {
-      if (currentVal === false) {
-        return; // already false, abort transaction
-      }
-      needsIncrement = true;
-      return false; // set to false
-    });
+    if (!isAlreadyInFlight) {
+      await runTransaction(inboxRef, (currentVal) => {
+        if (currentVal === false) {
+          return; // already false, abort transaction
+        }
+        needsIncrement = true;
+        return false; // set to false
+      });
+    }
 
     const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
     let updatedUnseenCount = 0;
@@ -185,6 +243,10 @@ export const checkRecipientPresenceAndNotify = async (
     supabase.functions.invoke('send-push', {
        body: { ...messageData, chatUrl: 'https://sociumx.vercel.app' }
     }).catch(console.error);
+  } finally {
+    setTimeout(() => {
+      inFlightMails.delete(mailKey);
+    }, 1500);
   }
 };
 
@@ -199,6 +261,10 @@ export const checkGroupPresenceAndNotify = async (
     const promises = participantIds
       .filter(id => id !== senderId)
       .map(async (receiverId) => {
+        const mailKey = `${receiverId}:${groupId}`;
+        const isAlreadyInFlight = inFlightMails.has(mailKey);
+        inFlightMails.add(mailKey);
+
         try {
           const locationRef = ref(rtdb, `location/${receiverId}`);
           const inboxRef = ref(rtdb, `inboxes/${receiverId}/${groupId}`);
@@ -206,18 +272,20 @@ export const checkGroupPresenceAndNotify = async (
           const locSnap = await get(locationRef);
           const location = locSnap.val();
           if (location === groupId) {
-            // Recipient is active in this group chat room right now, do not notify/set unseen
+            inFlightMails.delete(mailKey);
             return;
           }
           
           let needsIncrement = false;
-          await runTransaction(inboxRef, (currentVal) => {
-            if (currentVal === false) {
-              return; // already false, abort transaction
-            }
-            needsIncrement = true;
-            return false; // set to false
-          });
+          if (!isAlreadyInFlight) {
+            await runTransaction(inboxRef, (currentVal) => {
+              if (currentVal === false) {
+                return; // already false, abort transaction
+              }
+              needsIncrement = true;
+              return false; // set to false
+            });
+          }
 
           if (needsIncrement) {
             const countRef = ref(rtdb, `unseen_chat_count/${receiverId}`);
@@ -227,6 +295,10 @@ export const checkGroupPresenceAndNotify = async (
           }
         } catch (err) {
           console.error(`Group notifier failed for participant ${receiverId} in group ${groupId}:`, err);
+        } finally {
+          setTimeout(() => {
+            inFlightMails.delete(mailKey);
+          }, 1500);
         }
       });
       
