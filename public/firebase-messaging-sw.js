@@ -136,20 +136,25 @@ self.addEventListener('notificationclick', function(event) {
   console.log('[firebase-messaging-sw.js] Notification click Received.', event);
   event.notification.close();
 
-  let urlToOpen = event.notification.data?.url || '/';
+  // Robust deep-extraction from potential FCM message containers
+  const dataNode = event.notification.data || {};
+  const fcmNode = dataNode.FCM_MSG?.data || {};
+  const fcmNotification = dataNode.FCM_MSG?.notification || {};
+
+  let urlToOpen = dataNode.url || fcmNode.url || dataNode.FCM_MSG?.webpush?.fcm_options?.link || dataNode.click_action || fcmNotification.click_action || '/';
   
   // Extract custom payload fields supporting multiple casing formats (camelCase & snake_case)
-  let senderId = event.notification.data?.senderId || event.notification.data?.sender_id || '';
-  let groupChatId = event.notification.data?.groupChatId || event.notification.data?.group_chat_id || '';
+  let senderId = dataNode.senderId || dataNode.sender_id || fcmNode.senderId || fcmNode.sender_id || '';
+  let groupChatId = dataNode.groupChatId || dataNode.group_chat_id || fcmNode.groupChatId || fcmNode.group_chat_id || '';
 
   // Fail-safe: extract search parameters directly from the payload's url
   try {
     const parsedUrl = new URL(urlToOpen, self.location.origin);
     if (!groupChatId) {
-      groupChatId = parsedUrl.searchParams.get('chatId') || '';
+      groupChatId = parsedUrl.searchParams.get('chatId') || parsedUrl.searchParams.get('groupChatId') || '';
     }
     if (!senderId) {
-      senderId = parsedUrl.searchParams.get('chat_with') || parsedUrl.searchParams.get('chatId') || '';
+      senderId = parsedUrl.searchParams.get('chat_with') || parsedUrl.searchParams.get('senderId') || '';
     }
   } catch (e) {
     console.warn('[firebase-messaging-sw.js] URL parsing exception in notificationclick:', e);
@@ -172,9 +177,18 @@ self.addEventListener('notificationclick', function(event) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
-          // If the page is already open, focus it and trigger an instant routing transition.
-          // By utilizing postMessage, we completely bypass sluggish full page reloads in SPA!
+          // Robust PWA & iOS Safari Navigation:
+          // We always call client.navigate(absoluteUrl) to force the open client to route or reload to the exact chat room.
+          // This ensures that the URL updates, and the React app transitions gracefully or reloads into the active chat.
+          if ('navigate' in client) {
+            client.navigate(absoluteUrl).catch((err) => {
+              console.warn('[firebase-messaging-sw.js] client.navigate failed:', err);
+            });
+          }
+          // Send message to the channel as an immediate reactive SPA update for foreground applications
           client.postMessage({ type: 'OPEN_CHAT', senderId, groupChatId });
+          
+          // Focus the PWA screen
           client.focus();
           return;
         }
