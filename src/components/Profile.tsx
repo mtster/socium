@@ -115,22 +115,24 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
   useEffect(() => {
     const targetPostId = sessionStorage.getItem('scroll_to_post_id');
-    if (targetPostId) {
-      sessionStorage.removeItem('scroll_to_post_id');
-      
+    if (targetPostId && posts && posts.some(p => p.id === targetPostId)) {
       let attempts = 0;
       const interval = setInterval(() => {
         const element = document.getElementById(`post-card-${targetPostId}`);
         attempts++;
         if (element) {
           clearInterval(interval);
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          element.classList.add('animate-highlight-glow');
+          sessionStorage.removeItem('scroll_to_post_id');
           setTimeout(() => {
-            element.classList.remove('animate-highlight-glow');
-          }, 3000);
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.classList.add('animate-highlight-glow');
+            setTimeout(() => {
+              element.classList.remove('animate-highlight-glow');
+            }, 3000);
+          }, 100);
         } else if (attempts > 30) {
           clearInterval(interval);
+          sessionStorage.removeItem('scroll_to_post_id');
         }
       }, 150);
     }

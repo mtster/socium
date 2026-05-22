@@ -321,17 +321,21 @@ BEGIN
     WHERE chat_id = NEW.group_chat_id AND user_id != NEW.sender_id AND COALESCE(is_muted, false) = false;
     
     IF recipients IS NOT NULL AND array_length(recipients, 1) > 0 THEN
-      -- Fetch FCM tokens for the recipients grouped by user_id
+      -- Fetch FCM tokens for all recipients (if subscriber exists, left join, otherwise empty array)
       WITH user_tokens AS (
-        SELECT user_id, array_agg(DISTINCT endpoint) as tokens
+        SELECT user_id, array_agg(DISTINCT endpoint) FILTER (WHERE endpoint IS NOT NULL) as tokens
         FROM public.push_subscriptions
         WHERE user_id = ANY(recipients)
         GROUP BY user_id
       )
       SELECT jsonb_agg(
-        jsonb_build_object('userId', user_id, 'tokens', tokens)
+        jsonb_build_object(
+          'userId', r.id,
+          'tokens', COALESCE(ut.tokens, ARRAY[]::TEXT[])
+        )
       ) INTO fcm_tokens
-      FROM user_tokens;
+      FROM unnest(recipients) as r(id)
+      LEFT JOIN user_tokens ut ON ut.user_id = r.id;
 
       -- Fetch profile info
       SELECT full_name, username INTO sender_info FROM public.profiles WHERE id = NEW.sender_id;

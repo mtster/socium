@@ -98,6 +98,15 @@ export default function App() {
       }
       handleUserClick(targetUserId, forcePopup);
     };
+    const handleOpenOwnProfileAndScroll = (e: any) => {
+      const postId = e.detail?.postId;
+      if (postId) {
+        sessionStorage.setItem("scroll_to_post_id", postId);
+      }
+      setInitialActiveChat(null);
+      setViewingProfileId(null);
+      setActiveTab('profile');
+    };
     const handleViewerState = (e: any) => {
       setIsImageViewerOpen(e.detail.isOpen);
     };
@@ -122,6 +131,7 @@ export default function App() {
 
     window.addEventListener('openChat', handleOpenChat);
     window.addEventListener('openProfile', handleOpenProfile);
+    window.addEventListener('openOwnProfileAndScroll', handleOpenOwnProfileAndScroll);
     window.addEventListener('viewerState', handleViewerState);
     window.addEventListener('resetTab', handleResetTab);
     window.addEventListener('set-header-hidden', handleSetHeaderHidden);
@@ -202,6 +212,7 @@ export default function App() {
       subscription.unsubscribe();
       window.removeEventListener('openChat', handleOpenChat);
       window.removeEventListener('openProfile', handleOpenProfile);
+      window.removeEventListener('openOwnProfileAndScroll', handleOpenOwnProfileAndScroll);
       window.removeEventListener('viewerState', handleViewerState);
       window.removeEventListener('resetTab', handleResetTab);
       window.removeEventListener('set-header-hidden', handleSetHeaderHidden);
@@ -409,6 +420,73 @@ export default function App() {
       }
     }, []);
 
+  const checkUrlParamsAndRoute = async () => {
+    if (typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const chatWith = urlParams.get('chat_with') || urlParams.get('chatId');
+    if (!chatWith) return;
+
+    try {
+      // 1. Check if it's a private chat recipient profile
+      const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatWith).single();
+      if (senderProfile) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setFloatingAvatar(null);
+        setInitialActiveChat(senderProfile);
+        setViewingProfileId(null);
+        setActiveTab('chat');
+        return;
+      }
+    } catch (err) {
+      console.warn("Not a profiles row, checking group_chats:", err);
+    }
+
+    try {
+      // 2. Check if it is a group chat
+      const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', chatWith).single();
+      if (groupChat) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setFloatingAvatar(null);
+        setInitialActiveChat({
+          id: groupChat.id,
+          username: groupChat.name || 'Group',
+          full_name: groupChat.name || 'Group',
+          avatar_url: groupChat.avatar_url || null,
+          isGroup: true
+        } as any);
+        setViewingProfileId(null);
+        setActiveTab('chat');
+        return;
+      }
+    } catch (err) {
+      console.warn("Not a group chat row either:", err);
+    }
+
+    // 3. Fallback: If both fail, navigate to the main chat list tab
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setInitialActiveChat(null);
+    setActiveTab('chat');
+  };
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkUrlParamsAndRoute();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+    if (session) {
+      checkUrlParamsAndRoute();
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+    };
+  }, [session]);
+
   const [notifPermission, setNotifPermission] = useState(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
   const [hasPushSubscription, setHasPushSubscription] = useState<boolean | null>(null);
 
@@ -510,9 +588,11 @@ export default function App() {
     setViewingProfileData({ profile: pData, posts: postsData as any || [] });
   };
 
-  // Ensure scroll is reset when tab changes
+  // Ensure scroll is reset when tab changes (unless we are scrolling to a specific post)
   useEffect(() => {
-    if (activeTab === 'profile') mainRef.current?.scrollTo(0, 0);
+    if (activeTab === 'profile' && !sessionStorage.getItem('scroll_to_post_id')) {
+      mainRef.current?.scrollTo(0, 0);
+    }
   }, [activeTab]);
 
   const handleDeletePost = async (postId: string) => {
