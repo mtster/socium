@@ -370,6 +370,10 @@ export default function App() {
             const senderId = event.data.senderId || event.data.sender_id;
             const groupChatId = event.data.groupChatId || event.data.group_chat_id;
             
+            if (typeof window !== 'undefined' && 'caches' in window) {
+              caches.open('notification-route').then(c => c.delete('/target-route')).catch(() => {});
+            }
+            
             if (groupChatId) {
                const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
                if (groupChat) {
@@ -468,10 +472,59 @@ export default function App() {
     setActiveTab('chat');
   };
 
+  const checkNotificationRouteAndNavigate = async () => {
+    if (typeof window === 'undefined' || !('caches' in window)) return;
+    try {
+      const cache = await caches.open('notification-route');
+      const response = await cache.match('/target-route');
+      if (response) {
+        const data = await response.json();
+        // Clear the cache immediately so it doesn't trigger again
+        await cache.delete('/target-route');
+        
+        const senderId = data.senderId;
+        const groupChatId = data.groupChatId;
+        
+        if (groupChatId) {
+          const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
+          if (groupChat) {
+            setFloatingAvatar(null);
+            setInitialActiveChat({
+              id: groupChat.id,
+              username: groupChat.name || 'Group',
+              full_name: groupChat.name || 'Group',
+              avatar_url: groupChat.avatar_url || null,
+              isGroup: true
+            } as any);
+            setViewingProfileId(null);
+            setActiveTab('chat');
+            return;
+          }
+        } else if (senderId) {
+          const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
+          if (senderProfile) {
+            setFloatingAvatar(null);
+            setInitialActiveChat(senderProfile);
+            setViewingProfileId(null);
+            setActiveTab('chat');
+            return;
+          }
+        }
+        
+        // Fallback: If no specific routing details or fetching failed, navigate to the main chat page as requested
+        setInitialActiveChat(null);
+        setActiveTab('chat');
+      }
+    } catch (err) {
+      console.warn('Error checking stored notification route:', err);
+    }
+  };
+
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         checkUrlParamsAndRoute();
+        checkNotificationRouteAndNavigate();
       }
     };
     if (typeof document !== 'undefined') {
@@ -479,6 +532,7 @@ export default function App() {
     }
     if (session) {
       checkUrlParamsAndRoute();
+      checkNotificationRouteAndNavigate();
     }
     return () => {
       if (typeof document !== 'undefined') {

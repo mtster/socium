@@ -144,10 +144,10 @@ export default {
                   
                   // 2. increment unseen chat count node for the recipient by +1 atomically
                   if (inboxSeen !== false) {
-                      await fetch(`${dbUrl}/unseen_chat_count.json?access_token=${access_token}`, {
-                        method: 'PATCH',
+                      await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                        method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ [userId]: { ".sv": { "increment": 1 } } })
+                        body: JSON.stringify({ ".sv": { "increment": 1 } })
                       });
                   }
                   shouldSendNotification = false; // Do not send push notification if user is online in app
@@ -162,10 +162,10 @@ export default {
                   
                   // 2. increment unseen chat count node for the recipient by +1 atomically (only if inbox was not already false)
                   if (inboxSeen !== false) {
-                      await fetch(`${dbUrl}/unseen_chat_count.json?access_token=${access_token}`, {
-                        method: 'PATCH',
+                      await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
+                        method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ [userId]: { ".sv": { "increment": 1 } } })
+                        body: JSON.stringify({ ".sv": { "increment": 1 } })
                       });
                   }
                   

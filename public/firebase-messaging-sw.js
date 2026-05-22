@@ -173,27 +173,44 @@ self.addEventListener('notificationclick', function(event) {
   const absoluteUrl = new URL(urlToOpen, baseUrl).href;
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
+    caches.open('notification-route').then(function(cache) {
+      const routeData = {
+        senderId: senderId,
+        groupChatId: groupChatId,
+        url: absoluteUrl,
+        timestamp: Date.now()
+      };
+      return cache.put(
+        new Request('/target-route'),
+        new Response(JSON.stringify(routeData), {
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+    }).then(function() {
+      return clients.matchAll({ type: 'window', includeUncontrolled: true });
+    }).then(function(windowClients) {
+      let focused = false;
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if ('focus' in client) {
-          // Robust PWA & iOS Safari Navigation:
-          // We always call client.navigate(absoluteUrl) to force the open client to route or reload to the exact chat room.
-          // This ensures that the URL updates, and the React app transitions gracefully or reloads into the active chat.
+          try {
+            client.postMessage({ type: 'OPEN_CHAT', senderId: senderId, groupChatId: groupChatId, url: absoluteUrl });
+          } catch (e) {
+            console.warn('[firebase-messaging-sw.js] postMessage failed:', e);
+          }
+          
+          client.focus();
+          
           if ('navigate' in client) {
             client.navigate(absoluteUrl).catch((err) => {
               console.warn('[firebase-messaging-sw.js] client.navigate failed:', err);
             });
           }
-          // Send message to the channel as an immediate reactive SPA update for foreground applications
-          client.postMessage({ type: 'OPEN_CHAT', senderId, groupChatId });
-          
-          // Focus the PWA screen
-          client.focus();
-          return;
+          focused = true;
+          break;
         }
       }
-      if (clients.openWindow) {
+      if (!focused && clients.openWindow) {
         return clients.openWindow(absoluteUrl);
       }
     })
