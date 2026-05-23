@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Users } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { rtdb } from '@/src/lib/firebase';
-import { ref, onValue, set, get, remove, off } from 'firebase/database';
+import { ref, onValue, set, get, remove, off, onDisconnect } from 'firebase/database';
 import { useStore } from '@/src/store/useStore';
 
 // Web Audio API Ringtone and Sound Effects synthesizer
@@ -162,14 +162,23 @@ export function CallsManager() {
     activeCallRef.current = activeCall;
   }, [activeCall]);
 
+  // Sync callStatus reference for async closures
+  const callStatusRef = useRef(callStatus);
+  useEffect(() => {
+    callStatusRef.current = callStatus;
+  }, [callStatus]);
+
   // Ref tracking current local stream to guarantee exact track level shutdowns
   const localStreamRef = useRef<MediaStream | null>(null);
 
   // Timer Ref
   const timerRef = useRef<any>(null);
 
-  // WebRTC Connection Refs (handling 1-on-1 calls seamlessly)
+  // WebRTC Connection Refs (handling 1-on-1 and group mesh calling seamlessly)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -235,17 +244,24 @@ export function CallsManager() {
           if (callData) {
             setActiveCall(callData);
             
-            // Check if there are other participants and if all have declined, automatically close
-            const otherParticipants = Object.keys(callData.participants).filter(uid => uid !== currentUserId);
-            if (otherParticipants.length > 0) {
-              const hasActiveOther = otherParticipants.some(uid => 
-                callData.participants[uid].status === 'ringing' || callData.participants[uid].status === 'accepted'
-              );
-              if (!hasActiveOther) {
-                handleLocalHangup();
-                return;
+            // Check if we are the caller and all participants declined, automatically close
+            if (callData.meta.caller_id === currentUserId) {
+              const recipientsList = Object.keys(callData.participants || {});
+              if (recipientsList.length > 0) {
+                const hasActiveRecipient = recipientsList.some(uid => 
+                  callData.participants[uid].status === 'ringing' || callData.participants[uid].status === 'accepted'
+                );
+                if (!hasActiveRecipient) {
+                  handleLocalHangup();
+                  return;
+                }
               }
             }
+
+            // Register database state cleanups on disconnect
+            const selfPartRef = ref(rtdb, `calls/${incomingCallId}/participants/${currentUserId}/status`);
+            onDisconnect(selfPartRef).set('declined');
+            onDisconnect(ref(rtdb, `user_calls/${currentUserId}/active`)).set(null);
 
             // Determine our current status In the participant pool
             const selfPart = callData.participants?.[currentUserId];
@@ -275,6 +291,8 @@ export function CallsManager() {
       const { chat, type } = e.detail;
       if (!chat) return;
 
+      setIsMuted(false);
+      setIsVideoDisabled(false);
       const newCallId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       setCallId(newCallId);
       setCallStatus('ringing_outgoing');
@@ -323,7 +341,25 @@ export function CallsManager() {
       const offlineIds: string[] = [];
 
       for (const rid of recipients) {
-        participants[rid] = { status: 'ringing' };
+        let pName = 'User';
+        let pAvatar = null;
+        if (chat.isGroup && chat.participants) {
+          const matched = chat.participants.find((p: any) => (p.id || p.user_id) === rid);
+          if (matched) {
+            pName = matched.full_name || matched.username || 'User';
+            pAvatar = matched.avatar_url || null;
+          }
+        } else {
+          pName = chat.name || 'User';
+          pAvatar = chat.avatar_url || null;
+        }
+
+        participants[rid] = { 
+          status: 'ringing',
+          name: pName,
+          avatar_url: pAvatar
+        };
+
         try {
           const presenceSnap = await get(ref(rtdb, `global_presence/${rid}`));
           const isOnline = presenceSnap.val() === true;
@@ -340,15 +376,20 @@ export function CallsManager() {
 
       const freshCallNode: CallNode = { meta, participants };
 
-      // Write initial Call node
-      await set(ref(rtdb, `calls/${newCallId}`), freshCallNode);
+      // Write initial Call node and register onDisconnect rules
+      const callRefNode = ref(rtdb, `calls/${newCallId}`);
+      await set(callRefNode, freshCallNode);
+      onDisconnect(callRefNode).remove();
 
       // Write active call indicator to caller's self-user node in RTDB too
-      await set(ref(rtdb, `user_calls/${currentUserId}/active`), newCallId);
+      const selfActiveCallRef = ref(rtdb, `user_calls/${currentUserId}/active`);
+      await set(selfActiveCallRef, newCallId);
+      onDisconnect(selfActiveCallRef).set(null);
 
-      // Propagate active identifier to recipients (ringing socket triggers)
+      // Propagate active identifier to recipients (ringing socket triggers) and setup disconnect fallbacks
       for (const rid of recipients) {
         await set(ref(rtdb, `user_calls/${rid}/active`), newCallId);
+        onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
       }
 
       // Initialize Local Stream for Caller (exactly ONCE)
@@ -379,15 +420,17 @@ export function CallsManager() {
         if (val) {
           setActiveCall(val);
           
-          // Check if all other participants have declined, automatically close
-          const otherParticipants = Object.keys(val.participants).filter(uid => uid !== currentUserId);
-          if (otherParticipants.length > 0) {
-            const hasActiveOther = otherParticipants.some(uid => 
-              val.participants[uid].status === 'ringing' || val.participants[uid].status === 'accepted'
-            );
-            if (!hasActiveOther) {
-              handleLocalHangup();
-              return;
+          // Check if we are the caller and all participants declined, automatically close
+          if (val.meta.caller_id === currentUserId) {
+            const recipientsList = Object.keys(val.participants || {});
+            if (recipientsList.length > 0) {
+              const hasActiveRecipient = recipientsList.some(uid => 
+                val.participants[uid].status === 'ringing' || val.participants[uid].status === 'accepted'
+              );
+              if (!hasActiveRecipient) {
+                handleLocalHangup();
+                return;
+              }
             }
           }
 
@@ -406,9 +449,10 @@ export function CallsManager() {
         }
       });
 
-      // FCM worker triggers for both private and group chats
+      // FCM worker triggers for both private and group chats (cyclic loop for 3 chimes)
       if (recipients.length > 0) {
         try {
+          // Allow client side FCM bypass checking to ensure absolute delivery
           const { data: pushRecs } = await supabase
             .from('push_subscriptions')
             .select('user_id, endpoint')
@@ -429,20 +473,32 @@ export function CallsManager() {
             // Connect strictly to user's desired Cloudflare Worker
             const callsWorkerUrl = 'https://socium-call-notifications.brare-black.workers.dev/';
             
-            fetch(callsWorkerUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                call_id: newCallId,
-                caller_id: currentUserId,
-                caller_name: callerName,
-                caller_avatar: callerAvatar,
-                chat_room_id: chat.id,
-                type: type,
-                is_group: chat.isGroup,
-                recipient_tokens: recipientTokens
-              })
-            }).catch(e => console.error("Cloudflare calls worker post error:", e));
+            let triggerCount = 0;
+            const runPushTrigger = () => {
+              if (callStatusRef.current !== 'ringing_outgoing' || triggerCount >= 3) return;
+              triggerCount++;
+              
+              fetch(callsWorkerUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  call_id: newCallId,
+                  caller_id: currentUserId,
+                  caller_name: callerName,
+                  caller_avatar: callerAvatar,
+                  chat_room_id: chat.id,
+                  type: type,
+                  is_group: chat.isGroup,
+                  recipient_tokens: recipientTokens
+                })
+              }).catch(e => console.error("Cloudflare calls worker post error:", e));
+
+              if (triggerCount < 3) {
+                setTimeout(runPushTrigger, 3500);
+              }
+            };
+
+            runPushTrigger();
           }
         } catch (supabaseErr) {
           console.error("Supabase notification pre-fetch failed:", supabaseErr);
@@ -514,9 +570,21 @@ export function CallsManager() {
       setRemoteStream(null);
     }
     if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
+      try {
+        peerConnectionRef.current.close();
+      } catch (e) {}
       peerConnectionRef.current = null;
     }
+
+    // Clean up all mesh connections
+    Object.keys(peerConnectionsRef.current).forEach(uid => {
+      try {
+        peerConnectionsRef.current[uid].close();
+      } catch (e) {}
+    });
+    peerConnectionsRef.current = {};
+    setRemoteStreams({});
+
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
     }
@@ -526,8 +594,185 @@ export function CallsManager() {
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
+    setIsMuted(false);
+    setIsVideoDisabled(false);
     synth.stopRinging();
   };
+
+  // Symmetrical Multi-party WebRTC Mesh network setup
+  const setupMeshPeerConnection = async (targetUserId: string) => {
+    if (peerConnectionsRef.current[targetUserId] || !callId) return;
+
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      peerConnectionsRef.current[targetUserId] = pc;
+
+      // Add actual tracks to this custom mesh peer connection
+      const activeLocalStream = localStreamRef.current || localStream;
+      if (activeLocalStream) {
+        activeLocalStream.getTracks().forEach(track => {
+          pc.addTrack(track, activeLocalStream);
+        });
+      }
+
+      pc.ontrack = (event) => {
+        let incomingStream = event.streams && event.streams[0];
+        if (!incomingStream && event.track) {
+          incomingStream = new MediaStream([event.track]);
+        }
+        if (incomingStream) {
+          setRemoteStreams(prev => ({
+            ...prev,
+            [targetUserId]: incomingStream
+          }));
+        }
+      };
+
+      const isOfferer = currentUserId < targetUserId;
+      const userA = isOfferer ? currentUserId : targetUserId;
+      const userB = isOfferer ? targetUserId : currentUserId;
+      const signalingKey = `${userA}_to_${userB}`;
+
+      if (isOfferer) {
+        pc.onicecandidate = (event) => {
+          if (event.candidate && callId) {
+            const candRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_A/${Date.now()}`);
+            set(candRef, JSON.stringify(event.candidate.toJSON()));
+          }
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await set(ref(rtdb, `calls/${callId}/signaling/${signalingKey}/offer`), JSON.stringify({
+          type: offer.type,
+          sdp: offer.sdp
+        }));
+
+        const answerRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/answer`);
+        const iceQueue: any[] = [];
+        onValue(answerRef, async (snap) => {
+          const val = snap.val();
+          if (val && pc.signalingState === "have-local-offer") {
+            const answer = JSON.parse(val);
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            while (iceQueue.length > 0) {
+              const qCand = iceQueue.shift();
+              if (qCand) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(qCand)); } catch (e) {}
+              }
+            }
+          }
+        });
+
+        const candRefB = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_B`);
+        onValue(candRefB, (snap) => {
+          const val = snap.val();
+          if (val) {
+            Object.keys(val).forEach(async (k) => {
+              try {
+                const cand = JSON.parse(val[k]);
+                if (pc.remoteDescription) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                } else {
+                  iceQueue.push(cand);
+                }
+              } catch (e) {}
+            });
+          }
+        });
+
+      } else {
+        pc.onicecandidate = (event) => {
+          if (event.candidate && callId) {
+            const candRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_B/${Date.now()}`);
+            set(candRef, JSON.stringify(event.candidate.toJSON()));
+          }
+        };
+
+        const offerRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/offer`);
+        const iceQueue: any[] = [];
+        onValue(offerRef, async (snap) => {
+          const val = snap.val();
+          if (val && pc.signalingState === "stable") {
+            const offer = JSON.parse(val);
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await set(ref(rtdb, `calls/${callId}/signaling/${signalingKey}/answer`), JSON.stringify({
+              type: answer.type,
+              sdp: answer.sdp
+            }));
+            while (iceQueue.length > 0) {
+              const qCand = iceQueue.shift();
+              if (qCand) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(qCand)); } catch (e) {}
+              }
+            }
+          }
+        });
+
+        const candRefA = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_A`);
+        onValue(candRefA, (snap) => {
+          const val = snap.val();
+          if (val) {
+            Object.keys(val).forEach(async (k) => {
+              try {
+                const cand = JSON.parse(val[k]);
+                if (pc.remoteDescription) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                } else {
+                  iceQueue.push(cand);
+                }
+              } catch (e) {}
+            });
+          }
+        });
+      }
+
+    } catch (e) {
+      console.error("setupMeshPeerConnection failed for:", targetUserId, e);
+    }
+  };
+
+  // Synchronize multi-user active connected components on value change
+  useEffect(() => {
+    if (callStatus !== 'connected' || !callId || !activeCall) {
+      return;
+    }
+
+    const callerId = activeCall.meta.caller_id;
+    const acceptedParticipants = Object.keys(activeCall.participants || {}).filter(
+      uid => activeCall.participants[uid].status === 'accepted'
+    );
+    
+    // Connect to all other connected participants (caller + accepted non-self recipients)
+    const otherAcceptedIds = [callerId, ...acceptedParticipants]
+      .filter(uid => uid !== currentUserId);
+
+    // 1. Clean up stale connections
+    Object.keys(peerConnectionsRef.current).forEach(uid => {
+      if (!otherAcceptedIds.includes(uid)) {
+        try {
+          peerConnectionsRef.current[uid].close();
+        } catch (e) {}
+        delete peerConnectionsRef.current[uid];
+        setRemoteStreams(prev => {
+          const next = { ...prev };
+          delete next[uid];
+          return next;
+        });
+      }
+    });
+
+    // 2. Setup missing mesh connections
+    otherAcceptedIds.forEach(uid => {
+      if (!peerConnectionsRef.current[uid]) {
+        setupMeshPeerConnection(uid);
+      }
+    });
+  }, [callStatus, callId, activeCall, currentUserId]);
 
   // Full Call Hang Up/Decline local UI controller
   const handleLocalHangup = (isSilent = false) => {
@@ -716,6 +961,8 @@ export function CallsManager() {
   const handleAcceptCall = async () => {
     if (!callId || !activeCall) return;
     synth.playAnswer();
+    setIsMuted(false);
+    setIsVideoDisabled(false);
 
     // Toggle status to accepted
     await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'accepted');
@@ -847,6 +1094,85 @@ export function CallsManager() {
     }
   };
 
+  const getParticipantProfile = (uid: string) => {
+    if (uid === currentUserId) {
+      return {
+        name: 'You',
+        avatar: currentProfile?.avatar_url || ''
+      };
+    }
+    
+    // Check if the participant is the caller
+    if (activeCall?.meta.caller_id === uid) {
+      return {
+        name: activeCall.meta.caller_name || 'Caller',
+        avatar: activeCall.meta.caller_avatar || ''
+      };
+    }
+
+    // Check in participants list
+    const participant = activeCall?.participants?.[uid];
+    return {
+      name: participant?.name || 'User',
+      avatar: participant?.avatar_url || ''
+    };
+  };
+
+  const renderGroupVideoBox = (uid: string, stream: MediaStream | null, isSelf: boolean, index: number, totalDisplays: number) => {
+    const profile = getParticipantProfile(uid);
+    const videoRef = (el: HTMLVideoElement | null) => {
+      if (el) el.srcObject = stream;
+    };
+
+    const colSpanClass = (totalDisplays === 3 && index === 2) ? "col-span-2" : "";
+
+    return (
+      <div 
+        key={uid} 
+        className={`relative bg-zinc-900 border border-white/5 rounded-3xl overflow-hidden shadow-xl w-full h-full flex items-center justify-center ${colSpanClass}`}
+      >
+        {stream ? (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted={isSelf}
+            className="w-full h-full object-cover rounded-3xl"
+          />
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-12 h-12 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
+              {profile.avatar ? (
+                <img src={profile.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <Users className="w-5 h-5 text-white/50" />
+              )}
+            </div>
+            <p className="text-white/40 text-[9px] font-mono tracking-widest uppercase">Connecting...</p>
+          </div>
+        )}
+
+        {/* Small profile pic and name on top-left of each user's display box */}
+        <div className="absolute top-3 left-3 bg-black/65 backdrop-blur-md border border-white/10 rounded-full py-1 pl-1 pr-2.5 flex items-center gap-1.5 max-w-[80%] pointer-events-none">
+          <div className="w-4 h-4 rounded-full overflow-hidden bg-white/10 shrink-0">
+            {profile.avatar ? (
+              <img src={profile.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
+                <span className="text-[7px] font-bold text-white/70 uppercase">
+                  {profile.name[0]}
+                </span>
+              </div>
+            )}
+          </div>
+          <span className="text-[10px] font-medium text-white/95 truncate">
+            {profile.name}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   return createPortal(
     <AnimatePresence>
       <motion.div
@@ -856,8 +1182,8 @@ export function CallsManager() {
         onClick={handleScreenTap}
         className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
       >
-        {/* Remote audio-only playback frame element */}
-        {isConnected && activeCall?.meta.type === 'audio' && remoteStream && (
+        {/* Remote audio-only playback frame element for 1-on-1 */}
+        {isConnected && activeCall?.meta.type === 'audio' && !activeCall?.meta.is_group && remoteStream && (
           <audio
             ref={remoteAudioRef}
             autoPlay
@@ -866,46 +1192,90 @@ export function CallsManager() {
           />
         )}
 
-        {/* Dynamic Video Streaming overlay layers */}
-        {isConnected && activeCall?.meta.type === 'video' && (
-          <div className="absolute inset-0 bg-zinc-950 z-0 flex items-center justify-center pointer-events-none">
-            {remoteStream || (activeCall?.meta.is_group && localStream) ? (
-              <video
-                ref={remoteStream ? remoteVideoRef : localVideoRef}
+        {/* Render clean background elements for extra remote audio/video tracks to ensure they are heard */}
+        {isConnected && Object.keys(remoteStreams).map((uid, idx) => {
+          // Extra participants beyond the visible grid are played via background hidden audio
+          // Or if it is a group audio call
+          if (idx >= 3 || activeCall?.meta.type === 'audio') {
+            return (
+              <audio
+                key={`extra-audio-${uid}`}
+                ref={el => {
+                  if (el) el.srcObject = remoteStreams[uid];
+                }}
                 autoPlay
                 playsInline
-                muted={!remoteStream}
-                className="w-full h-full object-cover"
+                style={{ display: 'none' }}
               />
-            ) : (
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center shadow-lg">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <Users className="w-10 h-10 text-white/50" />
-                  )}
-                </div>
-                <p className="text-white/40 text-xs font-mono tracking-widest uppercase animate-pulse">CONNECTING MEDIA...</p>
-              </div>
-            )}
+            );
+          }
+          return null;
+        })}
 
-            {/* PIP Local Camera display box to display local user's feed */}
-            {remoteStream && (localStream || localStreamRef.current) && (
-              <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-cover ${isVideoDisabled ? 'hidden' : ''}`}
-                />
-                {isVideoDisabled && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-[#141414]">
-                    <VideoOff size={20} className="text-white/40" />
+        {/* Dynamic Video Streaming overlay layers */}
+        {isConnected && activeCall?.meta.type === 'video' && (
+          <div className="absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none pt-[calc(3.5rem+env(safe-area-inset-top))] pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
+            {activeCall.meta.is_group ? (
+              // New mesh layout for Group Video call (max 4 displays)
+              (() => {
+                const visibleRemoteUids = Object.keys(remoteStreams).slice(0, 3);
+                const totalDisplays = 1 + visibleRemoteUids.length; // 1 for ourselves + remote streams (up to 3)
+
+                const gridClass = 
+                  totalDisplays === 1 ? "grid-cols-1 grid-rows-1" :
+                  totalDisplays === 2 ? "grid-cols-1 grid-rows-2" :
+                  totalDisplays === 3 ? "grid-cols-2 grid-rows-2" :
+                  "grid-cols-2 grid-rows-2";
+
+                return (
+                  <div className={`grid ${gridClass} w-full h-full gap-3 p-3 max-w-md mx-auto pointer-events-auto`}>
+                    {/* Render our own local stream first */}
+                    {renderGroupVideoBox(currentUserId, localStream, true, 0, totalDisplays)}
+
+                    {/* Render up to 3 remote streams, keeping separation */}
+                    {visibleRemoteUids.map((uid, idx) => 
+                      renderGroupVideoBox(uid, remoteStreams[uid], false, idx + 1, totalDisplays)
+                    )}
+                  </div>
+                );
+              })()
+            ) : (
+              // Existing 1-on-1 vertical PIP layout
+              <>
+                {remoteStream || localStream ? (
+                  <video
+                    ref={remoteStream ? remoteVideoRef : localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted={!remoteStream}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center shadow-lg">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <Users className="w-10 h-10 text-white/50" />
+                      )}
+                    </div>
+                    <p className="text-white/40 text-xs font-mono tracking-widest uppercase animate-pulse">CONNECTING MEDIA...</p>
                   </div>
                 )}
-              </div>
+
+                {/* PIP Local Camera display box to display local user's feed */}
+                {remoteStream && (localStream || localStreamRef.current) && !isVideoDisabled && (
+                  <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
+                    <video
+                      ref={localVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
