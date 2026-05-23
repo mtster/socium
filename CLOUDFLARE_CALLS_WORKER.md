@@ -2,13 +2,30 @@
 
 This Cloudflare Worker manages rhythmic calling notifications for offline PWA recipients. It implements Firebase RTDB polling inside a background loop to automatically adapt targets list dynamically, pruning active participants who have already **Accepted** or **Declined** the call.
 
+It uses the built-in Web Crypto API to sign JWTs for OAuth 2.0 communication with FCM v1 natively, requiring **zero** external NPM packages.
+
+---
+
 ## Worker Implementation
+
+Create a file named `index.js` inside your Cloudflare Worker directory, and paste the following complete code:
 
 ```javascript
 // index.js (Cloudflare Worker)
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    // Add CORS preflight support
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      });
+    }
+
     if (request.method !== 'POST') {
       return new Response('Method Not Allowed', { status: 405 });
     }
@@ -47,11 +64,20 @@ export default {
       );
 
       return new Response(JSON.stringify({ status: 'initiated', call_id }), {
-        headers: { 'Content-Type': 'application/json' }
+        status: 200,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
       });
 
     } catch (err) {
-      return new Response(err.message, { status: 500 });
+      return new Response(err.message, { 
+        status: 500,
+        headers: {
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
     }
   }
 };
@@ -96,7 +122,7 @@ async function handleCallingNotificationLoop({
     // 3. Keep target tokens only if their participant status is still "ringing"
     activeTargets = activeTargets.filter(target => {
       const dbParticipant = callNode.participants?.[target.userId];
-      // If of recipient is not specified in the database node, or status changed to accepted/declined, drop them
+      // If recipient is not specified in the database node, or status changed to accepted/declined, drop them
       return dbParticipant && dbParticipant.status === 'ringing';
     });
 
@@ -107,7 +133,7 @@ async function handleCallingNotificationLoop({
     }
 
     // 5. Build multicast FCM message payload
-    const label = type === 'video' ? '🎥VIDEO CALL🎥' : '📞AUDIO CALL';
+    const label = type === 'video' ? '🎥 VIDEO CALL' : '📞 AUDIO CALL';
     
     for (const target of activeTargets) {
       for (const token of target.tokens) {
@@ -180,15 +206,120 @@ async function sendFcmPush(token, deviceToken, notification) {
 
 /**
  * Generates OAuth token for Firebase project using Service Account credential strings saved in environment secrets
+ * This contains full native cryptographic signature implementation using Web Crypto API.
  */
 async function getFcmAccessToken(env) {
-  // Leverages standard JSON web tokens (JWT) extraction matching Firebase credentials specs
-  // identical to standard CF implementations.
-  // ...
+  const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  const clientEmail = sa.client_email;
+  const privateKeyPem = sa.private_key;
+  const projectId = sa.project_id;
+
+  const header = {
+    alg: 'RS256',
+    typ: 'JWT'
+  };
+
+  const now = Math.floor(Date.now() / 1000);
+  const claimSet = {
+    iss: clientEmail,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now
+  };
+
+  const base64UrlEncode = (str) => {
+    const base64 = btoa(unescape(encodeURIComponent(str)));
+    return base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  };
+
+  const headerB64 = base64UrlEncode(JSON.stringify(header));
+  const claimSetB64 = base64UrlEncode(JSON.stringify(claimSet));
+  const signatureInput = `${headerB64}.${claimSetB64}`;
+
+  // Process the PEM private key to clear formatting lines
+  const pemHeader = "-----BEGIN PRIVATE KEY-----";
+  const pemFooter = "-----END PRIVATE KEY-----";
+  const pemContents = privateKeyPem
+    .replace(pemHeader, "")
+    .replace(pemFooter, "")
+    .replace(/\s/g, "");
+  
+  const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+
+  const privateKey = await crypto.subtle.importKey(
+    'pkcs8',
+    binaryDer,
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      hash: { name: 'SHA-256' }
+    },
+    false,
+    ['sign']
+  );
+
+  const encoder = new TextEncoder();
+  const signatureBuffer = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    privateKey,
+    encoder.encode(signatureInput)
+  );
+
+  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)))
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+  const assertion = `${signatureInput}.${signatureB64}`;
+
+  const tokenUrl = 'https://oauth2.googleapis.com/token';
+  const res = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${assertion}`
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Failed to exchange JWT for FCM Token: ${errText}`);
+  }
+
+  const tokenData = await res.json();
+  return {
+    accessToken: tokenData.access_token,
+    projectId: projectId
+  };
 }
 ```
 
-## Setup & Deployment instructions
-1. Create a brand new Cloudflare Worker or update your existing request notifications worker.
-2. Bind your Firebase configuration variables as Secrets (`FIREBASE_DATABASE_URL`).
-3. Deploy the worker and declare the worker's URL in your application.
+---
+
+## Detailed Cloudflare Dashboard Setup Instructions
+
+To enable pushing call alerts, you must bind two environment variables in your Cloudflare dashboard settings for the `socium-call-notifications` worker:
+
+### 1. Register Environment Secrets
+
+1. Go to the **Cloudflare Dashboard** -> **Workers & Pages** -> Select your Worker (`socium-call-notifications`).
+2. Go to the **Settings** tab -> **Variables** (or **Environment Variables** in some profiles) section.
+3. Scroll down to **Environment Variables** and click click **Add Variable** (or **Add secret**).
+4. Define the following two environment variables:
+
+   * **`FIREBASE_DATABASE_URL`** (type: *Variable*)
+     * **Value:** Your Firebase Realtime Database URL.
+     * **Example:** `https://socium-app-default-rtdb.firebaseio.com` (Do NOT include a trailing slash).
+
+   * **`FIREBASE_SERVICE_ACCOUNT_JSON`** (type: *Secret*)
+     * **Value:** The **entire** JSON string contents of your Google Service Account credential file.
+     * *How to get this file:*
+       1. Open your **Firebase Console**.
+       2. Click the gear icon next to **Project Overview** in the left menu, then select **Project Settings**.
+       3. Go to the **Service Accounts** tab.
+       4. Click **Generate new private key** (and confirm by clicking **Generate key** in the modal).
+       5. A `.json` file will download to your computer containing the credentials.
+       6. Open that file in a text editor (Notepad, VS Code, text-edit), copy the **entire contents** (curly braces and everything inside), and paste it directly as the value of `FIREBASE_SERVICE_ACCOUNT_JSON` in Cloudflare's settings.
+       7. **Make sure to save it safely as a Secret** so it remains fully encrypted on Cloudflare's edge servers.
+
+5. Click **Save and Deploy** on Cloudflare to save modifications.

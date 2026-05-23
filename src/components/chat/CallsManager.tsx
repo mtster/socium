@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Volume2, VolumeX, Users } from 'lucide-react';
+import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Users } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { rtdb } from '@/src/lib/firebase';
-import { ref, onValue, set, get, remove, update, off } from 'firebase/database';
+import { ref, onValue, set, get, remove, off } from 'firebase/database';
 import { useStore } from '@/src/store/useStore';
 
 // Web Audio API Ringtone and Sound Effects synthesizer
@@ -123,6 +123,8 @@ interface CallMeta {
   chat_room_id: string;
   is_group: boolean;
   type: 'audio' | 'video';
+  room_name: string;
+  room_avatar: string | null;
 }
 
 interface Participant {
@@ -153,6 +155,15 @@ export function CallsManager() {
   const [isVideoDisabled, setIsVideoDisabled] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
+  // Sync state reference to prevent closures bugs in RTC listeners
+  const activeCallRef = useRef<CallNode | null>(null);
+  useEffect(() => {
+    activeCallRef.current = activeCall;
+  }, [activeCall]);
+
+  // Ref tracking current local stream to guarantee exact track level shutdowns
+  const localStreamRef = useRef<MediaStream | null>(null);
+
   // Timer Ref
   const timerRef = useRef<any>(null);
 
@@ -160,6 +171,7 @@ export function CallsManager() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Listens to global window triggers for call initiation
   useEffect(() => {
@@ -214,7 +226,11 @@ export function CallsManager() {
       const callerName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
       const callerAvatar = currentProfile?.avatar_url || null;
 
-      // Initialize Call Metadata
+      // Extract target metadata details for the receiver's UI
+      const roomName = chat.isGroup ? chat.name : (chat.name || 'Socium Chat');
+      const roomAvatar = chat.avatar_url || null;
+
+      // Initialize Call Metadata with proper room details to swap avatars/icons seamlessly
       const meta: CallMeta = {
         id: newCallId,
         caller_id: currentUserId,
@@ -222,19 +238,33 @@ export function CallsManager() {
         caller_avatar: callerAvatar,
         chat_room_id: chat.id,
         is_group: chat.isGroup,
-        type: type as 'audio' | 'video'
+        type: type as 'audio' | 'video',
+        room_name: roomName,
+        room_avatar: roomAvatar
       };
+
+      // Register call bubble strictly and elegantly in Supabase messages
+      try {
+        await supabase.from('messages').insert({
+          sender_id: currentUserId,
+          receiver_id: chat.isGroup ? null : chat.id,
+          group_chat_id: chat.isGroup ? chat.id : null,
+          content: type === 'audio' ? '📞 Audio Call' : '🎥 Video Call',
+          media_type: type === 'audio' ? 'call_audio' : 'call_video'
+        });
+      } catch (insertErr) {
+        console.error("Failed to insert native call message bubble to Supabase:", insertErr);
+      }
 
       // Determine participants and evaluate presence
       const recipients: string[] = chat.isGroup
-        ? (chat.participants || []).map((p: any) => p.id).filter((uid: string) => uid !== currentUserId)
+        ? (chat.participants || []).map((p: any) => p.id || p.user_id).filter((uid: string) => uid !== currentUserId)
         : [chat.id];
 
       const participants: Record<string, Participant> = {};
       const onlineIds: string[] = [];
       const offlineIds: string[] = [];
 
-      // SNIPED: Check presence individually per user ID with direct snap refs
       for (const rid of recipients) {
         participants[rid] = { status: 'ringing' };
         try {
@@ -256,7 +286,7 @@ export function CallsManager() {
       // Write initial Call node
       await set(ref(rtdb, `calls/${newCallId}`), freshCallNode);
 
-      // Write active call indicator to caller's self-user node in RTDB too so we have structured persistence
+      // Write active call indicator to caller's self-user node in RTDB too
       await set(ref(rtdb, `user_calls/${currentUserId}/active`), newCallId);
 
       // Propagate active identifier to recipients (ringing socket triggers)
@@ -264,13 +294,15 @@ export function CallsManager() {
         await set(ref(rtdb, `user_calls/${rid}/active`), newCallId);
       }
 
-      // Initialize Local Stream for Caller
+      // Initialize Local Stream for Caller (exactly ONCE)
+      let stream: MediaStream | null = null;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: type === 'video'
         });
         setLocalStream(stream);
+        localStreamRef.current = stream;
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
@@ -278,9 +310,9 @@ export function CallsManager() {
         console.warn('Calling media device capture failed:', mediaErr);
       }
 
-      // 1-on-1 WebRTC connection initializations
-      if (!chat.isGroup) {
-        setupCallerWebRTC(newCallId, chat.id, type === 'video');
+      // 1-on-1 WebRTC connection initialization with exact single-use stream passed directly
+      if (!chat.isGroup && stream) {
+        setupCallerWebRTC(newCallId, chat.id, type === 'video', stream);
       }
 
       // Subscribe to self call state node updates
@@ -304,7 +336,7 @@ export function CallsManager() {
         }
       });
 
-      // BATCHED Cloudflare notification strike (multicast FCM tokens payload)
+      // FCM worker triggers
       if (offlineIds.length > 0) {
         try {
           const { data: pushRecs } = await supabase
@@ -324,7 +356,8 @@ export function CallsManager() {
               tokens: tokenGroups[uid]
             }));
             
-            const callsWorkerUrl = import.meta.env.VITE_CLOUDFLARE_CALLS_WORKER_URL || import.meta.env.VITE_CLOUDFLARE_REQUEST_WORKER_URL || 'https://socium-calls-notifications.brare-black.workers.dev/';
+            // Connect strictly to user's desired Cloudflare Worker
+            const callsWorkerUrl = 'https://socium-call-notifications.brare-black.workers.dev/';
             
             fetch(callsWorkerUrl, {
               method: 'POST',
@@ -380,17 +413,48 @@ export function CallsManager() {
 
   // Clean local streams and connections helper
   const cleanMediaAndRTC = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.warn("Error stopping track from ref:", e);
+        }
+      });
+      localStreamRef.current = null;
+    }
     if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+      localStream.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.warn("Error stopping track from state:", e);
+        }
+      });
       setLocalStream(null);
     }
     if (remoteStream) {
-      remoteStream.getTracks().forEach(track => track.stop());
+      remoteStream.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.warn("Error stopping remote track from state:", e);
+        }
+      });
       setRemoteStream(null);
     }
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
     }
     synth.stopRinging();
   };
@@ -405,15 +469,14 @@ export function CallsManager() {
   };
 
   // Caller Initiated WebRTC Peer setup
-  const setupCallerWebRTC = async (cid: string, recipientId: string, withVideo: boolean) => {
+  const setupCallerWebRTC = async (cid: string, recipientId: string, withVideo: boolean, stream: MediaStream) => {
     try {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
       peerConnectionRef.current = pc;
 
-      // Local stream tracks added
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
+      // Local stream tracks added safely
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
       pc.onicecandidate = (event) => {
@@ -426,8 +489,14 @@ export function CallsManager() {
       pc.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
           setRemoteStream(event.streams[0]);
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = event.streams[0];
+          if (activeCallRef.current?.meta.type === 'video') {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = event.streams[0];
+            }
+          } else {
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.srcObject = event.streams[0];
+            }
           }
         }
       };
@@ -441,13 +510,30 @@ export function CallsManager() {
         sdp: offer.sdp
       }));
 
-      // Listen for Recipient's Answer and candidates
+      // Set up candidate queues to prevent adding ICE before setRemoteDescription state transitions
+      const iceQueue: any[] = [];
+
+      // Listen for Recipient's Answer
       const answerRef = ref(rtdb, `calls/${cid}/signaling/${recipientId}/answer`);
       onValue(answerRef, async (answerSnap) => {
         const val = answerSnap.val();
         if (val) {
           const answer = JSON.parse(val);
-          await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          if (pc.signalingState === "have-local-offer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            
+            // Remote description established, flush the candidate queue
+            while (iceQueue.length > 0) {
+              const queuedCand = iceQueue.shift();
+              if (queuedCand) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(queuedCand));
+                } catch (iceErr) {
+                  console.warn('ICE queued append skipped:', iceErr);
+                }
+              }
+            }
+          }
         }
       });
 
@@ -458,7 +544,13 @@ export function CallsManager() {
           Object.keys(val).forEach(async (k) => {
             try {
               const cand = JSON.parse(val[k]);
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
+              if (pc.remoteDescription) {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } else {
+                if (!iceQueue.some(c => c.candidate === cand.candidate)) {
+                  iceQueue.push(cand);
+                }
+              }
             } catch (candErr) {
               console.warn('ICE Candidate append skipped:', candErr);
             }
@@ -472,18 +564,12 @@ export function CallsManager() {
   };
 
   // Receiver Initiated WebRTC Peer setup
-  const setupReceiverWebRTC = async (cid: string, callerId: string, withVideo: boolean) => {
+  const setupReceiverWebRTC = async (cid: string, callerId: string, withVideo: boolean, stream: MediaStream) => {
     try {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
       peerConnectionRef.current = pc;
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
-      setLocalStream(stream);
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
       
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
@@ -497,11 +583,19 @@ export function CallsManager() {
       pc.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
           setRemoteStream(event.streams[0]);
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = event.streams[0];
+          if (activeCallRef.current?.meta.type === 'video') {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = event.streams[0];
+            }
+          } else {
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.srcObject = event.streams[0];
+            }
           }
         }
       };
+
+      const iceQueue: any[] = [];
 
       // Read Caller Offer
       const callerOfferRef = ref(rtdb, `calls/${cid}/signaling/${callerId}/offer`);
@@ -517,6 +611,18 @@ export function CallsManager() {
           type: answer.type,
           sdp: answer.sdp
         }));
+
+        // Flush recipient side candidate queue
+        while (iceQueue.length > 0) {
+          const queuedCand = iceQueue.shift();
+          if (queuedCand) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(queuedCand));
+            } catch (iceErr) {
+              console.warn('ICE queued append skipped:', iceErr);
+            }
+          }
+        }
       }
 
       // Sync ICE candidates
@@ -527,7 +633,13 @@ export function CallsManager() {
           Object.keys(val).forEach(async (k) => {
             try {
               const cand = JSON.parse(val[k]);
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
+              if (pc.remoteDescription) {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } else {
+                if (!iceQueue.some(c => c.candidate === cand.candidate)) {
+                  iceQueue.push(cand);
+                }
+              }
             } catch (iceErr) {
               console.warn('ICE Append rejected:', iceErr);
             }
@@ -548,23 +660,24 @@ export function CallsManager() {
     // Toggle status to accepted
     await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'accepted');
 
-    // Initiate WebRTC peer loop for 1-on-1 calls
-    if (!activeCall.meta.is_group) {
-      setupReceiverWebRTC(callId, activeCall.meta.caller_id, activeCall.meta.type === 'video');
-    } else {
-      // In groups: capture stream immediately for local feedback
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: activeCall.meta.type === 'video'
-        });
-        setLocalStream(stream);
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-      } catch (e) {
-        console.warn('Group audio stream capture issue:', e);
+    // Acquire stream ONCE for Receiver too inside handleAcceptCall
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: activeCall.meta.type === 'video'
+      });
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
       }
+
+      // Initiate WebRTC peer loop for 1-on-1 calls
+      if (!activeCall.meta.is_group) {
+        setupReceiverWebRTC(callId, activeCall.meta.caller_id, activeCall.meta.type === 'video', stream);
+      }
+    } catch (e) {
+      console.warn('Accept call local stream capture issue:', e);
     }
     setCallStatus('connected');
   };
@@ -614,8 +727,9 @@ export function CallsManager() {
   };
 
   const toggleMute = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
+    const stream = localStreamRef.current || localStream;
+    if (stream) {
+      const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsMuted(!audioTrack.enabled);
@@ -624,8 +738,9 @@ export function CallsManager() {
   };
 
   const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
+    const stream = localStreamRef.current || localStream;
+    if (stream) {
+      const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoDisabled(!videoTrack.enabled);
@@ -646,14 +761,25 @@ export function CallsManager() {
   const isRingingOutgoing = callStatus === 'ringing_outgoing';
   const isConnected = callStatus === 'connected';
 
-  // Render info values depending on relative calling side (caller vs receiver)
+  // Swap target details elegantly so users see each other instead of themselves
   const isCaller = activeCall?.meta.caller_id === currentUserId;
-  const avatarUrl = isCaller 
-    ? (activeCall?.meta.is_group ? null : activeCall?.meta.caller_avatar) // Render single target logic below
-    : activeCall?.meta.caller_avatar;
-  const displayName = isCaller
-    ? (activeCall?.meta.is_group ? "Group Call" : activeCall?.meta.caller_name)
-    : activeCall?.meta.caller_name;
+  let displayName = '';
+  let avatarUrl = null;
+
+  if (activeCall) {
+    if (activeCall.meta.is_group) {
+      displayName = activeCall.meta.room_name || 'Group Call';
+      avatarUrl = activeCall.meta.room_avatar;
+    } else {
+      if (isCaller) {
+        displayName = activeCall.meta.room_name;
+        avatarUrl = activeCall.meta.room_avatar;
+      } else {
+        displayName = activeCall.meta.caller_name;
+        avatarUrl = activeCall.meta.caller_avatar;
+      }
+    }
+  }
 
   return createPortal(
     <AnimatePresence>
@@ -661,8 +787,18 @@ export function CallsManager() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none select-none max-w-lg mx-auto md:border-x md:border-white/15"
+        className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans"
       >
+        {/* Remote audio-only playback frame element */}
+        {isConnected && activeCall?.meta.type === 'audio' && remoteStream && (
+          <audio
+            ref={remoteAudioRef}
+            autoPlay
+            playsInline
+            style={{ display: 'none' }}
+          />
+        )}
+
         {/* Dynamic Video Streaming overlay layers */}
         {isConnected && activeCall?.meta.type === 'video' && (
           <div className="absolute inset-0 bg-zinc-950 z-0 flex items-center justify-center">
@@ -677,7 +813,7 @@ export function CallsManager() {
               <div className="flex flex-col items-center gap-3">
                 <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
                   {avatarUrl ? (
-                    <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                    <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <Users className="w-10 h-10 text-white/50" />
                   )}
@@ -687,7 +823,7 @@ export function CallsManager() {
             )}
 
             {/* PIP Local Camera display box */}
-            {localStream && (
+            {(localStream || localStreamRef.current) && (
               <div className="absolute top-16 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50">
                 {!isVideoDisabled ? (
                   <video
@@ -711,7 +847,7 @@ export function CallsManager() {
         <div className="pt-[calc(2.5rem+env(safe-area-inset-top))] px-6 flex flex-col items-center text-center z-10 shrink-0">
           <div className="w-28 h-28 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center relative shadow-[0_0_40px_rgba(0,0,0,0.8)]">
             {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+              <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
                 {activeCall?.meta.is_group ? (
@@ -827,7 +963,7 @@ export function CallsManager() {
                 >
                   <PhoneOff size={28} />
                 </motion.button>
-                <span className="text-xs font-medium text-white/50 tracking-wider">End Call</span>
+                <span className="text-xs font-medium text-white/50 tracking-wider font-sans">End Call</span>
               </motion.div>
             )}
           </AnimatePresence>

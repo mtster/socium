@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { MapPin } from "lucide-react";
+import { MapPin, Phone, Video } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 import { parseLocation, openInNativeMaps } from "./locationUtils";
 import { AudioPlayer } from "./AudioPlayer";
@@ -161,8 +161,10 @@ export const MessageBubble = React.memo(
     );
     const isLoc = msg.media_type === "location" || !!locMatch;
     const isSharedPost = msg.media_type === "shared_post";
+    const isCall = msg.media_type === "call_audio" || msg.media_type === "call_video";
     const isMediaOnly =
       isSharedPost ||
+      isCall ||
       ((msg.media_type === "image" || isLoc || msg.media_type === "audio") &&
         (!msg.content || (locMatch && msg.content === locMatch[0])));
 
@@ -357,6 +359,32 @@ export const MessageBubble = React.memo(
                   </span>
                   <span className="text-[11px] opacity-40 block truncate">
                     Tap to open maps
+                  </span>
+                </div>
+              </div>
+            )}
+            {isCall && (
+              <div className={cn(
+                "p-3 flex items-center gap-3 rounded-[20px] select-none font-sans min-w-[160px]",
+                isMine 
+                  ? "bg-white text-black"
+                  : "bg-[#141414] text-white border border-white/5"
+              )}>
+                <div className={cn(
+                  "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
+                  isMine ? "bg-black/10 text-black" : "bg-white/10 text-white"
+                )}>
+                  {msg.media_type === "call_audio" ? <Phone size={16} /> : <Video size={16} />}
+                </div>
+                <div className="flex-1 min-w-0 pr-1">
+                  <span className="text-[13px] font-bold block leading-tight font-sans">
+                    {msg.media_type === "call_audio" ? 'Audio Call' : 'Video Call'}
+                  </span>
+                  <span className={cn(
+                    "text-[10px] block mt-0.5 leading-none font-mono tracking-wider",
+                    isMine ? "text-black/60" : "text-white/40"
+                  )}>
+                    {isMine ? 'OUTGOING' : 'INCOMING'}
                   </span>
                 </div>
               </div>
