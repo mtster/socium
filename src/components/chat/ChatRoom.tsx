@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, Phone, Video } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { MessageBubble } from './MessageBubble';
@@ -69,7 +69,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       >
         <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
-           <div className="flex items-center gap-3 w-full cursor-pointer" onClick={() => activeChat.isGroup ? openSettings() : onOpenProfile(activeChat.id)}>
+           <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={() => activeChat.isGroup ? openSettings() : onOpenProfile(activeChat.id)}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                 {activeChat.isGroup ? (
                    <div className="w-full h-full relative">
@@ -88,6 +88,30 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                 )}
               </div>
               <span className="font-bold text-sm text-white/90 truncate flex-1">{activeChat.name}</span>
+           </div>
+
+           {/* Call Controls */}
+           <div className="flex items-center gap-1 shrink-0 pr-1">
+             <button 
+               onClick={(e) => {
+                 e.stopPropagation();
+                 window.dispatchEvent(new CustomEvent('initiateCall', { detail: { chat: activeChat, type: 'audio' } }));
+               }} 
+               className="p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full"
+               title="Audio Call"
+             >
+               <Phone size={20} />
+             </button>
+             <button 
+               onClick={(e) => {
+                 e.stopPropagation();
+                 window.dispatchEvent(new CustomEvent('initiateCall', { detail: { chat: activeChat, type: 'video' } }));
+               }} 
+               className="p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full"
+               title="Video Call"
+             >
+               <Video size={20} />
+             </button>
            </div>
         </div>
 

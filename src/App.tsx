@@ -14,8 +14,8 @@ import SharePostModal from './components/SharePostModal';
 import { Bell, ArrowLeft } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Toaster } from 'react-hot-toast';
-
 import { useStore } from './store/useStore';
+import { CallsManager } from './components/chat/CallsManager';
 
 import { initPresence } from '@/src/lib/presence';
 
@@ -1028,6 +1028,7 @@ export default function App() {
            showFirstTimeChatDot={!hasSeenPromo && !!session?.user}
         />
       )}
+      <CallsManager />
     </div>
   );
 }
