@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { Profile, Post } from '../types';
+import { ChatListItemType } from '../types/chat';
 
 interface AppState {
   profile: Profile | null;
@@ -12,6 +13,8 @@ interface AppState {
   hasUnseenRequest: boolean;
   floatingAvatar: Profile | null;
   sharePost: Post | null;
+  chats: ChatListItemType[];
+  inboxStates: Record<string, boolean>;
   
   setProfile: (profile: Profile | null) => void;
   setUserPosts: (posts: Post[]) => void;
@@ -22,6 +25,10 @@ interface AppState {
   setHasUnseenRequest: (val: boolean) => void;
   setFloatingAvatar: (profile: Profile | null) => void;
   setSharePost: (post: Post | null) => void;
+  setChats: (chats: ChatListItemType[]) => void;
+  setInboxStates: (states: Record<string, boolean>) => void;
+  updateInboxState: (chatId: string, state: boolean) => void;
+  handleGlobalNewMessage: (msg: any, currentUserId: string) => void;
   
   fetchProfile: (userId: string) => Promise<void>;
   fetchUserPosts: (userId: string, currentUserId: string) => Promise<void>;
@@ -41,6 +48,8 @@ export const useStore = create<AppState>((set, get) => ({
   hasUnseenRequest: false,
   floatingAvatar: null,
   sharePost: null,
+  chats: [],
+  inboxStates: {},
 
   setProfile: (profile) => set({ profile }),
   setUserPosts: (userPosts) => set({ userPosts }),
@@ -51,7 +60,47 @@ export const useStore = create<AppState>((set, get) => ({
   setHasUnseenRequest: (hasUnseenRequest) => set({ hasUnseenRequest }),
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
   setSharePost: (sharePost) => set({ sharePost }),
+  setChats: (chats) => set({ chats }),
+  setInboxStates: (inboxStates) => set({ inboxStates }),
+  updateInboxState: (chatId, state) => set(stateObj => ({
+    inboxStates: {
+      ...stateObj.inboxStates,
+      [chatId]: state
+    }
+  })),
+  handleGlobalNewMessage: (msg, currentUserId) => {
+    const chats = get().chats;
+    const isGroup = msg.group_chat_id !== null;
+    const chatId = isGroup ? msg.group_chat_id : (msg.sender_id === currentUserId ? msg.receiver_id : msg.sender_id);
+    
+    if (!chatId) return;
 
+    const idx = chats.findIndex(c => c.id === chatId);
+    if (idx !== -1) {
+      const existingChat = chats[idx];
+      const currentLastMsgTime = existingChat.lastMessage ? new Date(existingChat.lastMessage.created_at).getTime() : 0;
+      const newMsgTime = new Date(msg.created_at).getTime();
+      
+      if (newMsgTime >= currentLastMsgTime) {
+        const updatedChat = {
+          ...existingChat,
+          lastMessage: msg,
+          unreadCount: (msg.sender_id !== currentUserId && (window as any).currentChatUserId !== chatId)
+            ? (existingChat.unreadCount || 0) + 1
+            : (existingChat.unreadCount || 0)
+        };
+        
+        const updatedList = [...chats];
+        updatedList.splice(idx, 1);
+        const newList = [updatedChat, ...updatedList];
+        
+        set({ chats: newList });
+      }
+    } else {
+       // Dispatches refresh event to load entire list for a brand new user chat
+       window.dispatchEvent(new CustomEvent('refreshChatList'));
+    }
+  },
   fetchProfile: async (userId) => {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (data) set({ profile: data });

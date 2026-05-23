@@ -272,9 +272,14 @@ export default function App() {
          }
       }
 
+      // Global unread realtime listener
       globalUnreadChannel = supabase.channel('global_unread')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload) => {
            const msg = payload.new;
+           const isRelevant = msg.sender_id === session.user.id || msg.receiver_id === session.user.id || msg.group_chat_id !== null;
+           if (isRelevant) {
+              useStore.getState().handleGlobalNewMessage(msg, session.user.id);
+           }
            // Filter for messages meant for us
            const isForUs = msg.receiver_id === session.user.id || msg.group_chat_id !== null;
            // We don't trigger if we sent it
@@ -317,8 +322,9 @@ export default function App() {
            }
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
-           if (payload.new.receiver_id === session.user.id || payload.new.group_chat_id !== null) {
+           if (payload.new.receiver_id === session.user.id || payload.new.group_chat_id !== null || payload.new.sender_id === session.user.id) {
               getUnread();
+              window.dispatchEvent(new CustomEvent('refreshChatList'));
            }
         })
         .subscribe();
