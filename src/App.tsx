@@ -790,7 +790,7 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (
+      {(activeTab !== 'create' && !isImageViewerOpen && !isHeaderHidden) && (
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
@@ -1015,7 +1015,7 @@ export default function App() {
         </AnimatePresence>
 
       {/* Navigation */}
-      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
+      {(activeTab !== 'create' && !isImageViewerOpen) && (
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={(tab) => {
