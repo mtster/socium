@@ -147,6 +147,7 @@ export function CallsManager() {
   const [activeCall, setActiveCall] = useState<CallNode | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
   const [callStatus, setCallStatus] = useState<'idle' | 'ringing_outgoing' | 'ringing_incoming' | 'connected' | 'ended'>('idle');
+  const [showControls, setShowControls] = useState(true);
   
   // Media states
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -173,6 +174,50 @@ export function CallsManager() {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Auto-hide controls timeout for connected video calls
+  useEffect(() => {
+    if (callStatus === 'connected' && activeCall?.meta.type === 'video' && showControls) {
+      const timer = setTimeout(() => {
+        setShowControls(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showControls, callStatus, activeCall?.meta.type]);
+
+  // Synchronize local and remote media streams to DOM elements whenever they or connection status updates
+  useEffect(() => {
+    if (callStatus === 'connected') {
+      if (localStream && localVideoRef.current) {
+        if (localVideoRef.current.srcObject !== localStream) {
+          try {
+            localVideoRef.current.srcObject = localStream;
+          } catch (e) {
+            console.warn("Retrying local stream attachment:", e);
+          }
+        }
+      }
+      if (remoteStream) {
+        if (activeCall?.meta.type === 'video') {
+          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStream) {
+            try {
+              remoteVideoRef.current.srcObject = remoteStream;
+            } catch (e) {
+              console.warn("Retrying remote video attachment:", e);
+            }
+          }
+        } else {
+          if (remoteAudioRef.current && remoteAudioRef.current.srcObject !== remoteStream) {
+            try {
+              remoteAudioRef.current.srcObject = remoteStream;
+            } catch (e) {
+              console.warn("Retrying remote audio attachment:", e);
+            }
+          }
+        }
+      }
+    }
+  }, [localStream, remoteStream, callStatus, activeCall?.meta.type]);
+
   // Listens to global window triggers for call initiation
   useEffect(() => {
     if (!currentUserId || !rtdb) return;
@@ -190,6 +235,18 @@ export function CallsManager() {
           if (callData) {
             setActiveCall(callData);
             
+            // Check if there are other participants and if all have declined, automatically close
+            const otherParticipants = Object.keys(callData.participants).filter(uid => uid !== currentUserId);
+            if (otherParticipants.length > 0) {
+              const hasActiveOther = otherParticipants.some(uid => 
+                callData.participants[uid].status === 'ringing' || callData.participants[uid].status === 'accepted'
+              );
+              if (!hasActiveOther) {
+                handleLocalHangup();
+                return;
+              }
+            }
+
             // Determine our current status In the participant pool
             const selfPart = callData.participants?.[currentUserId];
             if (selfPart) {
@@ -321,6 +378,19 @@ export function CallsManager() {
         const val = snap.val() as CallNode | null;
         if (val) {
           setActiveCall(val);
+          
+          // Check if all other participants have declined, automatically close
+          const otherParticipants = Object.keys(val.participants).filter(uid => uid !== currentUserId);
+          if (otherParticipants.length > 0) {
+            const hasActiveOther = otherParticipants.some(uid => 
+              val.participants[uid].status === 'ringing' || val.participants[uid].status === 'accepted'
+            );
+            if (!hasActiveOther) {
+              handleLocalHangup();
+              return;
+            }
+          }
+
           // If any participant has accepted, play sound and clear ring
           const acceptedUser = Object.keys(val.participants).find(uid => val.participants[uid].status === 'accepted');
           if (acceptedUser) {
@@ -336,13 +406,13 @@ export function CallsManager() {
         }
       });
 
-      // FCM worker triggers
-      if (offlineIds.length > 0) {
+      // FCM worker triggers for both private and group chats
+      if (recipients.length > 0) {
         try {
           const { data: pushRecs } = await supabase
             .from('push_subscriptions')
             .select('user_id, endpoint')
-            .in('user_id', offlineIds);
+            .in('user_id', recipients);
             
           if (pushRecs && pushRecs.length > 0) {
             const tokenGroups: Record<string, string[]> = {};
@@ -487,17 +557,12 @@ export function CallsManager() {
       };
 
       pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
-          if (activeCallRef.current?.meta.type === 'video') {
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = event.streams[0];
-            }
-          } else {
-            if (remoteAudioRef.current) {
-              remoteAudioRef.current.srcObject = event.streams[0];
-            }
-          }
+        let incomingStream = event.streams && event.streams[0];
+        if (!incomingStream && event.track) {
+          incomingStream = new MediaStream([event.track]);
+        }
+        if (incomingStream) {
+          setRemoteStream(incomingStream);
         }
       };
 
@@ -581,17 +646,12 @@ export function CallsManager() {
       };
 
       pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
-          if (activeCallRef.current?.meta.type === 'video') {
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = event.streams[0];
-            }
-          } else {
-            if (remoteAudioRef.current) {
-              remoteAudioRef.current.srcObject = event.streams[0];
-            }
-          }
+        let incomingStream = event.streams && event.streams[0];
+        if (!incomingStream && event.track) {
+          incomingStream = new MediaStream([event.track]);
+        }
+        if (incomingStream) {
+          setRemoteStream(incomingStream);
         }
       };
 
@@ -781,13 +841,20 @@ export function CallsManager() {
     }
   }
 
+  const handleScreenTap = () => {
+    if (callStatus === 'connected' && activeCall?.meta.type === 'video') {
+      setShowControls(prev => !prev);
+    }
+  };
+
   return createPortal(
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans"
+        onClick={handleScreenTap}
+        className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
       >
         {/* Remote audio-only playback frame element */}
         {isConnected && activeCall?.meta.type === 'audio' && remoteStream && (
@@ -801,40 +868,40 @@ export function CallsManager() {
 
         {/* Dynamic Video Streaming overlay layers */}
         {isConnected && activeCall?.meta.type === 'video' && (
-          <div className="absolute inset-0 bg-zinc-950 z-0 flex items-center justify-center">
-            {remoteStream ? (
+          <div className="absolute inset-0 bg-zinc-950 z-0 flex items-center justify-center pointer-events-none">
+            {remoteStream || (activeCall?.meta.is_group && localStream) ? (
               <video
-                ref={remoteVideoRef}
+                ref={remoteStream ? remoteVideoRef : localVideoRef}
                 autoPlay
                 playsInline
+                muted={!remoteStream}
                 className="w-full h-full object-cover"
               />
             ) : (
               <div className="flex flex-col items-center gap-3">
-                <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
+                <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center shadow-lg">
                   {avatarUrl ? (
                     <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <Users className="w-10 h-10 text-white/50" />
                   )}
                 </div>
-                <p className="text-white/40 text-sm font-mono tracking-widest uppercase animate-pulse">CONNECTING MEDIA...</p>
+                <p className="text-white/40 text-xs font-mono tracking-widest uppercase animate-pulse">CONNECTING MEDIA...</p>
               </div>
             )}
 
-            {/* PIP Local Camera display box */}
-            {(localStream || localStreamRef.current) && (
-              <div className="absolute top-16 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50">
-                {!isVideoDisabled ? (
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-white/5">
+            {/* PIP Local Camera display box to display local user's feed */}
+            {remoteStream && (localStream || localStreamRef.current) && (
+              <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${isVideoDisabled ? 'hidden' : ''}`}
+                />
+                {isVideoDisabled && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-[#141414]">
                     <VideoOff size={20} className="text-white/40" />
                   </div>
                 )}
@@ -843,131 +910,213 @@ export function CallsManager() {
           </div>
         )}
 
-        {/* Header container */}
-        <div className="pt-[calc(2.5rem+env(safe-area-inset-top))] px-6 flex flex-col items-center text-center z-10 shrink-0">
-          <div className="w-28 h-28 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center relative shadow-[0_0_40px_rgba(0,0,0,0.8)]">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                {activeCall?.meta.is_group ? (
-                  <Users className="w-12 h-12 text-white/60" />
+        {/* Dynamic Header Layout Transitions */}
+        <AnimatePresence>
+          {(!isConnected || activeCall?.meta.type !== 'video') ? (
+            /* Standard Centered Header (For Incoming/Outgoing states OR Audio Call) */
+            <motion.div
+              key="centered-header"
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="pt-[calc(2.5rem+env(safe-area-inset-top))] px-6 flex flex-col items-center text-center z-10 shrink-0 pointer-events-none"
+            >
+              <div className="w-28 h-28 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center relative shadow-[0_0_40px_rgba(0,0,0,0.8)]">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
-                  <span className="text-3xl font-bold text-white/50 uppercase">
-                    {displayName?.[0] || '?'}
-                  </span>
+                  <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
+                    {activeCall?.meta.is_group ? (
+                      <Users className="w-12 h-12 text-white/60" />
+                    ) : (
+                      <span className="text-3xl font-bold text-white/50 uppercase">
+                        {displayName?.[0] || '?'}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
-          
-          <h1 className="text-3xl font-bold tracking-tight mt-6 text-white drop-shadow-md">
-            {displayName}
-          </h1>
+              
+              <h1 className="text-3xl font-bold tracking-tight mt-6 text-white drop-shadow-md">
+                {displayName}
+              </h1>
 
-          <p className="text-xs font-mono tracking-widest text-[#00E676] uppercase mt-3 py-1 px-3 bg-white/5 border border-white/10 rounded-full">
-            {activeCall?.meta.type === 'video' ? '🎥 Video Call' : '📞 Audio Call'}
-          </p>
+              <p className="text-xs font-mono tracking-widest text-[#00E676] uppercase mt-3 py-1 px-3 bg-white/5 border border-white/10 rounded-full">
+                {activeCall?.meta.type === 'video' ? '🎥 Video Call' : '📞 Audio Call'}
+              </p>
 
-          <p className="text-[#a0a0a0] text-sm mt-3.5 tracking-wider font-medium">
-            {isRingingIncoming && "INCOMING CALL..."}
-            {isRingingOutgoing && "RINGING..."}
-            {isConnected && `ACTIVE — ${formatTime(callDuration)}`}
-          </p>
+              <p className="text-[#a0a0a0] text-sm mt-3.5 tracking-wider font-medium">
+                {isRingingIncoming && "INCOMING CALL..."}
+                {isRingingOutgoing && "RINGING..."}
+                {isConnected && `ACTIVE — ${formatTime(callDuration)}`}
+              </p>
 
-          {/* Connected Participants presence ticker helper for group chats */}
-          {activeCall?.meta.is_group && (
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {Object.keys(activeCall.participants).map(uid => {
-                const p = activeCall.participants[uid];
-                return (
-                  <div key={uid} className="flex items-center gap-1.5 px-3 py-1 bg-white/[0.04] border border-white/5 rounded-full">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                    <span className="text-[10px] font-medium text-white/60 truncate max-w-[80px]">{(uid === currentUserId) ? 'Me' : p.name || `User (${uid.slice(0, 4)})`} — <span className="text-[9px] uppercase tracking-wider font-mono text-white/40">{p.status}</span></span>
-                  </div>
-                );
-              })}
-            </div>
+              {activeCall?.meta.is_group && (
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {Object.keys(activeCall.participants).map(uid => {
+                    const p = activeCall.participants[uid];
+                    return (
+                      <div key={uid} className="flex items-center gap-1.5 px-3 py-1 bg-white/[0.04] border border-white/5 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                        <span className="text-[10px] font-medium text-white/60 truncate max-w-[80px]">
+                          {(uid === currentUserId) ? 'Me' : p.name || `User (${uid.slice(0, 4)})`} — <span className="text-[9px] uppercase tracking-wider font-mono text-white/40">{p.status}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </motion.div>
+          ) : (
+            /* Connected Video Call Compact Header (Top-Left WhatsApp visual style) */
+            showControls && (
+              <motion.div
+                key="compact-video-header"
+                initial={{ opacity: 0, y: -40 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -40 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                className="absolute top-0 left-0 right-0 pt-[calc(1.5rem+env(safe-area-inset-top))] px-6 pb-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent z-20 flex items-center gap-3.5 text-left pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="w-12 h-12 rounded-full overflow-hidden border border-white/10 bg-white/5 shrink-0 shadow-lg">
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
+                      {activeCall?.meta.is_group ? (
+                        <Users className="w-5 h-5 text-white/60" />
+                      ) : (
+                        <span className="text-lg font-bold text-white/50 uppercase">{displayName?.[0] || '?'}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <h1 className="text-lg font-bold tracking-tight text-white drop-shadow-md truncate">
+                    {displayName}
+                  </h1>
+                  <p className="text-white/60 text-xs font-medium mt-0.5 tracking-wider">
+                    {formatTime(callDuration)}
+                  </p>
+                </div>
+              </motion.div>
+            )
           )}
-        </div>
+        </AnimatePresence>
 
-        {/* Media Control toggle keys in active connected states */}
-        {isConnected && (
-          <div className="flex justify-center gap-6 z-10 pb-4 shrink-0">
+        {/* Media Control toggle keys in active connected AUDIO-ONLY states */}
+        {isConnected && activeCall?.meta.type === 'audio' && (
+          <div className="flex justify-center gap-6 z-10 pb-4 shrink-0 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={toggleMute}
-              className={`p-4 rounded-full border transition-all active:scale-90 ${isMuted ? 'bg-red-600 border-red-500 text-white' : 'bg-white/5 border-white/10 text-white'}`}
+              className={`p-4 rounded-full border transition-all active:scale-90 ${isMuted ? 'bg-red-600 border-red-500 text-white shadow-lg' : 'bg-white/5 border-white/10 text-white'}`}
             >
               {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
             </button>
-            {activeCall?.meta.type === 'video' && (
-              <button
-                onClick={toggleVideo}
-                className={`p-4 rounded-full border transition-all active:scale-90 ${isVideoDisabled ? 'bg-red-600 border-red-500 text-white' : 'bg-white/5 border-white/10 text-white'}`}
-              >
-                {isVideoDisabled ? <VideoOff size={22} /> : <Video size={22} />}
-              </button>
-            )}
           </div>
         )}
 
-        {/* Action button triggers bottom segment container */}
-        <div className="pb-[calc(4rem+env(safe-area-inset-bottom))] px-8 flex justify-center items-center gap-12 z-10 shrink-0 relative">
-          <AnimatePresence mode="wait">
-            {isRingingIncoming ? (
-              // Incoming Call Ring Stage UI (both Cancel left and Accept right)
-              <motion.div 
-                key="incoming-actions" 
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 30 }}
-                className="flex items-center justify-between w-full max-w-[280px]"
+        {/* Transparent/translucent Sliding Controls bar overlay for Active Video Calls */}
+        <AnimatePresence>
+          {isConnected && activeCall?.meta.type === 'video' && showControls && (
+            <motion.div
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 50 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="absolute bottom-0 left-0 right-0 pb-[calc(2.5rem+env(safe-area-inset-bottom))] pt-8 px-8 bg-gradient-to-t from-black/90 via-black/50 to-transparent z-20 flex justify-center items-center gap-8 pointer-events-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Camera toggle (left) */}
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={toggleVideo}
+                className={`w-14 h-14 rounded-full border border-white/10 flex items-center justify-center transition-all ${isVideoDisabled ? 'bg-red-600/90 border-red-500 text-white shadow-lg' : 'bg-white/10 text-white backdrop-blur-md'}`}
               >
-                {/* Red Decline Cancel circle Button */}
-                <div className="flex flex-col items-center gap-2.5">
-                  <motion.button
-                    whileTap={{ scale: 0.85 }}
-                    onClick={handleDeclineCall}
-                    className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white shadow-lg transition-colors cursor-pointer"
-                  >
-                    <PhoneOff size={28} />
-                  </motion.button>
-                  <span className="text-xs font-medium text-white/50 tracking-wider">Decline</span>
-                </div>
+                {isVideoDisabled ? <VideoOff size={22} /> : <Video size={22} />}
+              </motion.button>
 
-                {/* Green Accept Connection circle Button */}
-                <div className="flex flex-col items-center gap-2.5">
-                  <motion.button
-                    whileTap={{ scale: 0.85 }}
-                    onClick={handleAcceptCall}
-                    className="w-16 h-16 rounded-full bg-green-500 hover:bg-green-600 flex items-center justify-center text-white shadow-lg transition-colors cursor-pointer"
-                  >
-                    <Phone size={28} />
-                  </motion.button>
-                  <span className="text-xs font-medium text-white/50 tracking-wider">Accept</span>
-                </div>
-              </motion.div>
-            ) : (
-              // Connected Call Active Stage / Outgoing Call Stage (only Decline/Hangup centered)
-              <motion.div 
-                key="connected-actions"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className="flex flex-col items-center gap-2.5"
+              {/* End Call (center, rotated Phone) */}
+              <motion.button
+                whileTap={{ scale: 0.88 }}
+                onClick={handleHangupCall}
+                className="w-18 h-18 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
               >
-                <motion.button
-                  whileTap={{ scale: 0.85 }}
-                  onClick={handleHangupCall}
-                  className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white shadow-lg transition-colors cursor-pointer"
+                <Phone size={30} className="rotate-[135deg]" />
+              </motion.button>
+
+              {/* Microphone mute toggle (right) */}
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={toggleMute}
+                className={`w-14 h-14 rounded-full border border-white/10 flex items-center justify-center transition-all ${isMuted ? 'bg-red-600/90 border-red-500 text-white shadow-lg' : 'bg-white/10 text-white backdrop-blur-md'}`}
+              >
+                {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+              </motion.button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Action button triggers bottom segment container for incoming/outgoing or audio connected stages */}
+        {(!isConnected || activeCall?.meta.type !== 'video') && (
+          <div className="pb-[calc(4rem+env(safe-area-inset-bottom))] px-8 flex justify-center items-center gap-12 z-10 shrink-0 relative pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <AnimatePresence mode="wait">
+              {isRingingIncoming ? (
+                /* Incoming Call Stage (Bigger iOS-like Accept/Decline action spheres) */
+                <motion.div 
+                  key="incoming-actions" 
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 30 }}
+                  className="flex items-center justify-between w-full max-w-[300px] px-2"
                 >
-                  <PhoneOff size={28} />
-                </motion.button>
-                <span className="text-xs font-medium text-white/50 tracking-wider font-sans">End Call</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+                  {/* Red Decline Cancel circular button (angled phone icon with NO cross-line) */}
+                  <div className="flex flex-col items-center gap-3">
+                    <motion.button
+                      whileTap={{ scale: 0.88 }}
+                      onClick={handleDeclineCall}
+                      className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                    >
+                      <Phone size={32} className="rotate-[135deg] translate-y-[-1px]" />
+                    </motion.button>
+                    <span className="text-xs font-semibold text-white/50 tracking-wider">Decline</span>
+                  </div>
+
+                  {/* Green Accept Connection circular button */}
+                  <div className="flex flex-col items-center gap-3">
+                    <motion.button
+                      whileTap={{ scale: 0.88 }}
+                      onClick={handleAcceptCall}
+                      className="w-20 h-20 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                    >
+                      <Phone size={32} className="translate-y-[1px]" />
+                    </motion.button>
+                    <span className="text-xs font-semibold text-white/50 tracking-wider">Accept</span>
+                  </div>
+                </motion.div>
+              ) : (
+                /* Outgoing or Connected audio Call Stage (Clean centered decline button) */
+                <motion.div 
+                  key="connected-actions"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="flex flex-col items-center gap-2.5"
+                >
+                  <motion.button
+                    whileTap={{ scale: 0.88 }}
+                    onClick={handleHangupCall}
+                    className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                  >
+                    <Phone size={32} className="rotate-[135deg]" />
+                  </motion.button>
+                  <span className="text-xs font-semibold text-white/50 tracking-wider">End</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
       </motion.div>
     </AnimatePresence>,
     document.body
