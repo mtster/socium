@@ -82,19 +82,29 @@ export const useStore = create<AppState>((set, get) => ({
       const newMsgTime = new Date(msg.created_at).getTime();
       
       if (newMsgTime >= currentLastMsgTime) {
+        const isMeantForUs = msg.sender_id !== currentUserId;
+        const isCurrentlyLooking = (window as any).currentChatUserId === chatId;
+        const shouldBeUnread = isMeantForUs && !isCurrentlyLooking;
+
         const updatedChat = {
           ...existingChat,
           lastMessage: msg,
-          unreadCount: (msg.sender_id !== currentUserId && (window as any).currentChatUserId !== chatId)
+          unreadCount: shouldBeUnread
             ? (existingChat.unreadCount || 0) + 1
-            : (existingChat.unreadCount || 0)
+            : 0
         };
         
         const updatedList = [...chats];
         updatedList.splice(idx, 1);
         const newList = [updatedChat, ...updatedList];
         
-        set({ chats: newList });
+        set({ 
+          chats: newList,
+          inboxStates: {
+            ...get().inboxStates,
+            [chatId]: !shouldBeUnread
+          }
+        });
       }
     } else {
        // Dispatches refresh event to load entire list for a brand new user chat

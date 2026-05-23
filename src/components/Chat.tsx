@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '@/src/store/useStore';
 import { Profile } from '@/src/types';
 import { ChatListItemType } from '@/src/types/chat';
@@ -72,10 +72,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No chats found</div> : filteredConnections.map(c => {
               const isUnread = inboxStates?.[c.id] === false || (inboxStates?.[c.id] === undefined && c.unreadCount !== undefined && c.unreadCount > 0);
               return (
-              <button key={c.id} onClick={() => {
-                 markChatAsSeenOptimistically(c.id);
-                 setActiveChat(c);
-              }} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4 text-left">
+              <motion.button 
+                key={c.id} 
+                layout 
+                transition={{ type: "spring", stiffness: 380, damping: 36, mass: 1 }}
+                onClick={() => {
+                  markChatAsSeenOptimistically(c.id);
+                  setActiveChat(c);
+                }} 
+                className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4 text-left cursor-pointer"
+              >
                  <div className={cn("w-12 h-12 shrink-0 relative flex items-center justify-center", (c.avatar_url || !c.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                     {c.isGroup ? (
                        <div className="w-full h-full relative">
@@ -101,7 +107,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                    {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
                    {isUnread ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
                  </div>
-              </button>
+              </motion.button>
               );
           })}
         </div>

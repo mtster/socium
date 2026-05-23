@@ -280,7 +280,7 @@ export const MessageBubble = React.memo(
                         window.dispatchEvent(new CustomEvent('openOwnProfileAndScroll', { detail: { postId: sharedPost.id } }));
                         onCloseChat?.();
                       } else {
-                        onOpenProfile?.(sharedPost.user_id);
+                        window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: sharedPost.user_id, forcePopup: true } }));
                       }
                     }}
                     className="w-56 cursor-pointer overflow-hidden rounded-[20px] bg-black border border-white/10 active:scale-98 transition-all duration-200"
