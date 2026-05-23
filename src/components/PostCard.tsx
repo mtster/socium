@@ -20,6 +20,29 @@ interface PostCardProps {
   onRefetch?: () => void;
 }
 
+function renderClickableText(text: string): React.ReactNode {
+  if (!text) return '';
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = text.split(urlRegex);
+  return parts.map((part, i) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a 
+          key={i} 
+          href={part} 
+          target="_blank" 
+          rel="noopener noreferrer" 
+          className="text-white/90 underline decoration-white/40 hover:text-white hover:decoration-white transition-all duration-150 break-all select-text"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
 export default function PostCard({ post, currentUserId, onLike, onDelete, onUserClick, onRefetch }: PostCardProps) {
   const { setSharePost } = useStore();
   const [showMenu, setShowMenu] = useState(false);
@@ -156,8 +179,8 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       {/* Caption (Above Image) */}
       {post.caption && (
         <div className="px-4 pb-3">
-          <p className="text-sm leading-relaxed text-white/90">
-            {post.caption}
+          <p className="text-sm leading-relaxed text-white/90 whitespace-pre-line">
+            {renderClickableText(post.caption)}
           </p>
         </div>
       )}

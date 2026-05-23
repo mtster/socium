@@ -276,8 +276,8 @@ export const MessageBubble = React.memo(
                     transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                     onClick={() => {
                       sessionStorage.setItem("scroll_to_post_id", sharedPost.id);
-                      onCloseChat?.();
                       if (sharedPost.user_id === currentUserId) {
+                        onCloseChat?.();
                         window.dispatchEvent(new CustomEvent('openOwnProfileAndScroll', { detail: { postId: sharedPost.id } }));
                       } else {
                         window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: sharedPost.user_id, forcePopup: true } }));

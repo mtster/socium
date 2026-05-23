@@ -790,7 +790,7 @@ export default function App() {
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
       
       {/* Header */}
-      {(activeTab !== 'create' && !isImageViewerOpen && !isHeaderHidden) && (
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
@@ -961,7 +961,7 @@ export default function App() {
              animate={{ opacity: 1, x: 0 }} 
              exit={{ opacity: 0, x: '100%' }}
              transition={{ type: "tween", duration: 0.3 }}
-             className="fixed inset-0 z-[60] bg-black overflow-y-auto"
+             className="fixed inset-0 z-[80] bg-black overflow-y-auto"
              >
                <div className="sticky top-0 left-0 w-full px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 gap-4">
                  <button 
@@ -1015,7 +1015,7 @@ export default function App() {
         </AnimatePresence>
 
       {/* Navigation */}
-      {(activeTab !== 'create' && !isImageViewerOpen) && (
+      {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen) && (
         <BottomNav 
            activeTab={activeTab} 
            setActiveTab={(tab) => {

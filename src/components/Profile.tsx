@@ -653,7 +653,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       </div>
 
-      <div className="h-px w-full bg-white/[0.08] mt-4 mb-8" />
+      <div className="h-px w-full bg-white/[0.08] mt-4 mb-4" />
 
       {/* Posts */}
       <div className="w-full space-y-0 pt-0">
@@ -794,99 +794,99 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       </AnimatePresence>
 
       {/* Connections List Slide UI */}
-      <AnimatePresence>
-        {showConnectionsSlide && (
-          <motion.div
-            initial={{ opacity: 0, x: '100%' }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: '100%' }}
-            transition={{ type: "tween", ease: [0.25, 1, 0.5, 1], duration: 0.4 }}
-            className="fixed inset-0 z-[200] bg-black flex flex-col"
-          >
-            {/* Header */}
-            <div className="flex items-center px-4 h-14 pt-[env(safe-area-inset-top)] border-b border-white/10 shrink-0 bg-black/90 backdrop-blur-xl relative">
-              <button 
-                onClick={() => {
-                  setShowConnectionsSlide(false);
-                  setSearchConnQuery('');
-                }} 
-                className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform absolute left-4"
-              >
-                <ArrowLeft size={24} />
-              </button>
-              <h1 className="w-full text-center text-sm font-bold tracking-widest uppercase">Connections</h1>
-            </div>
+      {createPortal(
+        <AnimatePresence>
+          {showConnectionsSlide && (
+            <motion.div
+              initial={{ opacity: 0, x: '100%' }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: '100%' }}
+              transition={{ type: "tween", ease: [0.25, 1, 0.5, 1], duration: 0.4 }}
+              className="fixed inset-0 z-[9999] bg-black flex flex-col max-w-lg mx-auto border-x border-white/5 shadow-2xl"
+            >
+              {/* Header */}
+              <div className="flex items-center px-4 h-14 pt-[env(safe-area-inset-top)] border-b border-white/10 shrink-0 bg-black/90 backdrop-blur-xl relative">
+                <button 
+                  onClick={() => {
+                    setShowConnectionsSlide(false);
+                    setSearchConnQuery('');
+                  }} 
+                  className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform absolute left-4"
+                >
+                  <ArrowLeft size={24} />
+                </button>
+                <h1 className="w-full text-center text-sm font-bold tracking-widest uppercase">Connections</h1>
+              </div>
 
-            {/* Search Bar */}
-            <div className="p-4 border-b border-white/10 shrink-0 bg-black/50 select-text">
-               <div className="relative">
-                 <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" />
-                 <input 
-                   type="text" 
-                   placeholder="Search connections..." 
-                   value={searchConnQuery} 
-                   onChange={e => setSearchConnQuery(e.target.value)} 
-                   className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl pl-12 pr-10 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" 
-                 />
-                 {searchConnQuery && (
-                   <button 
-                     onClick={() => setSearchConnQuery('')}
-                     className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white p-1"
-                   >
-                     <X size={16} />
-                   </button>
-                 )}
-               </div>
-            </div>
+              {/* Search Bar */}
+              <div className="p-4 border-b border-white/10 shrink-0 bg-black/50 select-text">
+                 <div className="relative">
+                   <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" />
+                   <input 
+                     type="text" 
+                     placeholder="Search connections..." 
+                     value={searchConnQuery} 
+                     onChange={e => setSearchConnQuery(e.target.value)} 
+                     className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl pl-12 pr-10 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" 
+                   />
+                   {searchConnQuery && (
+                     <button 
+                       onClick={() => setSearchConnQuery('')}
+                       className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white p-1"
+                     >
+                       <X size={16} />
+                     </button>
+                   )}
+                 </div>
+              </div>
 
-            {/* List */}
-            <div className="flex-1 overflow-y-auto px-4 py-6">
-              {connections.filter(conn => {
-                const name = (conn.full_name || conn.username || '').toLowerCase();
-                return name.includes(searchConnQuery.toLowerCase());
-              }).length === 0 ? (
-                <div className="flex flex-col items-center justify-center pt-20 text-center">
-                  <p className="text-white/40 text-sm animate-pulse">No connections found.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {connections.filter(conn => {
-                    const name = (conn.full_name || conn.username || '').toLowerCase();
-                    return name.includes(searchConnQuery.toLowerCase());
-                  }).map((conn) => (
-                    <div 
-                      key={conn.id} 
-                      className="flex items-center justify-between bg-[#111111] hover:bg-white/5 rounded-2xl p-4 border border-white/5 cursor-pointer active:scale-98 transition-all duration-200"
-                      onClick={() => {
-                        setShowConnectionsSlide(false);
-                        setSearchConnQuery('');
-                        if (onUserClick) onUserClick(conn.id);
-                      }}
-                    >
-                      <div className="flex items-center space-x-3 flex-1 min-w-0">
+              {/* List */}
+              <div className="flex-1 overflow-y-auto px-0 py-2">
+                {connections.filter(conn => {
+                  const name = (conn.full_name || conn.username || '').toLowerCase();
+                  return name.includes(searchConnQuery.toLowerCase());
+                }).length === 0 ? (
+                  <div className="flex flex-col items-center justify-center pt-20 text-center">
+                    <p className="text-white/40 text-sm animate-pulse">No connections found.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {connections.filter(conn => {
+                      const name = (conn.full_name || conn.username || '').toLowerCase();
+                      return name.includes(searchConnQuery.toLowerCase());
+                    }).map((conn) => (
+                      <div 
+                        key={conn.id} 
+                        className="w-full flex items-center p-4 active:bg-white/5 hover:bg-white/5 transition-colors gap-4 text-left cursor-pointer"
+                        onClick={() => {
+                          setShowConnectionsSlide(false);
+                          setSearchConnQuery('');
+                          if (onUserClick) onUserClick(conn.id);
+                        }}
+                      >
                         <div className="w-12 h-12 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
                           {conn.avatar_url ? (
                             <img src={conn.avatar_url} alt="" className="w-full h-full object-cover" />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-lg font-bold text-white/40 uppercase">
+                            <div className="w-full h-full flex items-center justify-center text-sm font-medium text-white/50 uppercase">
                               {conn.username?.[0] || '?'}
                             </div>
                           )}
                         </div>
-                        <div className="truncate pr-2">
-                          <p className="text-sm font-bold text-white truncate">{conn.full_name || conn.username}</p>
-                          <p className="text-xs text-white/50 truncate">@{conn.username}</p>
+                        <div className="flex-1 text-left overflow-hidden">
+                          <p className="truncate text-sm font-bold text-white">{conn.full_name || conn.username}</p>
+                          <p className="text-xs text-white/40 truncate mt-1">@{conn.username}</p>
                         </div>
                       </div>
-                      <ArrowLeft size={16} className="rotate-180 text-white/30 shrink-0" />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
   );
 }
