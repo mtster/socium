@@ -6,138 +6,10 @@ import { supabase } from '@/src/lib/supabase';
 import { rtdb } from '@/src/lib/firebase';
 import { ref, onValue, set, get, remove, off, onDisconnect } from 'firebase/database';
 import { useStore } from '@/src/store/useStore';
-
-// Web Audio API Ringtone and Sound Effects synthesizer
-class SoundSynthesizer {
-  private audioCtx: AudioContext | null = null;
-  private ringtoneInterval: any = null;
-
-  private initCtx() {
-    if (!this.audioCtx) {
-      this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    if (this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
-    }
-  }
-
-  startRinging() {
-    this.stopRinging();
-    this.initCtx();
-    
-    const playTone = () => {
-      try {
-        if (!this.audioCtx) return;
-        const osc = this.audioCtx.createOscillator();
-        const gain = this.audioCtx.createGain();
-        osc.type = 'sine';
-        // Classic iOS cell ring dual tone chime
-        osc.frequency.setValueAtTime(400, this.audioCtx.currentTime);
-        osc.frequency.setValueAtTime(450, this.audioCtx.currentTime + 0.15);
-        
-        gain.gain.setValueAtTime(0, this.audioCtx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.12, this.audioCtx.currentTime + 0.05);
-        gain.gain.linearRampToValueAtTime(0, this.audioCtx.currentTime + 1.2);
-        
-        osc.connect(gain);
-        gain.connect(this.audioCtx.destination);
-        osc.start();
-        osc.stop(this.audioCtx.currentTime + 1.3);
-      } catch (e) {
-        console.warn("Ringtone synth audio context error:", e);
-      }
-    };
-
-    playTone();
-    this.ringtoneInterval = setInterval(playTone, 2000);
-  }
-
-  stopRinging() {
-    if (this.ringtoneInterval) {
-      clearInterval(this.ringtoneInterval);
-      this.ringtoneInterval = null;
-    }
-  }
-
-  playHangup() {
-    this.stopRinging();
-    this.initCtx();
-    try {
-      if (!this.audioCtx) return;
-      const osc1 = this.audioCtx.createOscillator();
-      const osc2 = this.audioCtx.createOscillator();
-      const gain = this.audioCtx.createGain();
-      
-      osc1.frequency.setValueAtTime(320, this.audioCtx.currentTime);
-      osc1.frequency.exponentialRampToValueAtTime(100, this.audioCtx.currentTime + 0.35);
-      
-      osc2.frequency.setValueAtTime(220, this.audioCtx.currentTime);
-      osc2.frequency.exponentialRampToValueAtTime(70, this.audioCtx.currentTime + 0.35);
-      
-      gain.gain.setValueAtTime(0.15, this.audioCtx.currentTime);
-      gain.gain.linearRampToValueAtTime(0, this.audioCtx.currentTime + 0.4);
-      
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(this.audioCtx.destination);
-      osc1.start();
-      osc2.start();
-      osc1.stop(this.audioCtx.currentTime + 0.4);
-      osc2.stop(this.audioCtx.currentTime + 0.4);
-    } catch (e) {
-      console.warn("Hangup audio synth error:", e);
-    }
-  }
-
-  playAnswer() {
-    this.stopRinging();
-    this.initCtx();
-    try {
-      if (!this.audioCtx) return;
-      const osc = this.audioCtx.createOscillator();
-      const gain = this.audioCtx.createGain();
-      
-      osc.frequency.setValueAtTime(280, this.audioCtx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(560, this.audioCtx.currentTime + 0.3);
-      
-      gain.gain.setValueAtTime(0.1, this.audioCtx.currentTime);
-      gain.gain.linearRampToValueAtTime(0, this.audioCtx.currentTime + 0.35);
-      
-      osc.connect(gain);
-      gain.connect(this.audioCtx.destination);
-      osc.start();
-      osc.stop(this.audioCtx.currentTime + 0.35);
-    } catch (e) {
-      console.warn("Answer audio synth error:", e);
-    }
-  }
-}
-
-const synth = new SoundSynthesizer();
-
-interface CallMeta {
-  id: string;
-  caller_id: string;
-  caller_name: string;
-  caller_avatar: string | null;
-  chat_room_id: string;
-  is_group: boolean;
-  type: 'audio' | 'video';
-  room_name: string;
-  room_avatar: string | null;
-}
-
-interface Participant {
-  status: 'ringing' | 'accepted' | 'declined';
-  name?: string;
-  avatar_url?: string | null;
-}
-
-interface CallNode {
-  meta: CallMeta;
-  participants: Record<string, Participant>;
-  signaling?: Record<string, any>;
-}
+import { CallMeta, Participant, CallNode } from './callTypes';
+import { synth } from './SoundSynthesizer';
+import { VideoPlayer } from './VideoPlayer';
+import { GroupVideoGrid } from './GroupVideoGrid';
 
 export function CallsManager() {
   const currentUserId = useStore(state => state.profile?.id);
@@ -539,6 +411,7 @@ export function CallsManager() {
 
   // Clean local streams and connections helper
   const cleanMediaAndRTC = () => {
+    // 1. Stop all tracks of localStreamRef
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
         try {
@@ -549,6 +422,8 @@ export function CallsManager() {
       });
       localStreamRef.current = null;
     }
+
+    // 2. Stop all tracks of localStream state
     if (localStream) {
       localStream.getTracks().forEach(track => {
         try {
@@ -559,6 +434,8 @@ export function CallsManager() {
       });
       setLocalStream(null);
     }
+
+    // 3. Stop all tracks of remoteStream
     if (remoteStream) {
       remoteStream.getTracks().forEach(track => {
         try {
@@ -569,22 +446,47 @@ export function CallsManager() {
       });
       setRemoteStream(null);
     }
+
+    // 4. Force release all tracks in remoteStreams mesh objects
+    Object.keys(remoteStreams).forEach(uid => {
+      const stream = remoteStreams[uid];
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {}
+        });
+      }
+    });
+    setRemoteStreams({});
+
+    // 5. Clean up single peer connection
     if (peerConnectionRef.current) {
       try {
+        peerConnectionRef.current.getSenders().forEach(sender => {
+          if (sender.track) {
+            try { sender.track.stop(); } catch (e) {}
+          }
+        });
         peerConnectionRef.current.close();
       } catch (e) {}
       peerConnectionRef.current = null;
     }
 
-    // Clean up all mesh connections
+    // 6. Clean up all mesh connections
     Object.keys(peerConnectionsRef.current).forEach(uid => {
       try {
+        peerConnectionsRef.current[uid].getSenders().forEach(sender => {
+          if (sender.track) {
+            try { sender.track.stop(); } catch (e) {}
+          }
+        });
         peerConnectionsRef.current[uid].close();
       } catch (e) {}
     });
     peerConnectionsRef.current = {};
-    setRemoteStreams({});
 
+    // 7. Clear HTML elements and resets
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
     }
@@ -1062,7 +964,7 @@ export function CallsManager() {
     return `${min}:${sec.toString().padStart(2, '0')}`;
   };
 
-  if (callStatus === 'idle') return null;
+  if (callStatus === 'idle' || !activeCall) return null;
 
   const isRingingIncoming = callStatus === 'ringing_incoming';
   const isRingingOutgoing = callStatus === 'ringing_outgoing';
@@ -1089,88 +991,9 @@ export function CallsManager() {
   }
 
   const handleScreenTap = () => {
-    if (callStatus === 'connected' && activeCall?.meta.type === 'video') {
+    if (callStatus === 'connected' && activeCall?.meta?.type === 'video') {
       setShowControls(prev => !prev);
     }
-  };
-
-  const getParticipantProfile = (uid: string) => {
-    if (uid === currentUserId) {
-      return {
-        name: 'You',
-        avatar: currentProfile?.avatar_url || ''
-      };
-    }
-    
-    // Check if the participant is the caller
-    if (activeCall?.meta.caller_id === uid) {
-      return {
-        name: activeCall.meta.caller_name || 'Caller',
-        avatar: activeCall.meta.caller_avatar || ''
-      };
-    }
-
-    // Check in participants list
-    const participant = activeCall?.participants?.[uid];
-    return {
-      name: participant?.name || 'User',
-      avatar: participant?.avatar_url || ''
-    };
-  };
-
-  const renderGroupVideoBox = (uid: string, stream: MediaStream | null, isSelf: boolean, index: number, totalDisplays: number) => {
-    const profile = getParticipantProfile(uid);
-    const videoRef = (el: HTMLVideoElement | null) => {
-      if (el) el.srcObject = stream;
-    };
-
-    const colSpanClass = (totalDisplays === 3 && index === 2) ? "col-span-2" : "";
-
-    return (
-      <div 
-        key={uid} 
-        className={`relative bg-zinc-900 border border-white/5 rounded-3xl overflow-hidden shadow-xl w-full h-full flex items-center justify-center ${colSpanClass}`}
-      >
-        {stream ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted={isSelf}
-            className="w-full h-full object-cover rounded-3xl"
-          />
-        ) : (
-          <div className="flex flex-col items-center gap-2">
-            <div className="w-12 h-12 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
-              {profile.avatar ? (
-                <img src={profile.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <Users className="w-5 h-5 text-white/50" />
-              )}
-            </div>
-            <p className="text-white/40 text-[9px] font-mono tracking-widest uppercase">Connecting...</p>
-          </div>
-        )}
-
-        {/* Small profile pic and name on top-left of each user's display box */}
-        <div className="absolute top-3 left-3 bg-black/65 backdrop-blur-md border border-white/10 rounded-full py-1 pl-1 pr-2.5 flex items-center gap-1.5 max-w-[80%] pointer-events-none">
-          <div className="w-4 h-4 rounded-full overflow-hidden bg-white/10 shrink-0">
-            {profile.avatar ? (
-              <img src={profile.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-            ) : (
-              <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
-                <span className="text-[7px] font-bold text-white/70 uppercase">
-                  {profile.name[0]}
-                </span>
-              </div>
-            )}
-          </div>
-          <span className="text-[10px] font-medium text-white/95 truncate">
-            {profile.name}
-          </span>
-        </div>
-      </div>
-    );
   };
 
   return createPortal(
@@ -1183,7 +1006,7 @@ export function CallsManager() {
         className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
       >
         {/* Remote audio-only playback frame element for 1-on-1 */}
-        {isConnected && activeCall?.meta.type === 'audio' && !activeCall?.meta.is_group && remoteStream && (
+        {isConnected && activeCall?.meta?.type === 'audio' && !activeCall?.meta?.is_group && remoteStream && (
           <audio
             ref={remoteAudioRef}
             autoPlay
@@ -1196,12 +1019,12 @@ export function CallsManager() {
         {isConnected && Object.keys(remoteStreams).map((uid, idx) => {
           // Extra participants beyond the visible grid are played via background hidden audio
           // Or if it is a group audio call
-          if (idx >= 3 || activeCall?.meta.type === 'audio') {
+          if (idx >= 3 || activeCall?.meta?.type === 'audio') {
             return (
               <audio
                 key={`extra-audio-${uid}`}
                 ref={el => {
-                  if (el) el.srcObject = remoteStreams[uid];
+                  if (el && remoteStreams[uid]) el.srcObject = remoteStreams[uid];
                 }}
                 autoPlay
                 playsInline
@@ -1213,40 +1036,23 @@ export function CallsManager() {
         })}
 
         {/* Dynamic Video Streaming overlay layers */}
-        {isConnected && activeCall?.meta.type === 'video' && (
-          <div className="absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none pt-[calc(3.5rem+env(safe-area-inset-top))] pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
-            {activeCall.meta.is_group ? (
-              // New mesh layout for Group Video call (max 4 displays)
-              (() => {
-                const visibleRemoteUids = Object.keys(remoteStreams).slice(0, 3);
-                const totalDisplays = 1 + visibleRemoteUids.length; // 1 for ourselves + remote streams (up to 3)
-
-                const gridClass = 
-                  totalDisplays === 1 ? "grid-cols-1 grid-rows-1" :
-                  totalDisplays === 2 ? "grid-cols-1 grid-rows-2" :
-                  totalDisplays === 3 ? "grid-cols-2 grid-rows-2" :
-                  "grid-cols-2 grid-rows-2";
-
-                return (
-                  <div className={`grid ${gridClass} w-full h-full gap-3 p-3 max-w-md mx-auto pointer-events-auto`}>
-                    {/* Render our own local stream first */}
-                    {renderGroupVideoBox(currentUserId, localStream, true, 0, totalDisplays)}
-
-                    {/* Render up to 3 remote streams, keeping separation */}
-                    {visibleRemoteUids.map((uid, idx) => 
-                      renderGroupVideoBox(uid, remoteStreams[uid], false, idx + 1, totalDisplays)
-                    )}
-                  </div>
-                );
-              })()
+        {isConnected && activeCall?.meta?.type === 'video' && (
+          <div className={`absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none ${activeCall?.meta?.is_group ? 'pt-[calc(3.5rem+env(safe-area-inset-top))] pb-[calc(7.5rem+env(safe-area-inset-bottom))]' : ''}`}>
+            {activeCall?.meta?.is_group ? (
+              <GroupVideoGrid
+                remoteStreams={remoteStreams}
+                localStream={localStream}
+                currentUserId={currentUserId}
+                isVideoDisabled={isVideoDisabled}
+                activeCall={activeCall}
+                currentProfile={currentProfile}
+              />
             ) : (
               // Existing 1-on-1 vertical PIP layout
               <>
                 {remoteStream || localStream ? (
-                  <video
-                    ref={remoteStream ? remoteVideoRef : localVideoRef}
-                    autoPlay
-                    playsInline
+                  <VideoPlayer
+                    stream={remoteStream || localStream}
                     muted={!remoteStream}
                     className="w-full h-full object-cover"
                   />
@@ -1266,11 +1072,9 @@ export function CallsManager() {
                 {/* PIP Local Camera display box to display local user's feed */}
                 {remoteStream && (localStream || localStreamRef.current) && !isVideoDisabled && (
                   <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
-                    <video
-                      ref={localVideoRef}
-                      autoPlay
-                      playsInline
-                      muted
+                    <VideoPlayer
+                      stream={localStream}
+                      muted={true}
                       className="w-full h-full object-cover"
                     />
                   </div>
@@ -1282,7 +1086,7 @@ export function CallsManager() {
 
         {/* Dynamic Header Layout Transitions */}
         <AnimatePresence>
-          {(!isConnected || activeCall?.meta.type !== 'video') ? (
+          {(!isConnected || activeCall?.meta?.type !== 'video') ? (
             /* Standard Centered Header (For Incoming/Outgoing states OR Audio Call) */
             <motion.div
               key="centered-header"
@@ -1296,7 +1100,7 @@ export function CallsManager() {
                   <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                    {activeCall?.meta.is_group ? (
+                    {activeCall?.meta?.is_group ? (
                       <Users className="w-12 h-12 text-white/60" />
                     ) : (
                       <span className="text-3xl font-bold text-white/50 uppercase">
@@ -1312,7 +1116,7 @@ export function CallsManager() {
               </h1>
 
               <p className="text-xs font-mono tracking-widest text-[#00E676] uppercase mt-3 py-1 px-3 bg-white/5 border border-white/10 rounded-full">
-                {activeCall?.meta.type === 'video' ? '🎥 Video Call' : '📞 Audio Call'}
+                {activeCall?.meta?.type === 'video' ? '🎥 Video Call' : '📞 Audio Call'}
               </p>
 
               <p className="text-[#a0a0a0] text-sm mt-3.5 tracking-wider font-medium">
@@ -1321,9 +1125,9 @@ export function CallsManager() {
                 {isConnected && `ACTIVE — ${formatTime(callDuration)}`}
               </p>
 
-              {activeCall?.meta.is_group && (
+              {activeCall?.meta?.is_group && (
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {Object.keys(activeCall.participants).map(uid => {
+                  {Object.keys(activeCall.participants || {}).map(uid => {
                     const p = activeCall.participants[uid];
                     return (
                       <div key={uid} className="flex items-center gap-1.5 px-3 py-1 bg-white/[0.04] border border-white/5 rounded-full">
@@ -1354,7 +1158,7 @@ export function CallsManager() {
                     <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                      {activeCall?.meta.is_group ? (
+                      {activeCall?.meta?.is_group ? (
                         <Users className="w-5 h-5 text-white/60" />
                       ) : (
                         <span className="text-lg font-bold text-white/50 uppercase">{displayName?.[0] || '?'}</span>
@@ -1376,7 +1180,7 @@ export function CallsManager() {
         </AnimatePresence>
 
         {/* Media Control toggle keys in active connected AUDIO-ONLY states */}
-        {isConnected && activeCall?.meta.type === 'audio' && (
+        {isConnected && activeCall?.meta?.type === 'audio' && (
           <div className="flex justify-center gap-6 z-10 pb-4 shrink-0 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={toggleMute}
@@ -1389,7 +1193,7 @@ export function CallsManager() {
 
         {/* Transparent/translucent Sliding Controls bar overlay for Active Video Calls */}
         <AnimatePresence>
-          {isConnected && activeCall?.meta.type === 'video' && showControls && (
+          {isConnected && activeCall?.meta?.type === 'video' && showControls && (
             <motion.div
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1429,7 +1233,7 @@ export function CallsManager() {
         </AnimatePresence>
 
         {/* Action button triggers bottom segment container for incoming/outgoing or audio connected stages */}
-        {(!isConnected || activeCall?.meta.type !== 'video') && (
+        {(!isConnected || activeCall?.meta?.type !== 'video') && (
           <div className="pb-[calc(4rem+env(safe-area-inset-bottom))] px-8 flex justify-center items-center gap-12 z-10 shrink-0 relative pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <AnimatePresence mode="wait">
               {isRingingIncoming ? (
@@ -1448,7 +1252,7 @@ export function CallsManager() {
                       onClick={handleDeclineCall}
                       className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
                     >
-                      <Phone size={32} className="rotate-[135deg] translate-y-[-1px]" />
+                      <Phone size={32} className="rotate-[135deg] translate-y-[1px]" />
                     </motion.button>
                     <span className="text-xs font-semibold text-white/50 tracking-wider">Decline</span>
                   </div>
