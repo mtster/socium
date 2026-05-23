@@ -1,6 +1,7 @@
 import { ref, onValue, set, onDisconnect, increment, get, runTransaction } from "firebase/database";
 import { rtdb } from "./firebase";
 import { supabase } from "./supabase";
+import { useStore } from "../store/useStore";
 
 export const initPresence = (userId: string) => {
   if (!rtdb) return;
@@ -49,6 +50,10 @@ export const initPresence = (userId: string) => {
 
   const unsubscribeCount = onValue(countRef, (snapshot) => {
     const count = snapshot.val() || 0;
+    
+    // Sync to Zustand global store so BottomNav red dot updates in absolute real-time!
+    useStore.getState().setTotalUnread(count);
+
     if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator) {
       if (count > 0) {
         (navigator as any).setAppBadge(count).catch(console.error);

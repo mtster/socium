@@ -281,7 +281,6 @@ export const MessageBubble = React.memo(
                         onCloseChat?.();
                       } else {
                         onOpenProfile?.(sharedPost.user_id);
-                        onCloseChat?.();
                       }
                     }}
                     className="w-56 cursor-pointer overflow-hidden rounded-[20px] bg-black border border-white/10 active:scale-98 transition-all duration-200"

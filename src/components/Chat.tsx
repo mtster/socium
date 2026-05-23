@@ -18,7 +18,7 @@ interface ChatProps {
 }
 
 export default function Chat({ currentUserId, initialActiveChat, onCloseChat, onChatStateChange }: ChatProps) {
-  const { chats, loading, updateChatList } = useChatList(currentUserId);
+  const { chats, loading, updateChatList, inboxStates, markChatAsSeenOptimistically } = useChatList(currentUserId);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeChat, setActiveChat] = useState<ChatListItemType | null>(initialActiveChat || null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -69,14 +69,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
            </div>
         </div>
         <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
-          {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No chats found</div> : filteredConnections.map(c => (
+          {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No chats found</div> : filteredConnections.map(c => {
+              const isUnread = inboxStates?.[c.id] === false || (inboxStates?.[c.id] === undefined && c.unreadCount !== undefined && c.unreadCount > 0);
+              return (
               <button key={c.id} onClick={() => {
+                 markChatAsSeenOptimistically(c.id);
                  setActiveChat(c);
-                 if (c.unreadCount && c.unreadCount > 0) {
-                   const { totalUnread, setTotalUnread } = useStore.getState();
-                   setTotalUnread(Math.max(0, totalUnread - 1));
-                   updateChatList(prev => prev.map(conn => conn.id === c.id ? { ...conn, unreadCount: 0 } : conn));
-                 }
               }} className="w-full flex items-center p-4 border-b border-white/5 active:bg-white/5 transition-colors gap-4 text-left">
                  <div className={cn("w-12 h-12 shrink-0 relative flex items-center justify-center", (c.avatar_url || !c.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                     {c.isGroup ? (
@@ -96,15 +94,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                     )}
                  </div>
                  <div className="flex-1 text-left overflow-hidden">
-                   <p className="font-bold text-white/90 truncate text-sm">{c.name}</p>
-                   {c.lastMessage && <p className={cn("text-xs truncate mt-1", c.unreadCount ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
+                   <p className={cn("truncate text-sm", isUnread ? "font-extrabold text-white" : "font-bold text-white/90")}>{c.name}</p>
+                   {c.lastMessage && <p className={cn("text-xs truncate mt-1", isUnread ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
                  </div>
                  <div className="flex flex-col items-end gap-1">
                    {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
-                   {c.unreadCount ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
+                   {isUnread ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
                  </div>
               </button>
-          ))}
+              );
+          })}
         </div>
       </div>
 
@@ -114,7 +113,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
             currentUserId={currentUserId} 
             activeChat={activeChat} 
             onClose={() => { 
-                updateChatList(prev => prev.map(c => c.id === activeChat.id ? { ...c, unreadCount: 0 } : c));
+                markChatAsSeenOptimistically(activeChat.id);
                 setActiveChat(null); 
                 onCloseChat?.(); 
             }} 

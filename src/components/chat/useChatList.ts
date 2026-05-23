@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
-import { ChatListItemType, GroupChat } from '@/src/types/chat';
+import { ChatListItemType } from '@/src/types/chat';
 
 let chatListCache: ChatListItemType[] | null = null;
 let lastChatListFetch = 0;
@@ -9,6 +9,7 @@ let lastChatListFetch = 0;
 export function useChatList(currentUserId: string) {
   const [chats, setChats] = useState<ChatListItemType[]>(chatListCache || []);
   const [loading, setLoading] = useState(!chatListCache);
+  const [inboxStates, setInboxStates] = useState<Record<string, boolean>>({});
 
   const fetchChats = useCallback(async (silent = false) => {
     try {
@@ -35,7 +36,6 @@ export function useChatList(currentUserId: string) {
       let groupChatsWithDetails: any[] = [];
       
       if (groupChatIds.length > 0) {
-        // We use a custom join or multiple queries. To avoid complex RPC right now:
         const { data: groups } = await supabase.from('group_chats')
           .select('*')
           .in('id', groupChatIds);
@@ -107,7 +107,6 @@ export function useChatList(currentUserId: string) {
           count = unread || 0;
         }
 
-        // Generate default name and avatar logic for group chats
         chatItems.push({
           id: group.id,
           isGroup: true,
@@ -137,27 +136,20 @@ export function useChatList(currentUserId: string) {
               const inboxes = snapshot.val();
               const validIds = new Set(chatItems.map(c => c.id));
               let needsUpdate = false;
-              let computedUnseenCount = 0;
               
               const updatedInboxes = { ...inboxes };
               
-              // Standardize values with actual Postgres unread states
               for (const chat of chatItems) {
                  const currentVal = updatedInboxes[chat.id];
                  if (chat.unreadCount === 0 && currentVal === false) {
                     updatedInboxes[chat.id] = true;
                     needsUpdate = true;
                   } else if (chat.unreadCount > 0 && currentVal === undefined) {
-                     // Only initialize to false if it has not been set yet.
-                     // NEVER transition from true (seen) to false (unseen) within the chat list fetch
-                     // because the recipient may have just marked it seen, and Postgres has propagation latency.
-                     // The sender's checkRecipientPresenceAndNotify or Cloudflare Worker handles setting to false on new messages.
                     updatedInboxes[chat.id] = false;
                     needsUpdate = true;
-                 }
+                  }
               }
               
-              // Remove old UUIDs
               for (const key of Object.keys(updatedInboxes)) {
                  if (!validIds.has(key)) {
                     delete updatedInboxes[key];
@@ -181,8 +173,90 @@ export function useChatList(currentUserId: string) {
     }
   }, [currentUserId]);
 
+  // Real-time listener for the RTDB inboxes node
   useEffect(() => {
-    // Always fetch on mount/focus to get latest messages and keep main chat list updated
+    if (!currentUserId) return;
+    let unsubscribe: (() => void) | undefined;
+    
+    import('@/src/lib/firebase').then(({ rtdb }) => {
+      if (!rtdb) return;
+      import('firebase/database').then(({ ref, onValue }) => {
+        const inboxRef = ref(rtdb, `inboxes/${currentUserId}`);
+        unsubscribe = onValue(inboxRef, (snapshot) => {
+          if (snapshot.exists()) {
+            setInboxStates(snapshot.val() || {});
+          } else {
+            setInboxStates({});
+          }
+        });
+      });
+    });
+    
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [currentUserId]);
+
+  // Optimistic main page updates and clearing sticky unreads
+  const markChatAsSeenOptimistically = useCallback((chatId: string) => {
+    // 1. Instantly toggle isUnread logic key to seen (true) in react memory
+    setInboxStates(prev => ({
+      ...prev,
+      [chatId]: true
+    }));
+
+    // 2. Instantly reset the unread badge counts inside the chats list array
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, unreadCount: 0 } : c));
+
+    // 3. Write background update to RTDB
+    import('@/src/lib/firebase').then(({ rtdb }) => {
+      if (!rtdb) return;
+      import('firebase/database').then(({ ref, set }) => {
+        set(ref(rtdb, `inboxes/${currentUserId}/${chatId}`), true).catch(console.warn);
+      });
+    });
+  }, [currentUserId]);
+
+  // Live client-side re-sorting and in-memory updates for incoming chat messages
+  const handleNewMessage = useCallback((msg: any) => {
+    const isGroup = msg.group_chat_id !== null;
+    const chatId = isGroup ? msg.group_chat_id : (msg.sender_id === currentUserId ? msg.receiver_id : msg.sender_id);
+    
+    if (!chatId) return;
+
+    setChats(prev => {
+      const idx = prev.findIndex(c => c.id === chatId);
+      if (idx !== -1) {
+        const existingChat = prev[idx];
+        const currentLastMsgTime = existingChat.lastMessage ? new Date(existingChat.lastMessage.created_at).getTime() : 0;
+        const newMsgTime = new Date(msg.created_at).getTime();
+        
+        if (newMsgTime >= currentLastMsgTime) {
+          const updatedChat = {
+            ...existingChat,
+            lastMessage: msg,
+            unreadCount: (msg.sender_id !== currentUserId && (window as any).currentChatUserId !== chatId)
+              ? (existingChat.unreadCount || 0) + 1
+              : (existingChat.unreadCount || 0)
+          };
+          
+          const updatedList = [...prev];
+          updatedList.splice(idx, 1);
+          const newList = [updatedChat, ...updatedList];
+          
+          chatListCache = newList;
+          return newList;
+        }
+        return prev;
+      } else {
+        // Completely new chat/group. Fetch once to compile details
+        fetchChats(true);
+        return prev;
+      }
+    });
+  }, [currentUserId, fetchChats]);
+
+  useEffect(() => {
     fetchChats();
 
     const handleVisibility = () => {
@@ -199,17 +273,26 @@ export function useChatList(currentUserId: string) {
   }, [fetchChats]);
 
   useEffect(() => {
-    // Live Supabase updates for messages, groups, and participants
+    // Listen to Supabase Postgres updates dynamically
     const channel = supabase.channel(`chat_list_updates_${currentUserId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
-        // Fetch on any message insertion, updates (such as read receipt changes), or deletion
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        const msg = payload.new;
+        const isForUs = msg.receiver_id === currentUserId || msg.group_chat_id !== null;
+        if (isForUs) {
+          handleNewMessage(msg);
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
+        // Safe database reload on edited messages or read receipts update
+        fetchChats(true);
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, () => {
         fetchChats(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chats' }, () => {
         fetchChats(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chat_participants' }, (payload) => {
-        // Only refresh of general participants insertion/deletion, not read receipt updates
         if (payload.eventType === 'INSERT' || payload.eventType === 'DELETE') {
           fetchChats(true);
         }
@@ -219,9 +302,9 @@ export function useChatList(currentUserId: string) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUserId, fetchChats]);
+  }, [currentUserId, fetchChats, handleNewMessage]);
 
-  const updateChatList = useCallback((updater: (prev: ChatListItemType[]) => ChatListItemType[]) => {
+  const updateChatList = useCallback((updater: (prev: ChatListItemType[]) => ChatListItemType[] = (prev) => prev) => {
     setChats(prev => {
       const result = updater(prev);
       chatListCache = result;
@@ -229,5 +312,5 @@ export function useChatList(currentUserId: string) {
     });
   }, []);
 
-  return { chats, loading, fetchChats, updateChatList };
+  return { chats, loading, fetchChats, updateChatList, inboxStates, markChatAsSeenOptimistically };
 }
