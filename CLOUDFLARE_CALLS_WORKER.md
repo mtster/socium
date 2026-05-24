@@ -29,154 +29,61 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Handle Cloudflare Calls Proxy Routes
+    // Handle Cloudflare RealtimeKit Proxy Routes
     if (path.startsWith("/api/calls/")) {
       try {
-        if (!env.REALTIMEKIT_APP_ID || !env.REALTIMEKIT_API_TOKEN) {
+        if (!env.REALTIMEKIT_APP_ID || !env.REALTIMEKIT_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) {
           return new Response(
-            JSON.stringify({ error: "Missing Cloudflare Calls credentials inside Worker secrets (REALTIMEKIT_APP_ID and REALTIMEKIT_API_TOKEN are required)." }),
+            JSON.stringify({ error: "Missing required variables (REALTIMEKIT_APP_ID, REALTIMEKIT_API_TOKEN, or CLOUDFLARE_ACCOUNT_ID) inside Worker settings." }),
             { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
           );
         }
 
         const bodyText = await request.text();
-        const attemptedUrls = [];
-        let cfResponse = null;
+        let targetUrl = "";
 
-        // Helper function to call the target URL with given headers
-        const doFetch = async (url, authorizationToken) => {
-          const headers = {
-            "Authorization": `Bearer ${authorizationToken}`,
-            "Content-Type": "application/json",
-          };
-          return await fetch(url, {
-            method: "POST",
-            headers,
-            body: bodyText,
-          });
-        };
-
-        // 1. Try Account-level Client v4 API if CLOUDFLARE_ACCOUNT_ID is available
-        if (env.CLOUDFLARE_ACCOUNT_ID) {
-          let v4Url = "";
-          if (path === "/api/calls/session") {
-            v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
-          } else {
-            const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
-            const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
-            
-            if (tracksMatch) {
-              const sessionId = tracksMatch[1];
-              v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/tracks/new`;
-            } else if (renegotiateMatch) {
-              const sessionId = renegotiateMatch[1];
-              v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/renegotiate`;
-            }
-          }
-
-          if (v4Url) {
-            attemptedUrls.push({ type: "Account V4 Client API via api.cloudflare.com", url: v4Url });
-            try {
-              cfResponse = await doFetch(v4Url, env.REALTIMEKIT_API_TOKEN);
-              if (cfResponse.ok) {
-                const resText = await cfResponse.text();
-                return new Response(resText, {
-                  status: cfResponse.status,
-                  headers: {
-                    "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                  },
-                });
-              }
-              console.warn(`V4 API attempt returned status ${cfResponse.status}. Will try fallback to App-level API next.`);
-            } catch (v4Err) {
-              console.error("V4 API fetch threw exception:", v4Err);
-            }
-          }
-        }
-
-        // 2. Direct WebRTC App-level API (rtc.cloudflare.com)
-        let rtcUrl = "";
+        // Map incoming PWA paths to correct RealtimeKit API Endpoints
         if (path === "/api/calls/session") {
-          rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+          targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtimekit/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
         } else {
           const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
           const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
           
           if (tracksMatch) {
             const sessionId = tracksMatch[1];
-            rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/tracks/new`;
+            targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtimekit/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/tracks/new`;
           } else if (renegotiateMatch) {
             const sessionId = renegotiateMatch[1];
-            rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/renegotiate`;
+            targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtimekit/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/renegotiate`;
           }
         }
 
-        if (rtcUrl) {
-          attemptedUrls.push({ type: "WebRTC App-level direct API via rtc.cloudflare.com", url: rtcUrl });
-          try {
-            const rtcResponse = await doFetch(rtcUrl, env.REALTIMEKIT_API_TOKEN);
-            const resText = await rtcResponse.text();
-
-            if (rtcResponse.ok) {
-              return new Response(resText, {
-                status: rtcResponse.status,
-                headers: {
-                  "Content-Type": "application/json",
-                  "Access-Control-Allow-Origin": "*",
-                  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                },
-              });
-            }
-
-            // Both failed - return high quality diagnostics so the user knows exactly why
-            let errorBody = "";
-            try {
-              const resJson = JSON.parse(resText);
-              errorBody = resJson.errors ? JSON.stringify(resJson.errors) : resText;
-            } catch (e) {
-              errorBody = resText;
-            }
-
-            return new Response(
-              JSON.stringify({
-                success: false,
-                error: "All Cloudflare WebRTC Calls API connection attempts failed.",
-                attempted_endpoints: attemptedUrls,
-                last_failed_status_code: rtcResponse.status,
-                last_failed_response: errorBody,
-                troubleshooting: {
-                  token_guideline: "Make sure your REALTIMEKIT_API_TOKEN is correct. If using rtc.cloudflare.com, it must be the 64-character App Secret. If using api.cloudflare.com, it must be a Cloudflare API Token with All Accounts -> Cloudflare Calls: Edit permission.",
-                  app_id_guideline: `Verify your REALTIMEKIT_APP_ID (${env.REALTIMEKIT_APP_ID}) matches the Calls App ID in your dashboard exactly.`,
-                  account_id: env.CLOUDFLARE_ACCOUNT_ID ? `Provided: ${env.CLOUDFLARE_ACCOUNT_ID}` : "Not provided (Note: Account ID is only needed if authenticating with standard Client API Tokens)"
-                }
-              }),
-              {
-                status: rtcResponse.status === 200 ? 500 : rtcResponse.status,
-                headers: {
-                  "Content-Type": "application/json",
-                  "Access-Control-Allow-Origin": "*",
-                  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                }
-              }
-            );
-          } catch (rtcErr) {
-            return new Response(
-              JSON.stringify({
-                success: false,
-                error: `WebRTC gateway fetch failed: ${rtcErr.message}`,
-                attempted_endpoints: attemptedUrls
-              }),
-              {
-                status: 500,
-                headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-              }
-            );
-          }
+        if (!targetUrl) {
+          return new Response("Invalid RealtimeKit route", { status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
         }
 
-        return new Response("Not Found", { status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
+        // Forward the token request to Cloudflare's core infrastructure
+        const cfResponse = await fetch(targetUrl, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.REALTIMEKIT_API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: bodyText,
+        });
+
+        const resText = await cfResponse.text();
+
+        // Return Cloudflare's response directly to your PWA client frontend
+        return new Response(resText, {
+          status: cfResponse.status,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+
       } catch (proxyErr) {
         return new Response(JSON.stringify({ error: proxyErr.message }), {
           status: 500,

@@ -152,7 +152,7 @@ export function CallsManager() {
         const callNodeRef = ref(rtdb, `calls/${incomingCallId}`);
         registerDbListener(callNodeRef, (callSnap) => {
           const callData = callSnap.val() as CallNode | null;
-          if (callData) {
+          if (callData && callData.meta) {
             setActiveCall(callData);
 
             // Register on-disconnect state fallbacks
@@ -276,14 +276,14 @@ export function CallsManager() {
       const callRef = ref(rtdb, `calls/${newCallId}`);
       registerDbListener(callRef, (snap) => {
         const val = snap.val() as CallNode | null;
-        if (val) {
+        if (val && val.meta) {
           setActiveCall(val);
 
           if (val.meta.caller_id === currentUserId) {
             const recipientsList = Object.keys(val.participants || {});
             if (recipientsList.length > 0) {
               const hasActiveRecipient = recipientsList.some(uid =>
-                val.participants[uid].status === 'ringing' || val.participants[uid].status === 'accepted'
+                val.participants[uid]?.status === 'ringing' || val.participants[uid]?.status === 'accepted'
               );
               if (!hasActiveRecipient) {
                 handleLocalHangup();
@@ -292,13 +292,13 @@ export function CallsManager() {
             }
           }
 
-          const acceptedUser = Object.keys(val.participants).find(uid => val.participants[uid].status === 'accepted');
+          const acceptedUser = Object.keys(val.participants || {}).find(uid => val.participants[uid]?.status === 'accepted');
           if (acceptedUser) {
             setCallStatus('connected');
             synth.stopRinging();
           }
 
-          if (!chat.isGroup && val.participants[chat.id]?.status === 'declined') {
+          if (!chat.isGroup && val.participants?.[chat.id]?.status === 'declined') {
             handleLocalHangup();
           }
 
