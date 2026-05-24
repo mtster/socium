@@ -100,3 +100,9 @@
 .animate-highlight-glow {
   animation: highlightGlow 2.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
+
+/* Hide native Eruda entry button to let our custom draggable button control it */
+.eruda-entry-btn {
+  display: none !important;
+}
+

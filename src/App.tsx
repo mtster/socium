@@ -16,6 +16,7 @@ import { cn } from './lib/utils';
 import { Toaster } from 'react-hot-toast';
 import { useStore } from './store/useStore';
 import { CallsManager } from './components/chat/CallsManager';
+import ErudaDevTools from './components/ErudaDevTools';
 
 import { initPresence } from '@/src/lib/presence';
 
@@ -1029,6 +1030,7 @@ export default function App() {
         />
       )}
       <CallsManager />
+      <ErudaDevTools />
     </div>
   );
 }
