@@ -6,136 +6,159 @@ import { supabase } from '@/src/lib/supabase';
 import { rtdb } from '@/src/lib/firebase';
 import { ref, onValue, set, get, remove, off, onDisconnect } from 'firebase/database';
 import { useStore } from '@/src/store/useStore';
-import { CallMeta, Participant, CallNode } from './callTypes';
+import { CallMeta, Participant, CallNode, CfSession } from './callTypes';
 import { synth } from './SoundSynthesizer';
 import { VideoPlayer } from './VideoPlayer';
 import { GroupVideoGrid } from './GroupVideoGrid';
+import { createCfSession, addCfTracks, renegotiateCfSession } from './CallsApi';
 
 export function CallsManager() {
   const currentUserId = useStore(state => state.profile?.id);
   const currentProfile = useStore(state => state.profile);
 
-  // Core active call states
+  // States
   const [activeCall, setActiveCall] = useState<CallNode | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
   const [callStatus, setCallStatus] = useState<'idle' | 'ringing_outgoing' | 'ringing_incoming' | 'connected' | 'ended'>('idle');
   const [showControls, setShowControls] = useState(true);
-  
-  // Media states
+
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoDisabled, setIsVideoDisabled] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  // Sync state reference to prevent closures bugs in RTC listeners
+  // For multi-peer rendering
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+
+  // Refs
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const timerRef = useRef<any>(null);
+  const listenersRef = useRef<{ path: string; handler: any }[]>([]);
+  const midToUserRef = useRef<Record<string, { userId: string; kind: 'audio' | 'video' }>>({});
+  const pulledTracksRef = useRef<Set<string>>(new Set()); // key format: sessionId:trackName
+
+  // Connection-State synchronizers to avoid closure state captures in listeners
   const activeCallRef = useRef<CallNode | null>(null);
   useEffect(() => {
     activeCallRef.current = activeCall;
   }, [activeCall]);
 
-  // Sync callStatus reference for async closures
   const callStatusRef = useRef(callStatus);
   useEffect(() => {
     callStatusRef.current = callStatus;
   }, [callStatus]);
 
-  // Ref tracking current local stream to guarantee exact track level shutdowns
-  const localStreamRef = useRef<MediaStream | null>(null);
-
-  // Timer Ref
-  const timerRef = useRef<any>(null);
-
-  // WebRTC Connection Refs (handling 1-on-1 and group mesh calling seamlessly)
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
-  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
-
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Auto-hide controls timeout for connected video calls
+  const callIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (callStatus === 'connected' && activeCall?.meta.type === 'video' && showControls) {
-      const timer = setTimeout(() => {
-        setShowControls(false);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [showControls, callStatus, activeCall?.meta.type]);
+    callIdRef.current = callId;
+  }, [callId]);
 
-  // Synchronize local and remote media streams to DOM elements whenever they or connection status updates
+  // Handle call duration timer
   useEffect(() => {
     if (callStatus === 'connected') {
-      if (localStream && localVideoRef.current) {
-        if (localVideoRef.current.srcObject !== localStream) {
-          try {
-            localVideoRef.current.srcObject = localStream;
-          } catch (e) {
-            console.warn("Retrying local stream attachment:", e);
-          }
-        }
+      timerRef.current = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
       }
-      if (remoteStream) {
-        if (activeCall?.meta.type === 'video') {
-          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStream) {
-            try {
-              remoteVideoRef.current.srcObject = remoteStream;
-            } catch (e) {
-              console.warn("Retrying remote video attachment:", e);
-            }
-          }
-        } else {
-          if (remoteAudioRef.current && remoteAudioRef.current.srcObject !== remoteStream) {
-            try {
-              remoteAudioRef.current.srcObject = remoteStream;
-            } catch (e) {
-              console.warn("Retrying remote audio attachment:", e);
-            }
-          }
-        }
-      }
+      setCallDuration(0);
     }
-  }, [localStream, remoteStream, callStatus, activeCall?.meta.type]);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [callStatus]);
 
-  // Listens to global window triggers for call initiation
+  // Register database listeners safely with direct tracking vectors to prevent leaks or duplicates
+  const registerDbListener = (pRef: any, callback: any) => {
+    const pPath = pRef.toString().replace(/https?:\/\/[^\/]+/, '');
+    onValue(pRef, callback);
+    listenersRef.current.push({ path: pPath, handler: callback });
+  };
+
+  const clearAllDbListeners = () => {
+    listenersRef.current.forEach(item => {
+      try {
+        off(ref(rtdb, item.path), 'value', item.handler);
+      } catch (e) {}
+    });
+    listenersRef.current = [];
+  };
+
+  // Release media tracks and connections
+  const cleanMediaAndRTC = () => {
+    // 1. Release local streams
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        try { track.stop(); } catch (e) {}
+      });
+      localStreamRef.current = null;
+    }
+    if (localStream) {
+      localStream.getTracks().forEach(track => {
+        try { track.stop(); } catch (e) {}
+      });
+      setLocalStream(null);
+    }
+
+    // 2. Stop remote streams
+    Object.keys(remoteStreams).forEach(uid => {
+      const stream = remoteStreams[uid];
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          try { track.stop(); } catch (e) {}
+        });
+      }
+    });
+    setRemoteStreams({});
+
+    // 3. Clear PeerConnection
+    if (pcRef.current) {
+      try {
+        pcRef.current.close();
+      } catch (e) {}
+      pcRef.current = null;
+    }
+
+    midToUserRef.current = {};
+    pulledTracksRef.current.clear();
+    setIsMuted(false);
+    setIsVideoDisabled(false);
+    synth.stopRinging();
+  };
+
+  // Main teardown caller
+  const handleLocalHangup = (isSilent = false) => {
+    cleanMediaAndRTC();
+    setCallStatus('idle');
+    setActiveCall(null);
+    setCallId(null);
+    if (!isSilent) synth.playHangup();
+  };
+
+  // Core Orchestration hooks
   useEffect(() => {
     if (!currentUserId || !rtdb) return;
 
-    // Listen to incoming calls
     const userCallActiveRef = ref(rtdb, `user_calls/${currentUserId}/active`);
-    const unsubscribeUserCall = onValue(userCallActiveRef, async (snapshot) => {
+    registerDbListener(userCallActiveRef, async (snapshot) => {
       const incomingCallId = snapshot.val();
       if (incomingCallId) {
         setCallId(incomingCallId);
-        // Subscribe to the full call state node
-        const callRef = ref(rtdb, `calls/${incomingCallId}`);
-        onValue(callRef, (callSnap) => {
+
+        const callNodeRef = ref(rtdb, `calls/${incomingCallId}`);
+        registerDbListener(callNodeRef, (callSnap) => {
           const callData = callSnap.val() as CallNode | null;
           if (callData) {
             setActiveCall(callData);
-            
-            // Check if we are the caller and all participants declined, automatically close
-            if (callData.meta.caller_id === currentUserId) {
-              const recipientsList = Object.keys(callData.participants || {});
-              if (recipientsList.length > 0) {
-                const hasActiveRecipient = recipientsList.some(uid => 
-                  callData.participants[uid].status === 'ringing' || callData.participants[uid].status === 'accepted'
-                );
-                if (!hasActiveRecipient) {
-                  handleLocalHangup();
-                  return;
-                }
-              }
-            }
 
-            // Register database state cleanups on disconnect
-            const selfPartRef = ref(rtdb, `calls/${incomingCallId}/participants/${currentUserId}/status`);
-            onDisconnect(selfPartRef).set('declined');
+            // Register on-disconnect state fallbacks
+            onDisconnect(ref(rtdb, `calls/${incomingCallId}/participants/${currentUserId}/status`)).set('declined');
             onDisconnect(ref(rtdb, `user_calls/${currentUserId}/active`)).set(null);
 
-            // Determine our current status In the participant pool
             const selfPart = callData.participants?.[currentUserId];
             if (selfPart) {
               if (selfPart.status === 'ringing') {
@@ -148,13 +171,15 @@ export function CallsManager() {
                 handleLocalHangup();
               }
             }
+
+            if (callStatusRef.current === 'connected') {
+              syncCloudflareTracks(incomingCallId, callData);
+            }
           } else {
-            // Call node deleted (caller hung up / aborted)
             handleLocalHangup(true);
           }
         });
       } else {
-        // Active call cleared
         handleLocalHangup(true);
       }
     });
@@ -165,7 +190,7 @@ export function CallsManager() {
 
       setIsMuted(false);
       setIsVideoDisabled(false);
-      const newCallId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const newCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       setCallId(newCallId);
       setCallStatus('ringing_outgoing');
       synth.startRinging();
@@ -173,11 +198,9 @@ export function CallsManager() {
       const callerName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
       const callerAvatar = currentProfile?.avatar_url || null;
 
-      // Extract target metadata details for the receiver's UI
       const roomName = chat.isGroup ? chat.name : (chat.name || 'Socium Chat');
       const roomAvatar = chat.avatar_url || null;
 
-      // Initialize Call Metadata with proper room details to swap avatars/icons seamlessly
       const meta: CallMeta = {
         id: newCallId,
         caller_id: currentUserId,
@@ -190,7 +213,6 @@ export function CallsManager() {
         room_avatar: roomAvatar
       };
 
-      // Register call bubble strictly and elegantly in Supabase messages
       try {
         await supabase.from('messages').insert({
           sender_id: currentUserId,
@@ -203,15 +225,11 @@ export function CallsManager() {
         console.error("Failed to insert native call message bubble to Supabase:", insertErr);
       }
 
-      // Determine participants and evaluate presence
       const recipients: string[] = chat.isGroup
         ? (chat.participants || []).map((p: any) => p.id || p.user_id).filter((uid: string) => uid !== currentUserId)
         : [chat.id];
 
       const participants: Record<string, Participant> = {};
-      const onlineIds: string[] = [];
-      const offlineIds: string[] = [];
-
       for (const rid of recipients) {
         let pName = 'User';
         let pAvatar = null;
@@ -226,77 +244,45 @@ export function CallsManager() {
           pAvatar = chat.avatar_url || null;
         }
 
-        participants[rid] = { 
+        participants[rid] = {
           status: 'ringing',
           name: pName,
           avatar_url: pAvatar
         };
-
-        try {
-          const presenceSnap = await get(ref(rtdb, `global_presence/${rid}`));
-          const isOnline = presenceSnap.val() === true;
-          if (isOnline) {
-            onlineIds.push(rid);
-          } else {
-            offlineIds.push(rid);
-          }
-        } catch (presenceErr) {
-          console.warn('Presence read failed for', rid, presenceErr);
-          offlineIds.push(rid); // Fallback to offline/push trigger
-        }
       }
 
       const freshCallNode: CallNode = { meta, participants };
 
-      // Write initial Call node and register onDisconnect rules
       const callRefNode = ref(rtdb, `calls/${newCallId}`);
       await set(callRefNode, freshCallNode);
       onDisconnect(callRefNode).remove();
 
-      // Write active call indicator to caller's self-user node in RTDB too
       const selfActiveCallRef = ref(rtdb, `user_calls/${currentUserId}/active`);
       await set(selfActiveCallRef, newCallId);
       onDisconnect(selfActiveCallRef).set(null);
 
-      // Propagate active identifier to recipients (ringing socket triggers) and setup disconnect fallbacks
       for (const rid of recipients) {
         await set(ref(rtdb, `user_calls/${rid}/active`), newCallId);
         onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
       }
 
-      // Initialize Local Stream for Caller (exactly ONCE)
-      let stream: MediaStream | null = null;
+      // Establish caller side media session
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: type === 'video'
-        });
-        setLocalStream(stream);
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-      } catch (mediaErr) {
-        console.warn('Calling media device capture failed:', mediaErr);
+        await establishCloudflareSession(newCallId, type === 'video', true);
+      } catch (sessErr) {
+        console.error("Establishing initial caller session failed:", sessErr);
       }
 
-      // 1-on-1 WebRTC connection initialization with exact single-use stream passed directly
-      if (!chat.isGroup && stream) {
-        setupCallerWebRTC(newCallId, chat.id, type === 'video', stream);
-      }
-
-      // Subscribe to self call state node updates
       const callRef = ref(rtdb, `calls/${newCallId}`);
-      onValue(callRef, (snap) => {
+      registerDbListener(callRef, (snap) => {
         const val = snap.val() as CallNode | null;
         if (val) {
           setActiveCall(val);
-          
-          // Check if we are the caller and all participants declined, automatically close
+
           if (val.meta.caller_id === currentUserId) {
             const recipientsList = Object.keys(val.participants || {});
             if (recipientsList.length > 0) {
-              const hasActiveRecipient = recipientsList.some(uid => 
+              const hasActiveRecipient = recipientsList.some(uid =>
                 val.participants[uid].status === 'ringing' || val.participants[uid].status === 'accepted'
               );
               if (!hasActiveRecipient) {
@@ -306,50 +292,51 @@ export function CallsManager() {
             }
           }
 
-          // If any participant has accepted, play sound and clear ring
           const acceptedUser = Object.keys(val.participants).find(uid => val.participants[uid].status === 'accepted');
           if (acceptedUser) {
             setCallStatus('connected');
             synth.stopRinging();
           }
-          // If 1-on-1 and recipient declined: hangup
+
           if (!chat.isGroup && val.participants[chat.id]?.status === 'declined') {
             handleLocalHangup();
+          }
+
+          if (callStatusRef.current === 'connected') {
+            syncCloudflareTracks(newCallId, val);
           }
         } else {
           handleLocalHangup(true);
         }
       });
 
-      // FCM worker triggers for both private and group chats (cyclic loop for 3 chimes)
+      // Rhythmic call triggers via our unified worker endpoint
       if (recipients.length > 0) {
         try {
-          // Allow client side FCM bypass checking to ensure absolute delivery
           const { data: pushRecs } = await supabase
             .from('push_subscriptions')
             .select('user_id, endpoint')
             .in('user_id', recipients);
-            
+
           if (pushRecs && pushRecs.length > 0) {
             const tokenGroups: Record<string, string[]> = {};
             pushRecs.forEach(r => {
               if (!tokenGroups[r.user_id]) tokenGroups[r.user_id] = [];
               tokenGroups[r.user_id].push(r.endpoint);
             });
-            
+
             const recipientTokens = Object.keys(tokenGroups).map(uid => ({
               userId: uid,
               tokens: tokenGroups[uid]
             }));
-            
-            // Connect strictly to user's desired Cloudflare Worker
+
             const callsWorkerUrl = 'https://socium-call-notifications.brare-black.workers.dev/';
-            
+
             let triggerCount = 0;
             const runPushTrigger = () => {
               if (callStatusRef.current !== 'ringing_outgoing' || triggerCount >= 3) return;
               triggerCount++;
-              
+
               fetch(callsWorkerUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -363,7 +350,7 @@ export function CallsManager() {
                   is_group: chat.isGroup,
                   recipient_tokens: recipientTokens
                 })
-              }).catch(e => console.error("Cloudflare calls worker post error:", e));
+              }).catch(e => console.error("Cloudflare calls worker notifications post error:", e));
 
               if (triggerCount < 3) {
                 setTimeout(runPushTrigger, 3500);
@@ -373,7 +360,7 @@ export function CallsManager() {
             runPushTrigger();
           }
         } catch (supabaseErr) {
-          console.error("Supabase notification pre-fetch failed:", supabaseErr);
+          console.error("Supabase notification query failed:", supabaseErr);
         }
       }
     };
@@ -381,583 +368,325 @@ export function CallsManager() {
     window.addEventListener('initiateCall', handleInitiateCallEvent);
 
     return () => {
-      unsubscribeUserCall();
-      if (callId) {
-        off(ref(rtdb, `calls/${callId}`));
-      }
+      clearAllDbListeners();
       window.removeEventListener('initiateCall', handleInitiateCallEvent);
     };
   }, [currentUserId, currentProfile]);
 
-  // Handle active timer for active calls
-  useEffect(() => {
-    if (callStatus === 'connected') {
-      timerRef.current = setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      setCallDuration(0);
-    }
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [callStatus]);
-
-  // Clean local streams and connections helper
-  const cleanMediaAndRTC = () => {
-    // 1. Stop all tracks of localStreamRef
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => {
-        try {
-          track.stop();
-        } catch (e) {
-          console.warn("Error stopping track from ref:", e);
-        }
-      });
-      localStreamRef.current = null;
-    }
-
-    // 2. Stop all tracks of localStream state
-    if (localStream) {
-      localStream.getTracks().forEach(track => {
-        try {
-          track.stop();
-        } catch (e) {
-          console.warn("Error stopping track from state:", e);
-        }
-      });
-      setLocalStream(null);
-    }
-
-    // 3. Stop all tracks of remoteStream
-    if (remoteStream) {
-      remoteStream.getTracks().forEach(track => {
-        try {
-          track.stop();
-        } catch (e) {
-          console.warn("Error stopping remote track from state:", e);
-        }
-      });
-      setRemoteStream(null);
-    }
-
-    // 4. Force release all tracks in remoteStreams mesh objects
-    Object.keys(remoteStreams).forEach(uid => {
-      const stream = remoteStreams[uid];
-      if (stream) {
-        stream.getTracks().forEach(track => {
-          try {
-            track.stop();
-          } catch (e) {}
-        });
-      }
-    });
-    setRemoteStreams({});
-
-    // 5. Clean up single peer connection
-    if (peerConnectionRef.current) {
-      try {
-        peerConnectionRef.current.getSenders().forEach(sender => {
-          if (sender.track) {
-            try { sender.track.stop(); } catch (e) {}
-          }
-        });
-        peerConnectionRef.current.close();
-      } catch (e) {}
-      peerConnectionRef.current = null;
-    }
-
-    // 6. Clean up all mesh connections
-    Object.keys(peerConnectionsRef.current).forEach(uid => {
-      try {
-        peerConnectionsRef.current[uid].getSenders().forEach(sender => {
-          if (sender.track) {
-            try { sender.track.stop(); } catch (e) {}
-          }
-        });
-        peerConnectionsRef.current[uid].close();
-      } catch (e) {}
-    });
-    peerConnectionsRef.current = {};
-
-    // 7. Clear HTML elements and resets
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
-    setIsMuted(false);
-    setIsVideoDisabled(false);
-    synth.stopRinging();
-  };
-
-  // Symmetrical Multi-party WebRTC Mesh network setup
-  const setupMeshPeerConnection = async (targetUserId: string) => {
-    if (peerConnectionsRef.current[targetUserId] || !callId) return;
-
+  // Establish standard single-use RTCPeerConnection over Cloudflare Calls SFU
+  const establishCloudflareSession = async (cid: string, withVideo: boolean, isCallerSide: boolean) => {
+    let stream: MediaStream | null = null;
     try {
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      // 240p constrained constraints for ultra low-quality low bandwidth footprint
+      const videoConstraint = withVideo ? {
+        width: { ideal: 320, max: 320 },
+        height: { ideal: 240, max: 240 },
+        frameRate: { ideal: 15, max: 15 }
+      } : false;
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: videoConstraint
       });
-      peerConnectionsRef.current[targetUserId] = pc;
 
-      // Add actual tracks to this custom mesh peer connection
-      const activeLocalStream = localStreamRef.current || localStream;
-      if (activeLocalStream) {
-        activeLocalStream.getTracks().forEach(track => {
-          pc.addTrack(track, activeLocalStream);
-        });
-      }
-
-      pc.ontrack = (event) => {
-        let incomingStream = event.streams && event.streams[0];
-        if (!incomingStream && event.track) {
-          incomingStream = new MediaStream([event.track]);
-        }
-        if (incomingStream) {
-          setRemoteStreams(prev => ({
-            ...prev,
-            [targetUserId]: incomingStream
-          }));
-        }
-      };
-
-      const isOfferer = currentUserId < targetUserId;
-      const userA = isOfferer ? currentUserId : targetUserId;
-      const userB = isOfferer ? targetUserId : currentUserId;
-      const signalingKey = `${userA}_to_${userB}`;
-
-      if (isOfferer) {
-        pc.onicecandidate = (event) => {
-          if (event.candidate && callId) {
-            const candRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_A/${Date.now()}`);
-            set(candRef, JSON.stringify(event.candidate.toJSON()));
-          }
-        };
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await set(ref(rtdb, `calls/${callId}/signaling/${signalingKey}/offer`), JSON.stringify({
-          type: offer.type,
-          sdp: offer.sdp
-        }));
-
-        const answerRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/answer`);
-        const iceQueue: any[] = [];
-        onValue(answerRef, async (snap) => {
-          const val = snap.val();
-          if (val && pc.signalingState === "have-local-offer") {
-            const answer = JSON.parse(val);
-            await pc.setRemoteDescription(new RTCSessionDescription(answer));
-            while (iceQueue.length > 0) {
-              const qCand = iceQueue.shift();
-              if (qCand) {
-                try { await pc.addIceCandidate(new RTCIceCandidate(qCand)); } catch (e) {}
-              }
-            }
-          }
-        });
-
-        const candRefB = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_B`);
-        onValue(candRefB, (snap) => {
-          const val = snap.val();
-          if (val) {
-            Object.keys(val).forEach(async (k) => {
-              try {
-                const cand = JSON.parse(val[k]);
-                if (pc.remoteDescription) {
-                  await pc.addIceCandidate(new RTCIceCandidate(cand));
-                } else {
-                  iceQueue.push(cand);
-                }
-              } catch (e) {}
-            });
-          }
-        });
-
-      } else {
-        pc.onicecandidate = (event) => {
-          if (event.candidate && callId) {
-            const candRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_B/${Date.now()}`);
-            set(candRef, JSON.stringify(event.candidate.toJSON()));
-          }
-        };
-
-        const offerRef = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/offer`);
-        const iceQueue: any[] = [];
-        onValue(offerRef, async (snap) => {
-          const val = snap.val();
-          if (val && pc.signalingState === "stable") {
-            const offer = JSON.parse(val);
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await set(ref(rtdb, `calls/${callId}/signaling/${signalingKey}/answer`), JSON.stringify({
-              type: answer.type,
-              sdp: answer.sdp
-            }));
-            while (iceQueue.length > 0) {
-              const qCand = iceQueue.shift();
-              if (qCand) {
-                try { await pc.addIceCandidate(new RTCIceCandidate(qCand)); } catch (e) {}
-              }
-            }
-          }
-        });
-
-        const candRefA = ref(rtdb, `calls/${callId}/signaling/${signalingKey}/candidates_from_A`);
-        onValue(candRefA, (snap) => {
-          const val = snap.val();
-          if (val) {
-            Object.keys(val).forEach(async (k) => {
-              try {
-                const cand = JSON.parse(val[k]);
-                if (pc.remoteDescription) {
-                  await pc.addIceCandidate(new RTCIceCandidate(cand));
-                } else {
-                  iceQueue.push(cand);
-                }
-              } catch (e) {}
-            });
-          }
-        });
-      }
-
-    } catch (e) {
-      console.error("setupMeshPeerConnection failed for:", targetUserId, e);
-    }
-  };
-
-  // Synchronize multi-user active connected components on value change
-  useEffect(() => {
-    if (callStatus !== 'connected' || !callId || !activeCall) {
-      return;
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+    } catch (mediaErr) {
+      console.error("Hardware stream acquisition failed:", mediaErr);
+      throw mediaErr;
     }
 
-    const callerId = activeCall.meta.caller_id;
-    const acceptedParticipants = Object.keys(activeCall.participants || {}).filter(
-      uid => activeCall.participants[uid].status === 'accepted'
-    );
-    
-    // Connect to all other connected participants (caller + accepted non-self recipients)
-    const otherAcceptedIds = [callerId, ...acceptedParticipants]
-      .filter(uid => uid !== currentUserId);
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+    pcRef.current = pc;
 
-    // 1. Clean up stale connections
-    Object.keys(peerConnectionsRef.current).forEach(uid => {
-      if (!otherAcceptedIds.includes(uid)) {
-        try {
-          peerConnectionsRef.current[uid].close();
-        } catch (e) {}
-        delete peerConnectionsRef.current[uid];
+    stream.getTracks().forEach(track => pc.addTrack(track, stream!));
+
+    // Handle pulled tracks downstream
+    pc.ontrack = (event) => {
+      const mid = event.transceiver.mid;
+      if (!mid) return;
+
+      const mapping = midToUserRef.current[mid];
+      if (mapping) {
+        const { userId } = mapping;
+        let rStream = event.streams?.[0];
+        if (!rStream) {
+          rStream = new MediaStream([event.track]);
+        }
+
         setRemoteStreams(prev => {
-          const next = { ...prev };
-          delete next[uid];
-          return next;
-        });
-      }
-    });
-
-    // 2. Setup missing mesh connections
-    otherAcceptedIds.forEach(uid => {
-      if (!peerConnectionsRef.current[uid]) {
-        setupMeshPeerConnection(uid);
-      }
-    });
-  }, [callStatus, callId, activeCall, currentUserId]);
-
-  // Full Call Hang Up/Decline local UI controller
-  const handleLocalHangup = (isSilent = false) => {
-    cleanMediaAndRTC();
-    setCallStatus('idle');
-    setActiveCall(null);
-    setCallId(null);
-    if (!isSilent) synth.playHangup();
-  };
-
-  // Caller Initiated WebRTC Peer setup
-  const setupCallerWebRTC = async (cid: string, recipientId: string, withVideo: boolean, stream: MediaStream) => {
-    try {
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-      peerConnectionRef.current = pc;
-
-      // Local stream tracks added safely
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          const candidateRef = ref(rtdb, `calls/${cid}/signaling/${currentUserId}/candidates/${Date.now()}`);
-          set(candidateRef, JSON.stringify(event.candidate.toJSON()));
-        }
-      };
-
-      pc.ontrack = (event) => {
-        let incomingStream = event.streams && event.streams[0];
-        if (!incomingStream && event.track) {
-          incomingStream = new MediaStream([event.track]);
-        }
-        if (incomingStream) {
-          setRemoteStream(incomingStream);
-        }
-      };
-
-      // Create Offer
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      await set(ref(rtdb, `calls/${cid}/signaling/${currentUserId}/offer`), JSON.stringify({
-        type: offer.type,
-        sdp: offer.sdp
-      }));
-
-      // Set up candidate queues to prevent adding ICE before setRemoteDescription state transitions
-      const iceQueue: any[] = [];
-
-      // Listen for Recipient's Answer
-      const answerRef = ref(rtdb, `calls/${cid}/signaling/${recipientId}/answer`);
-      onValue(answerRef, async (answerSnap) => {
-        const val = answerSnap.val();
-        if (val) {
-          const answer = JSON.parse(val);
-          if (pc.signalingState === "have-local-offer") {
-            await pc.setRemoteDescription(new RTCSessionDescription(answer));
-            
-            // Remote description established, flush the candidate queue
-            while (iceQueue.length > 0) {
-              const queuedCand = iceQueue.shift();
-              if (queuedCand) {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(queuedCand));
-                } catch (iceErr) {
-                  console.warn('ICE queued append skipped:', iceErr);
-                }
-              }
-            }
-          }
-        }
-      });
-
-      const recipientCandRef = ref(rtdb, `calls/${cid}/signaling/${recipientId}/candidates`);
-      onValue(recipientCandRef, (candsSnap) => {
-        const val = candsSnap.val();
-        if (val) {
-          Object.keys(val).forEach(async (k) => {
-            try {
-              const cand = JSON.parse(val[k]);
-              if (pc.remoteDescription) {
-                await pc.addIceCandidate(new RTCIceCandidate(cand));
-              } else {
-                if (!iceQueue.some(c => c.candidate === cand.candidate)) {
-                  iceQueue.push(cand);
-                }
-              }
-            } catch (candErr) {
-              console.warn('ICE Candidate append skipped:', candErr);
+          const current = prev[userId] || new MediaStream();
+          const currentTracks = current.getTracks();
+          currentTracks.forEach(t => {
+            if (t.kind === event.track.kind) {
+              current.removeTrack(t);
+              try { t.stop(); } catch(e){}
             }
           });
-        }
-      });
+          current.addTrack(event.track);
+          return {
+            ...prev,
+            [userId]: current
+          };
+        });
+      }
+    };
 
-    } catch (err) {
-      console.error('Caller WebRTC setup error:', err);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Enforce 150 Kbps maximum bitrate limits
+    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (videoSender) {
+      try {
+        const params = videoSender.getParameters();
+        if (!params.encodings) params.encodings = [{}];
+        params.encodings[0].maxBitrate = 150000;
+        await videoSender.setParameters(params);
+      } catch (bitrateErr) {
+        console.warn("Bitrate adjustment skip error:", bitrateErr);
+      }
+    }
+
+    const { sessionId, sdpAnswer } = await createCfSession(offer.sdp);
+    await pc.setRemoteDescription(new RTCSessionDescription({
+      type: 'answer',
+      sdp: sdpAnswer
+    }));
+
+    // Register track names
+    const transceivers = pc.getTransceivers();
+    const tracksToPublish: any[] = [];
+    let localAudioName = "";
+    let localVideoName = "";
+
+    transceivers.forEach(transceiver => {
+      const track = transceiver.sender.track;
+      if (track && transceiver.mid !== null) {
+        const uniqueName = `track-${currentUserId}-${track.kind}-${Date.now()}`;
+        if (track.kind === 'audio') localAudioName = uniqueName;
+        if (track.kind === 'video') localVideoName = uniqueName;
+
+        tracksToPublish.push({
+          location: 'local',
+          mid: transceiver.mid,
+          trackName: uniqueName
+        });
+      }
+    });
+
+    if (tracksToPublish.length > 0) {
+      await addCfTracks(sessionId, tracksToPublish);
+    }
+
+    const sessionObj: CfSession = {
+      sessionId,
+      audioTrackName: localAudioName || null,
+      videoTrackName: localVideoName || null
+    };
+
+    if (isCallerSide) {
+      await set(ref(rtdb, `calls/${cid}/caller_cf_session`), sessionObj);
+    } else {
+      await set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/cf_session`), sessionObj);
     }
   };
 
-  // Receiver Initiated WebRTC Peer setup
-  const setupReceiverWebRTC = async (cid: string, callerId: string, withVideo: boolean, stream: MediaStream) => {
-    try {
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  // Dynamic mesh synchronization trigger for remote Cloudflare media pull
+  const syncCloudflareTracks = async (cid: string, callNode: CallNode) => {
+    const pc = pcRef.current;
+    if (!pc || !localStreamRef.current) return;
+
+    const mySessionObj: CfSession | undefined = (callNode.meta.caller_id === currentUserId)
+      ? callNode.caller_cf_session
+      : callNode.participants?.[currentUserId]?.cf_session;
+
+    if (!mySessionObj?.sessionId) return;
+    const mySessionId = mySessionObj.sessionId;
+
+    const targetsToPull: Array<{ userId: string; cf: CfSession }> = [];
+
+    // Pull Caller stream details
+    if (callNode.meta.caller_id !== currentUserId && callNode.caller_cf_session) {
+      targetsToPull.push({
+        userId: callNode.meta.caller_id,
+        cf: callNode.caller_cf_session
       });
-      peerConnectionRef.current = pc;
-      
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    }
 
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          const candidateRef = ref(rtdb, `calls/${cid}/signaling/${currentUserId}/candidates/${Date.now()}`);
-          set(candidateRef, JSON.stringify(event.candidate.toJSON()));
+    // Pull other participants acceptances
+    Object.keys(callNode.participants || {}).forEach(uid => {
+      if (uid !== currentUserId) {
+        const p = callNode.participants[uid];
+        if (p.status === 'accepted' && p.cf_session) {
+          targetsToPull.push({
+            userId: uid,
+            cf: p.cf_session
+          });
         }
-      };
+      }
+    });
 
-      pc.ontrack = (event) => {
-        let incomingStream = event.streams && event.streams[0];
-        if (!incomingStream && event.track) {
-          incomingStream = new MediaStream([event.track]);
+    const pullTracksList: any[] = [];
+    const pendingMappings: Array<{ midCandidate: string; trackName: string; userId: string; kind: 'audio' | 'video' }> = [];
+
+    targetsToPull.forEach(target => {
+      const { userId, cf } = target;
+
+      if (cf.audioTrackName) {
+        const audioKey = `${cf.sessionId}:${cf.audioTrackName}`;
+        if (!pulledTracksRef.current.has(audioKey)) {
+          pullTracksList.push({
+            location: 'remote',
+            sessionId: cf.sessionId,
+            trackName: cf.audioTrackName
+          });
+          pendingMappings.push({
+            midCandidate: "",
+            trackName: cf.audioTrackName,
+            userId,
+            kind: 'audio'
+          });
+          pulledTracksRef.current.add(audioKey);
         }
-        if (incomingStream) {
-          setRemoteStream(incomingStream);
+      }
+
+      if (cf.videoTrackName) {
+        const videoKey = `${cf.sessionId}:${cf.videoTrackName}`;
+        if (!pulledTracksRef.current.has(videoKey)) {
+          pullTracksList.push({
+            location: 'remote',
+            sessionId: cf.sessionId,
+            trackName: cf.videoTrackName
+          });
+          pendingMappings.push({
+            midCandidate: "",
+            trackName: cf.videoTrackName,
+            userId,
+            kind: 'video'
+          });
+          pulledTracksRef.current.add(videoKey);
         }
-      };
+      }
+    });
 
-      const iceQueue: any[] = [];
+    if (pullTracksList.length === 0) return;
 
-      // Read Caller Offer
-      const callerOfferRef = ref(rtdb, `calls/${cid}/signaling/${callerId}/offer`);
-      const offerSnap = await get(callerOfferRef);
-      if (offerSnap.exists()) {
-        const offer = JSON.parse(offerSnap.val());
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        
+    try {
+      const resultObj = await addCfTracks(mySessionId, pullTracksList);
+
+      resultObj.tracks.forEach(returnedTrack => {
+        const matchedPending = pendingMappings.find(m => m.trackName === returnedTrack.trackName);
+        if (matchedPending) {
+          midToUserRef.current[returnedTrack.mid] = {
+            userId: matchedPending.userId,
+            kind: matchedPending.kind
+          };
+        }
+      });
+
+      if (resultObj.requiresRenegotiation && resultObj.sessionDescription) {
+        await pc.setRemoteDescription(new RTCSessionDescription({
+          type: 'offer',
+          sdp: resultObj.sessionDescription.sdp
+        }));
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
-        await set(ref(rtdb, `calls/${cid}/signaling/${currentUserId}/answer`), JSON.stringify({
-          type: answer.type,
-          sdp: answer.sdp
-        }));
-
-        // Flush recipient side candidate queue
-        while (iceQueue.length > 0) {
-          const queuedCand = iceQueue.shift();
-          if (queuedCand) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(queuedCand));
-            } catch (iceErr) {
-              console.warn('ICE queued append skipped:', iceErr);
-            }
-          }
-        }
+        await renegotiateCfSession(mySessionId, answer.sdp);
       }
-
-      // Sync ICE candidates
-      const callerCandRef = ref(rtdb, `calls/${cid}/signaling/${callerId}/candidates`);
-      onValue(callerCandRef, (candsSnap) => {
-        const val = candsSnap.val();
-        if (val) {
-          Object.keys(val).forEach(async (k) => {
-            try {
-              const cand = JSON.parse(val[k]);
-              if (pc.remoteDescription) {
-                await pc.addIceCandidate(new RTCIceCandidate(cand));
-              } else {
-                if (!iceQueue.some(c => c.candidate === cand.candidate)) {
-                  iceQueue.push(cand);
-                }
-              }
-            } catch (iceErr) {
-              console.warn('ICE Append rejected:', iceErr);
-            }
-          });
-        }
-      });
-
-    } catch (err) {
-      console.error('Receiver WebRTC setup error:', err);
+    } catch (reneError) {
+      console.error("Remote Cloudflare pull subscription negotiation failed:", reneError);
     }
   };
 
-  // Accept Call Command Execution
   const handleAcceptCall = async () => {
     if (!callId || !activeCall) return;
     synth.playAnswer();
     setIsMuted(false);
     setIsVideoDisabled(false);
 
-    // Toggle status to accepted
     await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'accepted');
 
-    // Acquire stream ONCE for Receiver too inside handleAcceptCall
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: activeCall.meta.type === 'video'
-      });
-      setLocalStream(stream);
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-
-      // Initiate WebRTC peer loop for 1-on-1 calls
-      if (!activeCall.meta.is_group) {
-        setupReceiverWebRTC(callId, activeCall.meta.caller_id, activeCall.meta.type === 'video', stream);
-      }
-    } catch (e) {
-      console.warn('Accept call local stream capture issue:', e);
+      await establishCloudflareSession(callId, activeCall.meta.type === 'video', false);
+    } catch (acceptErr) {
+      console.error("Failed to establish receiver side Cloudflare session:", acceptErr);
     }
+
     setCallStatus('connected');
   };
 
-  // Decline Call Command Execution
   const handleDeclineCall = async () => {
     if (!callId || !activeCall) return;
 
-    // Write decline directly to isolated participant path
     await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'declined');
-
-    // Clear user active call slot
     await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
 
-    // If 1-on-1: kill whole call
     if (!activeCall.meta.is_group) {
       await remove(ref(rtdb, `calls/${callId}`));
-      const callerId = activeCall.meta.caller_id;
-      await set(ref(rtdb, `user_calls/${callerId}/active`), null);
+      await set(ref(rtdb, `user_calls/${activeCall.meta.caller_id}/active`), null);
     }
 
     handleLocalHangup();
   };
 
-  // Hanging Up Call Command Execution
   const handleHangupCall = async () => {
-    if (!callId || !activeCall) return;
+    const cid = callIdRef.current || callId;
+    const callObj = activeCallRef.current || activeCall;
+    if (!cid || !callObj) {
+      handleLocalHangup();
+      return;
+    }
 
-    // Terminate self active indicators
     await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
 
-    if (activeCall.meta.caller_id === currentUserId) {
-      // If Caller hangs up, or call ends - wipe the whole active block node
-      await remove(ref(rtdb, `calls/${callId}`));
-      
-      // Clean up for all participants
-      const activeNodeKeys = Object.keys(activeCall.participants);
-      for (const pk of activeNodeKeys) {
+    if (callObj.meta.caller_id === currentUserId) {
+      await remove(ref(rtdb, `calls/${cid}`));
+      const pKeys = Object.keys(callObj.participants || {});
+      for (const pk of pKeys) {
         await set(ref(rtdb, `user_calls/${pk}/active`), null);
       }
     } else {
-      // Recipient hanging up / quitting
-      await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'declined');
+      await set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/status`), 'declined');
     }
 
     handleLocalHangup();
   };
 
   const toggleMute = () => {
-    const stream = localStreamRef.current || localStream;
-    if (stream) {
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMuted(!audioTrack.enabled);
+    if (localStreamRef.current) {
+      const track = localStreamRef.current.getAudioTracks()[0];
+      if (track) {
+        track.enabled = !track.enabled;
+        setIsMuted(!track.enabled);
       }
     }
   };
 
   const toggleVideo = () => {
-    const stream = localStreamRef.current || localStream;
-    if (stream) {
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoDisabled(!videoTrack.enabled);
+    if (localStreamRef.current) {
+      const track = localStreamRef.current.getVideoTracks()[0];
+      if (track) {
+        track.enabled = !track.enabled;
+        setIsVideoDisabled(!track.enabled);
+
+        const cid = callIdRef.current || callId;
+        if (cid) {
+          const isCaller = activeCallRef.current?.meta?.caller_id === currentUserId;
+          if (isCaller) {
+            set(ref(rtdb, `calls/${cid}/caller_video_disabled`), !track.enabled);
+          } else {
+            set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/video_disabled`), !track.enabled);
+          }
+        }
       }
     }
   };
 
-  // Formatter for Active Talk-time
   const formatTime = (secs: number) => {
     const min = Math.floor(secs / 60);
     const sec = secs % 60;
@@ -970,23 +699,20 @@ export function CallsManager() {
   const isRingingOutgoing = callStatus === 'ringing_outgoing';
   const isConnected = callStatus === 'connected';
 
-  // Swap target details elegantly so users see each other instead of themselves
-  const isCaller = activeCall?.meta.caller_id === currentUserId;
+  const isCaller = activeCall.meta.caller_id === currentUserId;
   let displayName = '';
   let avatarUrl = null;
 
-  if (activeCall) {
-    if (activeCall.meta.is_group) {
-      displayName = activeCall.meta.room_name || 'Group Call';
+  if (activeCall.meta.is_group) {
+    displayName = activeCall.meta.room_name || 'Group Call';
+    avatarUrl = activeCall.meta.room_avatar;
+  } else {
+    if (isCaller) {
+      displayName = activeCall.meta.room_name;
       avatarUrl = activeCall.meta.room_avatar;
     } else {
-      if (isCaller) {
-        displayName = activeCall.meta.room_name;
-        avatarUrl = activeCall.meta.room_avatar;
-      } else {
-        displayName = activeCall.meta.caller_name;
-        avatarUrl = activeCall.meta.caller_avatar;
-      }
+      displayName = activeCall.meta.caller_name;
+      avatarUrl = activeCall.meta.caller_avatar;
     }
   }
 
@@ -995,6 +721,13 @@ export function CallsManager() {
       setShowControls(prev => !prev);
     }
   };
+
+  const isGroupCall = activeCall.meta.is_group;
+
+  const otherPartyId = isCaller
+    ? Object.keys(activeCall.participants || {})[0]
+    : activeCall.meta.caller_id;
+  const remoteStream1on1 = remoteStreams[otherPartyId] || null;
 
   return createPortal(
     <AnimatePresence>
@@ -1005,59 +738,57 @@ export function CallsManager() {
         onClick={handleScreenTap}
         className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
       >
-        {/* Remote audio-only playback frame element for 1-on-1 */}
-        {isConnected && activeCall?.meta?.type === 'audio' && !activeCall?.meta?.is_group && remoteStream && (
+        {/* Play 1-on-1 background audio stream */}
+        {isConnected && activeCall?.meta?.type === 'audio' && !isGroupCall && remoteStream1on1 && (
           <audio
-            ref={remoteAudioRef}
+            ref={el => {
+              if (el && remoteStream1on1) el.srcObject = remoteStream1on1;
+            }}
             autoPlay
             playsInline
             style={{ display: 'none' }}
           />
         )}
 
-        {/* Render clean background elements for extra remote audio/video tracks to ensure they are heard */}
-        {isConnected && Object.keys(remoteStreams).map((uid, idx) => {
-          // Extra participants beyond the visible grid are played via background hidden audio
-          // Or if it is a group audio call
-          if (idx >= 3 || activeCall?.meta?.type === 'audio') {
-            return (
-              <audio
-                key={`extra-audio-${uid}`}
-                ref={el => {
-                  if (el && remoteStreams[uid]) el.srcObject = remoteStreams[uid];
-                }}
-                autoPlay
-                playsInline
-                style={{ display: 'none' }}
-              />
-            );
-          }
-          return null;
+        {/* Play group/mesh audio streams in background */}
+        {isConnected && isGroupCall && Object.keys(remoteStreams).map(uid => {
+          const stream = remoteStreams[uid];
+          return (
+            <audio
+              key={`audio-group-${uid}`}
+              ref={el => {
+                if (el && stream) el.srcObject = stream;
+              }}
+              autoPlay
+              playsInline
+              style={{ display: 'none' }}
+            />
+          );
         })}
 
-        {/* Dynamic Video Streaming overlay layers */}
+        {/* Connect Active Video overlay panels */}
         {isConnected && activeCall?.meta?.type === 'video' && (
-          <div className={`absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none ${activeCall?.meta?.is_group ? 'pt-[calc(3.5rem+env(safe-area-inset-top))] pb-[calc(7.5rem+env(safe-area-inset-bottom))]' : ''}`}>
-            {activeCall?.meta?.is_group ? (
+          <div className="absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none">
+            {isGroupCall ? (
               <GroupVideoGrid
                 remoteStreams={remoteStreams}
                 localStream={localStream}
-                currentUserId={currentUserId}
+                currentUserId={currentUserId!}
                 isVideoDisabled={isVideoDisabled}
                 activeCall={activeCall}
                 currentProfile={currentProfile}
               />
             ) : (
-              // Existing 1-on-1 vertical PIP layout
-              <>
-                {remoteStream || localStream ? (
+              // Enhanced 1-on-1 full screen absolute video matching user requests
+              <div className="absolute inset-0 w-full h-full object-cover">
+                {remoteStream1on1 || (localStream && !isVideoDisabled) ? (
                   <VideoPlayer
-                    stream={remoteStream || localStream}
-                    muted={!remoteStream}
-                    className="w-full h-full object-cover"
+                    stream={remoteStream1on1 || localStream}
+                    muted={!remoteStream1on1}
+                    className="absolute inset-0 w-full h-full object-cover rounded-none"
                   />
                 ) : (
-                  <div className="flex flex-col items-center gap-3">
+                  <div className="flex flex-col items-center gap-3 absolute inset-0 justify-center">
                     <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center shadow-lg">
                       {avatarUrl ? (
                         <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -1069,8 +800,8 @@ export function CallsManager() {
                   </div>
                 )}
 
-                {/* PIP Local Camera display box to display local user's feed */}
-                {remoteStream && (localStream || localStreamRef.current) && !isVideoDisabled && (
+                {/* Picture in picture local user feeds layout overlay */}
+                {remoteStream1on1 && localStream && !isVideoDisabled && (
                   <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
                     <VideoPlayer
                       stream={localStream}
@@ -1079,15 +810,14 @@ export function CallsManager() {
                     />
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         )}
 
-        {/* Dynamic Header Layout Transitions */}
+        {/* Header Elements */}
         <AnimatePresence>
           {(!isConnected || activeCall?.meta?.type !== 'video') ? (
-            /* Standard Centered Header (For Incoming/Outgoing states OR Audio Call) */
             <motion.div
               key="centered-header"
               initial={{ opacity: 0, y: -20 }}
@@ -1100,7 +830,7 @@ export function CallsManager() {
                   <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                    {activeCall?.meta?.is_group ? (
+                    {isGroupCall ? (
                       <Users className="w-12 h-12 text-white/60" />
                     ) : (
                       <span className="text-3xl font-bold text-white/50 uppercase">
@@ -1110,7 +840,7 @@ export function CallsManager() {
                   </div>
                 )}
               </div>
-              
+
               <h1 className="text-3xl font-bold tracking-tight mt-6 text-white drop-shadow-md">
                 {displayName}
               </h1>
@@ -1125,7 +855,7 @@ export function CallsManager() {
                 {isConnected && `ACTIVE — ${formatTime(callDuration)}`}
               </p>
 
-              {activeCall?.meta?.is_group && (
+              {isGroupCall && (
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
                   {Object.keys(activeCall.participants || {}).map(uid => {
                     const p = activeCall.participants[uid];
@@ -1142,7 +872,6 @@ export function CallsManager() {
               )}
             </motion.div>
           ) : (
-            /* Connected Video Call Compact Header (Top-Left WhatsApp visual style) */
             showControls && (
               <motion.div
                 key="compact-video-header"
@@ -1158,7 +887,7 @@ export function CallsManager() {
                     <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                      {activeCall?.meta?.is_group ? (
+                      {isGroupCall ? (
                         <Users className="w-5 h-5 text-white/60" />
                       ) : (
                         <span className="text-lg font-bold text-white/50 uppercase">{displayName?.[0] || '?'}</span>
@@ -1179,7 +908,7 @@ export function CallsManager() {
           )}
         </AnimatePresence>
 
-        {/* Media Control toggle keys in active connected AUDIO-ONLY states */}
+        {/* Audio controls */}
         {isConnected && activeCall?.meta?.type === 'audio' && (
           <div className="flex justify-center gap-6 z-10 pb-4 shrink-0 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <button
@@ -1191,7 +920,7 @@ export function CallsManager() {
           </div>
         )}
 
-        {/* Transparent/translucent Sliding Controls bar overlay for Active Video Calls */}
+        {/* sliding video overlay controls */}
         <AnimatePresence>
           {isConnected && activeCall?.meta?.type === 'video' && showControls && (
             <motion.div
@@ -1202,7 +931,6 @@ export function CallsManager() {
               className="absolute bottom-0 left-0 right-0 pb-[calc(2.5rem+env(safe-area-inset-bottom))] pt-8 px-8 bg-gradient-to-t from-black/90 via-black/50 to-transparent z-20 flex justify-center items-center gap-8 pointer-events-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Camera toggle (left) */}
               <motion.button
                 whileTap={{ scale: 0.9 }}
                 onClick={toggleVideo}
@@ -1211,7 +939,6 @@ export function CallsManager() {
                 {isVideoDisabled ? <VideoOff size={22} /> : <Video size={22} />}
               </motion.button>
 
-              {/* End Call (center, rotated Phone) */}
               <motion.button
                 whileTap={{ scale: 0.88 }}
                 onClick={handleHangupCall}
@@ -1220,7 +947,6 @@ export function CallsManager() {
                 <Phone size={30} className="rotate-[135deg]" />
               </motion.button>
 
-              {/* Microphone mute toggle (right) */}
               <motion.button
                 whileTap={{ scale: 0.9 }}
                 onClick={toggleMute}
@@ -1232,20 +958,18 @@ export function CallsManager() {
           )}
         </AnimatePresence>
 
-        {/* Action button triggers bottom segment container for incoming/outgoing or audio connected stages */}
+        {/* Centered actions */}
         {(!isConnected || activeCall?.meta?.type !== 'video') && (
           <div className="pb-[calc(4rem+env(safe-area-inset-bottom))] px-8 flex justify-center items-center gap-12 z-10 shrink-0 relative pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <AnimatePresence mode="wait">
               {isRingingIncoming ? (
-                /* Incoming Call Stage (Bigger iOS-like Accept/Decline action spheres) */
-                <motion.div 
-                  key="incoming-actions" 
+                <motion.div
+                  key="incoming-actions"
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 30 }}
                   className="flex items-center justify-between w-full max-w-[300px] px-2"
                 >
-                  {/* Red Decline Cancel circular button (angled phone icon with NO cross-line) */}
                   <div className="flex flex-col items-center gap-3">
                     <motion.button
                       whileTap={{ scale: 0.88 }}
@@ -1257,7 +981,6 @@ export function CallsManager() {
                     <span className="text-xs font-semibold text-white/50 tracking-wider">Decline</span>
                   </div>
 
-                  {/* Green Accept Connection circular button */}
                   <div className="flex flex-col items-center gap-3">
                     <motion.button
                       whileTap={{ scale: 0.88 }}
@@ -1270,8 +993,7 @@ export function CallsManager() {
                   </div>
                 </motion.div>
               ) : (
-                /* Outgoing or Connected audio Call Stage (Clean centered decline button) */
-                <motion.div 
+                <motion.div
                   key="connected-actions"
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}

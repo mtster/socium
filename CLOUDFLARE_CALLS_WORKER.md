@@ -20,10 +20,73 @@ export default {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
+    }
+
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // Handle Cloudflare Calls Proxy Routes
+    if (path.startsWith("/api/calls/")) {
+      try {
+        if (!env.CLOUDFLARE_ACCOUNT_ID || !env.REALTIMEKIT_APP_ID || !env.REALTIMEKIT_API_TOKEN) {
+          return new Response(
+            JSON.stringify({ error: "Missing Cloudflare Calls credentials inside Worker secrets." }),
+            { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+          );
+        }
+
+        let targetUrl = "";
+        if (path === "/api/calls/session") {
+          targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+        } else {
+          // Check for tracks/new or renegotiate match
+          const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
+          const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
+          
+          if (tracksMatch) {
+            const sessionId = tracksMatch[1];
+            targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/tracks/new`;
+          } else if (renegotiateMatch) {
+            const sessionId = renegotiateMatch[1];
+            targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/renegotiate`;
+          }
+        }
+
+        if (!targetUrl) {
+          return new Response("Not Found", { status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
+        }
+
+        const bodyText = await request.text();
+        const headers = {
+          "Authorization": `Bearer ${env.REALTIMEKIT_API_TOKEN}`,
+          "Content-Type": "application/json",
+        };
+
+        const cfResponse = await fetch(targetUrl, {
+          method: "POST",
+          headers,
+          body: bodyText,
+        });
+
+        const resText = await cfResponse.text();
+        return new Response(resText, {
+          status: cfResponse.status,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+      } catch (proxyErr) {
+        return new Response(JSON.stringify({ error: proxyErr.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+        });
+      }
     }
 
     if (request.method !== 'POST') {
@@ -101,7 +164,7 @@ async function handleCallingNotificationLoop({
 
   for (let ring = 0; ring < maxRings; ring++) {
     // 1. Poll the Firebase RTDB node to get participant real-time statuses
-    const firebaseNodeUrl = `${firebaseDbUrl}/calls/${call_id}.json`;
+    const firebaseNodeUrl = `${firebaseDbUrl}/calls/${call_id}.json?access_token=${fcmAccessToken.accessToken}`;
     let callNode = null;
     
     try {
@@ -133,15 +196,33 @@ async function handleCallingNotificationLoop({
     }
 
     // 5. Build multicast FCM message payload
-    const label = type === 'video' ? '🎥 VIDEO CALL' : '📞 AUDIO CALL';
+    const bodyLabel = type === 'video' ? '🎥🎥🎥Video Call🎥🎥🎥' : '📞📞📞Audio Call📞📞📞';
     
     for (const target of activeTargets) {
+      // Query global_presence status for this user in real-time
+      let isOnline = false;
+      try {
+        const presenceUrl = `${firebaseDbUrl}/global_presence/${target.userId}.json?access_token=${fcmAccessToken.accessToken}`;
+        const presRes = await fetch(presenceUrl);
+        if (presRes.ok) {
+          const val = await presRes.json();
+          isOnline = val === true;
+        }
+      } catch (presErr) {
+        console.warn(`Presence query failed for target user ID ${target.userId}:`, presErr);
+      }
+
+      if (isOnline) {
+        console.log(`User ${target.userId} is active online in RTDB. Skipping notification chimes.`);
+        continue;
+      }
+
       for (const token of target.tokens) {
         try {
           // Send push notifications via FCM V1 endpoint
           await sendFcmPush(fcmAccessToken, token, {
             title: caller_name,
-            body: label,
+            body: bodyLabel,
             tag: `call_${call_id}`,
             icon: '/icon-192.png',
             callId: call_id

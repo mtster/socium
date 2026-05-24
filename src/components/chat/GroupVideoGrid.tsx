@@ -49,12 +49,19 @@ export function GroupVideoGrid({
     const profile = getParticipantProfile(uid);
     const colSpanClass = (totalDisplays === 3 && index === 2) ? "col-span-2" : "";
 
+    // Dynamically retrieve video disabled flags to safely alternate between feeds and avatars
+    const isPeerVideoDisabled = isSelf
+      ? isVideoDisabled
+      : (activeCall?.meta?.caller_id === uid)
+        ? activeCall?.caller_video_disabled === true
+        : activeCall?.participants?.[uid]?.video_disabled === true;
+
     return (
       <div 
         key={uid} 
         className={`relative bg-zinc-900 border border-white/5 rounded-3xl overflow-hidden shadow-xl w-full h-[180px] xs:h-[220px] sm:h-[260px] flex items-center justify-center ${colSpanClass}`}
       >
-        {stream ? (
+        {stream && !isPeerVideoDisabled ? (
           <VideoPlayer
             stream={stream}
             muted={isSelf}
@@ -62,14 +69,16 @@ export function GroupVideoGrid({
           />
         ) : (
           <div className="flex flex-col items-center gap-2">
-            <div className="w-12 h-12 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
+            <div className="w-16 h-16 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
               {profile.avatar ? (
                 <img src={profile.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
-                <Users className="w-5 h-5 text-white/50" />
+                <Users className="w-6 h-6 text-white/50" />
               )}
             </div>
-            <p className="text-white/40 text-[9px] font-mono tracking-widest uppercase">Connecting...</p>
+            <p className="text-white/40 text-[9px] font-mono tracking-widest uppercase">
+              {isPeerVideoDisabled ? "Camera Off" : "Connecting..."}
+            </p>
           </div>
         )}
 
