@@ -411,24 +411,24 @@ export function CallsManager() {
       const mapping = midToUserRef.current[mid];
       if (mapping) {
         const { userId } = mapping;
-        let rStream = event.streams?.[0];
-        if (!rStream) {
-          rStream = new MediaStream([event.track]);
-        }
-
         setRemoteStreams(prev => {
-          const current = prev[userId] || new MediaStream();
-          const currentTracks = current.getTracks();
-          currentTracks.forEach(t => {
-            if (t.kind === event.track.kind) {
-              current.removeTrack(t);
-              try { t.stop(); } catch(e){}
-            }
-          });
-          current.addTrack(event.track);
+          const current = prev[userId];
+          const newStream = new MediaStream();
+
+          if (current) {
+            current.getTracks().forEach(t => {
+              if (t.kind !== event.track.kind) {
+                newStream.addTrack(t);
+              } else {
+                try { t.stop(); } catch (e) {}
+              }
+            });
+          }
+
+          newStream.addTrack(event.track);
           return {
             ...prev,
-            [userId]: current
+            [userId]: newStream
           };
         });
       }

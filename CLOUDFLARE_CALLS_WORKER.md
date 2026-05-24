@@ -32,16 +32,16 @@ export default {
     // Handle Cloudflare Calls Proxy Routes
     if (path.startsWith("/api/calls/")) {
       try {
-        if (!env.CLOUDFLARE_ACCOUNT_ID || !env.REALTIMEKIT_APP_ID || !env.REALTIMEKIT_API_TOKEN) {
+        if (!env.REALTIMEKIT_APP_ID || !env.REALTIMEKIT_API_TOKEN) {
           return new Response(
-            JSON.stringify({ error: "Missing Cloudflare Calls credentials inside Worker secrets." }),
+            JSON.stringify({ error: "Missing Cloudflare Calls credentials inside Worker secrets (REALTIMEKIT_APP_ID and REALTIMEKIT_API_TOKEN are required)." }),
             { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
           );
         }
 
         let targetUrl = "";
         if (path === "/api/calls/session") {
-          targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+          targetUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
         } else {
           // Check for tracks/new or renegotiate match
           const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
@@ -49,10 +49,10 @@ export default {
           
           if (tracksMatch) {
             const sessionId = tracksMatch[1];
-            targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/tracks/new`;
+            targetUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/tracks/new`;
           } else if (renegotiateMatch) {
             const sessionId = renegotiateMatch[1];
-            targetUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/renegotiate`;
+            targetUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${sessionId}/renegotiate`;
           }
         }
 
