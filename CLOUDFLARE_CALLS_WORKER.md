@@ -55,24 +55,24 @@ export default {
           });
         };
 
-        // 1. Try standard App-level WebRTC gateway (rtc.live.cloudflare.com)
+        // 1. Try standard App-level WebRTC gateway (rtc.cloudflare.com)
         // This is the fastest and most standard Calls route, requiring the token to be the 64-char App Secret.
         let rtcUrl = "";
         if (path === "/api/calls/session") {
-          rtcUrl = `https://rtc.live.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+          rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
         } else {
           const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
           const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
           
           if (tracksMatch) {
-            rtcUrl = `https://rtc.live.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
+            rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
           } else if (renegotiateMatch) {
-            rtcUrl = `https://rtc.live.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
+            rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
           }
         }
 
         if (rtcUrl) {
-          attemptedUrls.push({ type: "App-level Gateway (rtc.live.cloudflare.com)", url: rtcUrl });
+          attemptedUrls.push({ type: "App-level Gateway (rtc.cloudflare.com)", url: rtcUrl });
           try {
             cfResponse = await doFetch(rtcUrl);
             resText = await cfResponse.text();
@@ -86,46 +86,57 @@ export default {
                 },
               });
             }
-            console.warn(`rtc.live.cloudflare.com failed with status ${cfResponse.status}. Trying fallback...`);
+            console.warn(`rtc.cloudflare.com failed with status ${cfResponse.status}. Trying fallbacks...`);
           } catch (rtcErr) {
-            console.warn(`rtc.live.cloudflare.com exception: ${rtcErr.message}. Trying fallback...`);
+            console.warn(`rtc.cloudflare.com exception: ${rtcErr.message}. Trying fallbacks...`);
           }
         }
 
-        // 2. Try Account-level Client v4 API fallback (api.cloudflare.com)
+        // 2. Try Account-level Client v4 API fallbacks (api.cloudflare.com)
         // This works if REALTIMEKIT_API_TOKEN is a Cloudflare Client API token (and CLOUDFLARE_ACCOUNT_ID is provided).
         if (env.CLOUDFLARE_ACCOUNT_ID) {
-          let v4Url = "";
-          if (path === "/api/calls/session") {
-            v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
-          } else {
-            const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
-            const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
-            
-            if (tracksMatch) {
-              v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
-            } else if (renegotiateMatch) {
-              v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
-            }
-          }
-
-          if (v4Url) {
-            attemptedUrls.push({ type: "Account-level client v4 API (api.cloudflare.com)", url: v4Url });
-            try {
-              cfResponse = await doFetch(v4Url);
-              resText = await cfResponse.text();
-              if (cfResponse.ok) {
-                return new Response(resText, {
-                  status: cfResponse.status,
-                  headers: {
-                    "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                  },
-                });
+          // Define possible namespaces to attempt in order
+          const namespaces = ["calls", "realtimekit", "realtime_kit"];
+          
+          for (const ns of namespaces) {
+            let v4Url = "";
+            if (path === "/api/calls/session") {
+              v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/${ns}/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+            } else {
+              const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
+              const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
+              
+              if (tracksMatch) {
+                v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/${ns}/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
+              } else if (renegotiateMatch) {
+                v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/${ns}/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
               }
-            } catch (v4Err) {
-              console.error(`api.cloudflare.com exception: ${v4Err.message}`);
+            }
+
+            if (v4Url) {
+              attemptedUrls.push({ type: `Account-level ${ns} API (api.cloudflare.com)`, url: v4Url });
+              try {
+                const stepResponse = await doFetch(v4Url);
+                const stepText = await stepResponse.text();
+                
+                // Track this as our last attempted response
+                cfResponse = stepResponse;
+                resText = stepText;
+
+                if (stepResponse.ok) {
+                  return new Response(stepText, {
+                    status: stepResponse.status,
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Access-Control-Allow-Origin": "*",
+                      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                    },
+                  });
+                }
+                console.warn(`${ns} proxy failed with status ${stepResponse.status}: ${stepText}`);
+              } catch (v4Err) {
+                console.error(`api.cloudflare.com ${ns} exception: ${v4Err.message}`);
+              }
             }
           }
         }
