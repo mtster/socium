@@ -5,6 +5,21 @@ import eruda from 'eruda';
 export default function ErudaDevTools() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const erudaParam = urlParams.get('eruda');
+
+      if (erudaParam === 'true') {
+        sessionStorage.setItem('eruda_active', 'true');
+      } else if (erudaParam === 'false') {
+        sessionStorage.removeItem('eruda_active');
+      }
+
+      const isActive = sessionStorage.getItem('eruda_active') === 'true';
+
+      if (!isActive) {
+        return;
+      }
+
       try {
         eruda.init({
           defaults: {
