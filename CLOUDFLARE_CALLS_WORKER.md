@@ -86,66 +86,17 @@ export default {
                 },
               });
             }
-            console.warn(`rtc.cloudflare.com failed with status ${cfResponse.status}. Trying fallbacks...`);
+            console.warn(`rtc.cloudflare.com failed with status ${cfResponse.status}.`);
           } catch (rtcErr) {
-            console.warn(`rtc.cloudflare.com exception: ${rtcErr.message}. Trying fallbacks...`);
+            console.error(`rtc.cloudflare.com exception: ${rtcErr.message}`);
           }
         }
 
-        // 2. Try Account-level Client v4 API fallbacks (api.cloudflare.com)
-        // This works if REALTIMEKIT_API_TOKEN is a Cloudflare Client API token (and CLOUDFLARE_ACCOUNT_ID is provided).
-        if (env.CLOUDFLARE_ACCOUNT_ID) {
-          // Define possible namespaces to attempt in order
-          const namespaces = ["calls", "realtimekit", "realtime_kit"];
-          
-          for (const ns of namespaces) {
-            let v4Url = "";
-            if (path === "/api/calls/session") {
-              v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/${ns}/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
-            } else {
-              const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
-              const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
-              
-              if (tracksMatch) {
-                v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/${ns}/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
-              } else if (renegotiateMatch) {
-                v4Url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/${ns}/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
-              }
-            }
-
-            if (v4Url) {
-              attemptedUrls.push({ type: `Account-level ${ns} API (api.cloudflare.com)`, url: v4Url });
-              try {
-                const stepResponse = await doFetch(v4Url);
-                const stepText = await stepResponse.text();
-                
-                // Track this as our last attempted response
-                cfResponse = stepResponse;
-                resText = stepText;
-
-                if (stepResponse.ok) {
-                  return new Response(stepText, {
-                    status: stepResponse.status,
-                    headers: {
-                      "Content-Type": "application/json",
-                      "Access-Control-Allow-Origin": "*",
-                      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                    },
-                  });
-                }
-                console.warn(`${ns} proxy failed with status ${stepResponse.status}: ${stepText}`);
-              } catch (v4Err) {
-                console.error(`api.cloudflare.com ${ns} exception: ${v4Err.message}`);
-              }
-            }
-          }
-        }
-
-        // Return diagnostic error response if both pathways failed
+        // Return diagnostic error response if the pathway failed
         return new Response(
           JSON.stringify({
             success: false,
-            error: "All Cloudflare WebRTC connection pathways failed.",
+            error: "Cloudflare WebRTC connection pathway failed. Make sure REALTIMEKIT_API_TOKEN is set to your 64-character Calls App Secret.",
             attempted_endpoints: attemptedUrls,
             last_failed_status_code: cfResponse ? cfResponse.status : 500,
             last_failed_response: resText || "No response received",
