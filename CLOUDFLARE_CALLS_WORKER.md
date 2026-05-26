@@ -55,29 +55,89 @@ export default {
           });
         };
 
-        // 1. Try standard App-level WebRTC gateway (rtc.cloudflare.com)
-        // This is the fastest and most standard Calls route, requiring the token to be the 64-char App Secret.
-        let rtcUrl = "";
-        if (path === "/api/calls/session") {
-          rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
-        } else {
-          const tracksMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
-          const renegotiateMatch = path.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
-          
-          if (tracksMatch) {
-            rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
-          } else if (renegotiateMatch) {
-            rtcUrl = `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
+        const buildTargetUrl = (type, pathArg) => {
+          if (type === "app") {
+            if (pathArg === "/api/calls/session") {
+              return `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+            }
+            const tracksMatch = pathArg.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
+            const renegotiateMatch = pathArg.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
+            if (tracksMatch) {
+              return `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
+            } else if (renegotiateMatch) {
+              return `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
+            }
+          } else if (type === "account" && env.CLOUDFLARE_ACCOUNT_ID) {
+            if (pathArg === "/api/calls/session") {
+              return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+            }
+            const tracksMatch = pathArg.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
+            const renegotiateMatch = pathArg.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
+            if (tracksMatch) {
+              return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
+            } else if (renegotiateMatch) {
+              return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
+            }
           }
+          return null;
+        };
+
+        // Determine priority pathways
+        const isAppSecret = /^[0-9a-fA-F]{64}$/.test(env.REALTIMEKIT_API_TOKEN);
+        const pathways = [];
+        if (isAppSecret) {
+          pathways.push("app");
+          if (env.CLOUDFLARE_ACCOUNT_ID) {
+            pathways.push("account");
+          }
+        } else {
+          if (env.CLOUDFLARE_ACCOUNT_ID) {
+            pathways.push("account");
+          }
+          pathways.push("app");
         }
 
-        if (rtcUrl) {
-          attemptedUrls.push({ type: "App-level Gateway (rtc.cloudflare.com)", url: rtcUrl });
+        let successResponse = null;
+
+        for (const pType of pathways) {
+          const targetUrl = buildTargetUrl(pType, path);
+          if (!targetUrl) continue;
+
+          const label = pType === "app" ? "App-level Gateway (rtc.cloudflare.com)" : "Account-level API (api.cloudflare.com)";
+          attemptedUrls.push({ type: label, url: targetUrl });
+
           try {
-            cfResponse = await doFetch(rtcUrl);
+            cfResponse = await doFetch(targetUrl);
             resText = await cfResponse.text();
+
             if (cfResponse.ok) {
-              return new Response(resText, {
+              let responseJson;
+              try {
+                responseJson = JSON.parse(resText);
+              } catch (e) {
+                responseJson = null;
+              }
+
+              let normalizedResponse;
+              if (responseJson) {
+                if (responseJson.success !== undefined && responseJson.result !== undefined) {
+                  // Already has Cloudflare Client v4 envelope
+                  normalizedResponse = responseJson;
+                } else {
+                  // Raw RTC response, wrap it in standard { success: true, result: ... } envelope
+                  normalizedResponse = {
+                    success: true,
+                    result: responseJson
+                  };
+                }
+              } else {
+                normalizedResponse = {
+                  success: false,
+                  error: "Invalid JSON response received from Cloudflare"
+                };
+              }
+
+              successResponse = new Response(JSON.stringify(normalizedResponse), {
                 status: cfResponse.status,
                 headers: {
                   "Content-Type": "application/json",
@@ -85,18 +145,23 @@ export default {
                   "Access-Control-Allow-Headers": "Content-Type, Authorization",
                 },
               });
+              break;
             }
-            console.warn(`rtc.cloudflare.com failed with status ${cfResponse.status}.`);
-          } catch (rtcErr) {
-            console.error(`rtc.cloudflare.com exception: ${rtcErr.message}`);
+            console.warn(`${label} proxy failed with status ${cfResponse.status}. Response: ${resText}`);
+          } catch (err) {
+            console.error(`${label} exception: ${err.message}`);
           }
         }
 
-        // Return diagnostic error response if the pathway failed
+        if (successResponse) {
+          return successResponse;
+        }
+
+        // Return diagnostic error response if all pathways failed
         return new Response(
           JSON.stringify({
             success: false,
-            error: "Cloudflare WebRTC connection pathway failed. Make sure REALTIMEKIT_API_TOKEN is set to your 64-character Calls App Secret.",
+            error: "All Cloudflare WebRTC connection pathways failed. Check variables and token properties.",
             attempted_endpoints: attemptedUrls,
             last_failed_status_code: cfResponse ? cfResponse.status : 500,
             last_failed_response: resText || "No response received",
