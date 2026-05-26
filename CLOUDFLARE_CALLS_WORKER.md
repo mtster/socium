@@ -39,6 +39,96 @@ export default {
           );
         }
 
+        const authCreds = btoa(`${env.REALTIMEKIT_APP_ID}:${env.REALTIMEKIT_API_TOKEN}`);
+
+        // Route A: POST /api/calls/create-room
+        if (path === "/api/calls/create-room") {
+          const cfRes = await fetch("https://api.realtime.cloudflare.com/v2/meetings", {
+            method: "POST",
+            headers: {
+              "Authorization": `Basic ${authCreds}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              title: "Socium Call"
+            })
+          });
+
+          const cfText = await cfRes.text();
+          if (!cfRes.ok) {
+            return new Response(cfText, {
+              status: cfRes.status,
+              headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+            });
+          }
+
+          const cfData = JSON.parse(cfText);
+          const roomData = cfData.data || cfData;
+          return new Response(JSON.stringify({
+            success: true,
+            result: roomData,
+            meetingId: roomData.id,
+            id: roomData.id
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+
+        // Route B: POST /api/calls/join-room
+        if (path === "/api/calls/join-room") {
+          const bodyJSON = await request.json();
+          const { meetingId, userId, name } = bodyJSON;
+
+          if (!meetingId || !userId) {
+            return new Response(JSON.stringify({ error: "Missing meetingId or userId" }), {
+              status: 400,
+              headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+            });
+          }
+
+          const cfRes = await fetch(`https://api.realtime.cloudflare.com/v2/meetings/${meetingId}/participants`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Basic ${authCreds}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              name: name || "Anonymous",
+              custom_participant_id: userId,
+              preset_name: env.REALTIMEKIT_PRESET_NAME || "group_call_host"
+            })
+          });
+
+          const cfText = await cfRes.text();
+          if (!cfRes.ok) {
+            return new Response(cfText, {
+              status: cfRes.status,
+              headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+            });
+          }
+
+          const cfData = JSON.parse(cfText);
+          const participantData = cfData.data || cfData;
+          return new Response(JSON.stringify({
+            success: true,
+            result: participantData,
+            token: participantData.token
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+
+        // Route C: POST /api/calls/ring (delegator fallback endpoint for workflows)
+        if (path === "/api/calls/ring") {
+          return new Response(JSON.stringify({ status: "skipped_delegate" }), {
+            status: 202,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+
+        // Fallback Route D: Legacy WebRTC Sessions API matching
         const bodyText = await request.text();
         const attemptedUrls = [];
         let cfResponse = null;

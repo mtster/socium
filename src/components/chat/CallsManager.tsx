@@ -458,7 +458,7 @@ export function CallsManager() {
       });
       rtkRoomRef.current = client;
 
-      await client.joinRoom();
+      await client.join();
 
       // Configure video and audio publishing cleanly
       await client.self.enableAudio();
