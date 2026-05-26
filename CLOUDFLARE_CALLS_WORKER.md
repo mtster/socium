@@ -44,6 +44,8 @@ export default {
         let cfResponse = null;
         let resText = "";
 
+        const defaultAccountId = env.REALTIMEKIT_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID;
+
         const doFetch = async (targetUrl) => {
           return await fetch(targetUrl, {
             method: "POST",
@@ -67,16 +69,16 @@ export default {
             } else if (renegotiateMatch) {
               return `https://rtc.cloudflare.com/v1/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
             }
-          } else if (type === "account" && env.CLOUDFLARE_ACCOUNT_ID) {
+          } else if (type === "account" && defaultAccountId) {
             if (pathArg === "/api/calls/session") {
-              return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
+              return `https://api.cloudflare.com/client/v4/accounts/${defaultAccountId}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions`;
             }
             const tracksMatch = pathArg.match(/^\/api\/calls\/session\/([^\/]+)\/tracks\/new$/);
             const renegotiateMatch = pathArg.match(/^\/api\/calls\/session\/([^\/]+)\/renegotiate$/);
             if (tracksMatch) {
-              return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
+              return `https://api.cloudflare.com/client/v4/accounts/${defaultAccountId}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${tracksMatch[1]}/tracks/new`;
             } else if (renegotiateMatch) {
-              return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
+              return `https://api.cloudflare.com/client/v4/accounts/${defaultAccountId}/calls/apps/${env.REALTIMEKIT_APP_ID}/sessions/${renegotiateMatch[1]}/renegotiate`;
             }
           }
           return null;
@@ -87,11 +89,11 @@ export default {
         const pathways = [];
         if (isAppSecret) {
           pathways.push("app");
-          if (env.CLOUDFLARE_ACCOUNT_ID) {
+          if (defaultAccountId) {
             pathways.push("account");
           }
         } else {
-          if (env.CLOUDFLARE_ACCOUNT_ID) {
+          if (defaultAccountId) {
             pathways.push("account");
           }
           pathways.push("app");

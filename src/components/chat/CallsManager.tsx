@@ -10,7 +10,29 @@ import { CallMeta, Participant, CallNode, CfSession } from './callTypes';
 import { synth } from './SoundSynthesizer';
 import { VideoPlayer } from './VideoPlayer';
 import { GroupVideoGrid } from './GroupVideoGrid';
-import { createCfSession, addCfTracks, renegotiateCfSession } from './CallsApi';
+import { createRealtimeKitRoom, getRealtimeKitToken, delegateCallRinger } from './CallsApi';
+import RealtimeKitClient from '@cloudflare/realtimekit';
+
+function parseAppIdFromToken(token: string): string {
+  try {
+    const parts = token.split('.');
+    if (parts.length > 1) {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return payload.app || payload.sub || "";
+    }
+  } catch (e) {
+    console.warn("Failed to parse App ID from JWT token:", e);
+  }
+  return "";
+}
+
+function getUserIdFromParticipant(participant: any): string {
+  const name = participant.name || '';
+  if (name.includes('||')) {
+    return name.split('||')[0];
+  }
+  return name || participant.id;
+}
 
 export function CallsManager() {
   const currentUserId = useStore(state => state.profile?.id);
@@ -32,11 +54,10 @@ export function CallsManager() {
 
   // Refs
   const localStreamRef = useRef<MediaStream | null>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
   const timerRef = useRef<any>(null);
   const listenersRef = useRef<{ path: string; handler: any }[]>([]);
-  const midToUserRef = useRef<Record<string, { userId: string; kind: 'audio' | 'video' }>>({});
-  const pulledTracksRef = useRef<Set<string>>(new Set()); // key format: sessionId:trackName
+  const rtkRoomRef = useRef<any>(null);
+  const initiatedAtRef = useRef<string | null>(null);
 
   // Connection-State synchronizers to avoid closure state captures in listeners
   const activeCallRef = useRef<CallNode | null>(null);
@@ -88,6 +109,36 @@ export function CallsManager() {
     listenersRef.current = [];
   };
 
+  const archiveCallToSupabase = async (
+    callUuid: string,
+    hostUid: string,
+    peerUid: string,
+    initiatedAt: string,
+    terminatedAt: string,
+    durationSec: number
+  ) => {
+    try {
+      const { error } = await supabase
+        .from('call_records_history')
+        .insert({
+          call_uuid: callUuid,
+          host_uid: hostUid,
+          peer_uid: peerUid,
+          initiated_at: initiatedAt,
+          terminated_at: terminatedAt,
+          duration: durationSec
+        });
+
+      if (error) {
+        console.warn("Supabase archive insert warning (ignore if table is missing or unmigrated):", error.message);
+      } else {
+        console.log("Call record archived successfully in Supabase!");
+      }
+    } catch (err) {
+      console.warn("Could not insert call record in Supabase:", err);
+    }
+  };
+
   // Release media tracks and connections
   const cleanMediaAndRTC = () => {
     // 1. Release local streams
@@ -115,23 +166,32 @@ export function CallsManager() {
     });
     setRemoteStreams({});
 
-    // 3. Clear PeerConnection
-    if (pcRef.current) {
+    // 3. Close RealtimeKit Room
+    if (rtkRoomRef.current) {
       try {
-        pcRef.current.close();
+        rtkRoomRef.current.leave();
       } catch (e) {}
-      pcRef.current = null;
+      rtkRoomRef.current = null;
     }
 
-    midToUserRef.current = {};
-    pulledTracksRef.current.clear();
     setIsMuted(false);
     setIsVideoDisabled(false);
     synth.stopRinging();
   };
 
   // Main teardown caller
-  const handleLocalHangup = (isSilent = false) => {
+  const handleLocalHangup = async (isSilent = false) => {
+    const cid = callIdRef.current || callId;
+    const callObj = activeCallRef.current || activeCall;
+    if (cid && callObj && callStatusRef.current === 'connected') {
+      const initiatedAt = initiatedAtRef.current || new Date().toISOString();
+      const terminatedAt = new Date().toISOString();
+      const host = callObj.meta.caller_id;
+      const peer = Object.keys(callObj.participants || {})[0] || '';
+
+      await archiveCallToSupabase(cid, host, peer, initiatedAt, terminatedAt, callDuration);
+    }
+
     cleanMediaAndRTC();
     setCallStatus('idle');
     setActiveCall(null);
@@ -155,6 +215,11 @@ export function CallsManager() {
           if (callData && callData.meta) {
             setActiveCall(callData);
 
+            if (callData.status === 'ended') {
+              handleLocalHangup();
+              return;
+            }
+
             // Register on-disconnect state fallbacks
             onDisconnect(ref(rtdb, `calls/${incomingCallId}/participants/${currentUserId}/status`)).set('declined');
             onDisconnect(ref(rtdb, `user_calls/${currentUserId}/active`)).set(null);
@@ -170,10 +235,6 @@ export function CallsManager() {
               } else if (selfPart.status === 'declined') {
                 handleLocalHangup();
               }
-            }
-
-            if (callStatusRef.current === 'connected') {
-              syncCloudflareTracks(incomingCallId, callData);
             }
           } else {
             handleLocalHangup(true);
@@ -251,26 +312,41 @@ export function CallsManager() {
         };
       }
 
-      const freshCallNode: CallNode = { meta, participants };
-
-      const callRefNode = ref(rtdb, `calls/${newCallId}`);
-      await set(callRefNode, freshCallNode);
-      onDisconnect(callRefNode).remove();
-
-      const selfActiveCallRef = ref(rtdb, `user_calls/${currentUserId}/active`);
-      await set(selfActiveCallRef, newCallId);
-      onDisconnect(selfActiveCallRef).set(null);
-
-      for (const rid of recipients) {
-        await set(ref(rtdb, `user_calls/${rid}/active`), newCallId);
-        onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
-      }
-
-      // Establish caller side media session
       try {
-        await establishCloudflareSession(newCallId, type === 'video', true);
+        const mid = await createRealtimeKitRoom();
+        const token = await getRealtimeKitToken(mid, currentUserId!, `${currentUserId}||${callerName}`);
+
+        const freshCallNode: any = {
+          status: "dialing",
+          meetingId: mid,
+          meta,
+          participants,
+          timestamp: Date.now()
+        };
+
+        const callRefNode = ref(rtdb, `calls/${newCallId}`);
+        await set(callRefNode, freshCallNode);
+        onDisconnect(callRefNode).remove();
+
+        const selfActiveCallRef = ref(rtdb, `user_calls/${currentUserId}/active`);
+        await set(selfActiveCallRef, newCallId);
+        onDisconnect(selfActiveCallRef).set(null);
+
+        for (const rid of recipients) {
+          await set(ref(rtdb, `user_calls/${rid}/active`), newCallId);
+          onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
+        }
+
+        await joinRealtimeKitCall(newCallId, mid, token);
+
+        for (const rid of recipients) {
+          await delegateCallRinger(newCallId, rid, callerName);
+        }
+
       } catch (sessErr) {
         console.error("Establishing initial caller session failed:", sessErr);
+        handleLocalHangup();
+        return;
       }
 
       const callRef = ref(rtdb, `calls/${newCallId}`);
@@ -301,16 +377,12 @@ export function CallsManager() {
           if (!chat.isGroup && val.participants?.[chat.id]?.status === 'declined') {
             handleLocalHangup();
           }
-
-          if (callStatusRef.current === 'connected') {
-            syncCloudflareTracks(newCallId, val);
-          }
         } else {
           handleLocalHangup(true);
         }
       });
 
-      // Rhythmic call triggers via our unified worker endpoint
+      // FCM Web Push fallbacks for ringing signaling triggers
       if (recipients.length > 0) {
         try {
           const { data: pushRecs } = await supabase
@@ -373,233 +445,86 @@ export function CallsManager() {
     };
   }, [currentUserId, currentProfile]);
 
-  // Establish standard single-use RTCPeerConnection over Cloudflare Calls SFU
-  const establishCloudflareSession = async (cid: string, withVideo: boolean, isCallerSide: boolean) => {
-    let stream: MediaStream | null = null;
-    try {
-      // 240p constrained constraints for ultra low-quality low bandwidth footprint
-      const videoConstraint = withVideo ? {
-        width: { ideal: 320, max: 320 },
-        height: { ideal: 240, max: 240 },
-        frameRate: { ideal: 15, max: 15 }
-      } : false;
-
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: videoConstraint
-      });
-
-      setLocalStream(stream);
-      localStreamRef.current = stream;
-    } catch (mediaErr) {
-      console.error("Hardware stream acquisition failed:", mediaErr);
-      throw mediaErr;
+  // Join RealtimeKit Room helper
+  const joinRealtimeKitCall = async (cid: string, meetingId: string, token: string) => {
+    if (rtkRoomRef.current) {
+      try { await rtkRoomRef.current.leave(); } catch (e) {}
+      rtkRoomRef.current = null;
     }
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
-    pcRef.current = pc;
+    try {
+      const client = await RealtimeKitClient.init({
+        authToken: token
+      });
+      rtkRoomRef.current = client;
 
-    stream.getTracks().forEach(track => pc.addTrack(track, stream!));
+      await client.joinRoom();
 
-    // Handle pulled tracks downstream
-    pc.ontrack = (event) => {
-      const mid = event.transceiver.mid;
-      if (!mid) return;
+      // Configure video and audio publishing cleanly
+      await client.self.enableAudio();
+      const withVideo = activeCallRef.current?.meta?.type === 'video' || activeCall?.meta?.type === 'video';
+      if (withVideo) {
+        await client.self.enableVideo();
+      }
 
-      const mapping = midToUserRef.current[mid];
-      if (mapping) {
-        const { userId } = mapping;
-        setRemoteStreams(prev => {
-          const current = prev[userId];
-          const newStream = new MediaStream();
+      // Track current local media stream to show locally
+      const localS = new MediaStream();
+      if (client.self.audioTrack) localS.addTrack(client.self.audioTrack);
+      if (client.self.videoTrack) localS.addTrack(client.self.videoTrack);
 
-          if (current) {
-            current.getTracks().forEach(t => {
-              if (t.kind !== event.track.kind) {
-                newStream.addTrack(t);
-              } else {
-                try { t.stop(); } catch (e) {}
-              }
-            });
+      setLocalStream(localS);
+      localStreamRef.current = localS;
+      initiatedAtRef.current = new Date().toISOString();
+
+      const rebuildRemoteStreams = () => {
+        const streamMap: Record<string, MediaStream> = {};
+
+        client.participants.joined.forEach((p: any) => {
+          const pUserId = getUserIdFromParticipant(p);
+          if (pUserId === currentUserId) return; // Ignore self
+
+          const remoteStream = new MediaStream();
+          let hasTracks = false;
+
+          if (p.audioEnabled && p.audioTrack) {
+            remoteStream.addTrack(p.audioTrack);
+            hasTracks = true;
+          }
+          if (p.videoEnabled && p.videoTrack) {
+            remoteStream.addTrack(p.videoTrack);
+            hasTracks = true;
           }
 
-          newStream.addTrack(event.track);
-          return {
-            ...prev,
-            [userId]: newStream
-          };
+          if (hasTracks) {
+            streamMap[pUserId] = remoteStream;
+          }
         });
-      }
-    };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+        setRemoteStreams(streamMap);
+      };
 
-    // Enforce 150 Kbps maximum bitrate limits
-    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (videoSender) {
-      try {
-        const params = videoSender.getParameters();
-        if (!params.encodings) params.encodings = [{}];
-        params.encodings[0].maxBitrate = 150000;
-        await videoSender.setParameters(params);
-      } catch (bitrateErr) {
-        console.warn("Bitrate adjustment skip error:", bitrateErr);
-      }
-    }
-
-    const { sessionId, sdpAnswer } = await createCfSession(offer.sdp);
-    await pc.setRemoteDescription(new RTCSessionDescription({
-      type: 'answer',
-      sdp: sdpAnswer
-    }));
-
-    // Register track names
-    const transceivers = pc.getTransceivers();
-    const tracksToPublish: any[] = [];
-    let localAudioName = "";
-    let localVideoName = "";
-
-    transceivers.forEach(transceiver => {
-      const track = transceiver.sender.track;
-      if (track && transceiver.mid !== null) {
-        const uniqueName = `track-${currentUserId}-${track.kind}-${Date.now()}`;
-        if (track.kind === 'audio') localAudioName = uniqueName;
-        if (track.kind === 'video') localVideoName = uniqueName;
-
-        tracksToPublish.push({
-          location: 'local',
-          mid: transceiver.mid,
-          trackName: uniqueName
-        });
-      }
-    });
-
-    if (tracksToPublish.length > 0) {
-      await addCfTracks(sessionId, tracksToPublish);
-    }
-
-    const sessionObj: CfSession = {
-      sessionId,
-      audioTrackName: localAudioName || null,
-      videoTrackName: localVideoName || null
-    };
-
-    if (isCallerSide) {
-      await set(ref(rtdb, `calls/${cid}/caller_cf_session`), sessionObj);
-    } else {
-      await set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/cf_session`), sessionObj);
-    }
-  };
-
-  // Dynamic mesh synchronization trigger for remote Cloudflare media pull
-  const syncCloudflareTracks = async (cid: string, callNode: CallNode) => {
-    const pc = pcRef.current;
-    if (!pc || !localStreamRef.current) return;
-
-    const mySessionObj: CfSession | undefined = (callNode.meta.caller_id === currentUserId)
-      ? callNode.caller_cf_session
-      : callNode.participants?.[currentUserId]?.cf_session;
-
-    if (!mySessionObj?.sessionId) return;
-    const mySessionId = mySessionObj.sessionId;
-
-    const targetsToPull: Array<{ userId: string; cf: CfSession }> = [];
-
-    // Pull Caller stream details
-    if (callNode.meta.caller_id !== currentUserId && callNode.caller_cf_session) {
-      targetsToPull.push({
-        userId: callNode.meta.caller_id,
-        cf: callNode.caller_cf_session
-      });
-    }
-
-    // Pull other participants acceptances
-    Object.keys(callNode.participants || {}).forEach(uid => {
-      if (uid !== currentUserId) {
-        const p = callNode.participants[uid];
-        if (p.status === 'accepted' && p.cf_session) {
-          targetsToPull.push({
-            userId: uid,
-            cf: p.cf_session
-          });
-        }
-      }
-    });
-
-    const pullTracksList: any[] = [];
-    const pendingMappings: Array<{ midCandidate: string; trackName: string; userId: string; kind: 'audio' | 'video' }> = [];
-
-    targetsToPull.forEach(target => {
-      const { userId, cf } = target;
-
-      if (cf.audioTrackName) {
-        const audioKey = `${cf.sessionId}:${cf.audioTrackName}`;
-        if (!pulledTracksRef.current.has(audioKey)) {
-          pullTracksList.push({
-            location: 'remote',
-            sessionId: cf.sessionId,
-            trackName: cf.audioTrackName
-          });
-          pendingMappings.push({
-            midCandidate: "",
-            trackName: cf.audioTrackName,
-            userId,
-            kind: 'audio'
-          });
-          pulledTracksRef.current.add(audioKey);
-        }
-      }
-
-      if (cf.videoTrackName) {
-        const videoKey = `${cf.sessionId}:${cf.videoTrackName}`;
-        if (!pulledTracksRef.current.has(videoKey)) {
-          pullTracksList.push({
-            location: 'remote',
-            sessionId: cf.sessionId,
-            trackName: cf.videoTrackName
-          });
-          pendingMappings.push({
-            midCandidate: "",
-            trackName: cf.videoTrackName,
-            userId,
-            kind: 'video'
-          });
-          pulledTracksRef.current.add(videoKey);
-        }
-      }
-    });
-
-    if (pullTracksList.length === 0) return;
-
-    try {
-      const resultObj = await addCfTracks(mySessionId, pullTracksList);
-
-      resultObj.tracks.forEach(returnedTrack => {
-        const matchedPending = pendingMappings.find(m => m.trackName === returnedTrack.trackName);
-        if (matchedPending) {
-          midToUserRef.current[returnedTrack.mid] = {
-            userId: matchedPending.userId,
-            kind: matchedPending.kind
-          };
-        }
+      // Subscribe to joining updates
+      client.participants.joined.on('participantJoined', (p: any) => {
+        rebuildRemoteStreams();
+        p.on('videoUpdate', () => rebuildRemoteStreams());
+        p.on('audioUpdate', () => rebuildRemoteStreams());
       });
 
-      if (resultObj.requiresRenegotiation && resultObj.sessionDescription) {
-        await pc.setRemoteDescription(new RTCSessionDescription({
-          type: 'offer',
-          sdp: resultObj.sessionDescription.sdp
-        }));
+      client.participants.joined.on('participantLeft', () => {
+        rebuildRemoteStreams();
+      });
 
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+      // Bind to initial participants
+      client.participants.joined.forEach((p: any) => {
+        p.on('videoUpdate', () => rebuildRemoteStreams());
+        p.on('audioUpdate', () => rebuildRemoteStreams());
+      });
 
-        await renegotiateCfSession(mySessionId, answer.sdp);
-      }
-    } catch (reneError) {
-      console.error("Remote Cloudflare pull subscription negotiation failed:", reneError);
+      rebuildRemoteStreams();
+
+    } catch (realtimeKitErr) {
+      console.error("RealtimeKit engine join failed:", realtimeKitErr);
+      throw realtimeKitErr;
     }
   };
 
@@ -609,15 +534,22 @@ export function CallsManager() {
     setIsMuted(false);
     setIsVideoDisabled(false);
 
-    await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'accepted');
-
     try {
-      await establishCloudflareSession(callId, activeCall.meta.type === 'video', false);
-    } catch (acceptErr) {
-      console.error("Failed to establish receiver side Cloudflare session:", acceptErr);
-    }
+      const mid = activeCall.meetingId;
+      if (!mid) throw new Error("No meetingId associated with this call.");
 
-    setCallStatus('connected');
+      const myName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
+      const myToken = await getRealtimeKitToken(mid, currentUserId!, `${currentUserId}||${myName}`);
+
+      await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'accepted');
+      await set(ref(rtdb, `calls/${callId}/status`), 'accepted');
+
+      await joinRealtimeKitCall(callId, mid, myToken);
+      setCallStatus('connected');
+    } catch (acceptErr) {
+      console.error("Failed to establish receiver side RealtimeKit session:", acceptErr);
+      handleLocalHangup();
+    }
   };
 
   const handleDeclineCall = async () => {
@@ -642,47 +574,68 @@ export function CallsManager() {
       return;
     }
 
-    await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
+    try {
+      await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
 
-    if (callObj.meta.caller_id === currentUserId) {
-      await remove(ref(rtdb, `calls/${cid}`));
-      const pKeys = Object.keys(callObj.participants || {});
-      for (const pk of pKeys) {
-        await set(ref(rtdb, `user_calls/${pk}/active`), null);
+      if (callObj.meta.caller_id === currentUserId) {
+        await set(ref(rtdb, `calls/${cid}/status`), 'ended');
+        setTimeout(async () => {
+          try {
+            await remove(ref(rtdb, `calls/${cid}`));
+            const pKeys = Object.keys(callObj.participants || {});
+            for (const pk of pKeys) {
+              await set(ref(rtdb, `user_calls/${pk}/active`), null);
+            }
+          } catch (e) {}
+        }, 800);
+      } else {
+        await set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/status`), 'declined');
       }
-    } else {
-      await set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/status`), 'declined');
+    } catch (e) {
+      console.warn("Hangup DB updates error:", e);
     }
 
     handleLocalHangup();
   };
 
-  const toggleMute = () => {
-    if (localStreamRef.current) {
-      const track = localStreamRef.current.getAudioTracks()[0];
-      if (track) {
-        track.enabled = !track.enabled;
-        setIsMuted(!track.enabled);
+  const toggleMute = async () => {
+    if (rtkRoomRef.current) {
+      try {
+        if (isMuted) {
+          await rtkRoomRef.current.self.enableAudio();
+          setIsMuted(false);
+        } else {
+          await rtkRoomRef.current.self.disableAudio();
+          setIsMuted(true);
+        }
+      } catch (e) {
+        console.warn("Mute toggle failed:", e);
       }
     }
   };
 
-  const toggleVideo = () => {
-    if (localStreamRef.current) {
-      const track = localStreamRef.current.getVideoTracks()[0];
-      if (track) {
-        track.enabled = !track.enabled;
-        setIsVideoDisabled(!track.enabled);
+  const toggleVideo = async () => {
+    if (rtkRoomRef.current) {
+      try {
+        if (isVideoDisabled) {
+          await rtkRoomRef.current.self.enableVideo();
+          setIsVideoDisabled(false);
+        } else {
+          await rtkRoomRef.current.self.disableVideo();
+          setIsVideoDisabled(true);
+        }
 
         const cid = callIdRef.current || callId;
         if (cid) {
           const isCaller = activeCallRef.current?.meta?.caller_id === currentUserId;
           if (isCaller) {
-            set(ref(rtdb, `calls/${cid}/caller_video_disabled`), !track.enabled);
+            set(ref(rtdb, `calls/${cid}/caller_video_disabled`), !isVideoDisabled);
           } else {
-            set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/video_disabled`), !track.enabled);
+            set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/video_disabled`), !isVideoDisabled);
           }
         }
+      } catch (e) {
+        console.warn("Video toggle failed:", e);
       }
     }
   };

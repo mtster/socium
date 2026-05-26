@@ -30,4 +30,6 @@ export interface CallNode {
   signaling?: Record<string, any>;
   caller_cf_session?: CfSession;
   caller_video_disabled?: boolean;
+  status?: 'dialing' | 'accepted' | 'ended';
+  meetingId?: string;
 }

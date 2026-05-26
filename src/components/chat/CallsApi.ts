@@ -30,6 +30,79 @@ export interface CfNewTracksResponse {
 }
 
 /**
+ * Creates a brand new Cloudflare RealtimeKit room instance via the gateway worker
+ */
+export async function createRealtimeKitRoom(): Promise<string> {
+  const response = await fetch(`${WORKER_URL}/api/calls/create-room`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Failed to create RealtimeKit room: ${errText}`);
+  }
+
+  const data = await response.json();
+  const meetingId = data?.result?.id || data?.id || data?.meetingId;
+  if (!meetingId) {
+    throw new Error(`Invalid room structure received: ${JSON.stringify(data)}`);
+  }
+  return meetingId;
+}
+
+/**
+ * Delegates ringing execution to the durable workflow engine
+ */
+export async function delegateCallRinger(
+  callId: string,
+  recipientId: string,
+  callerName: string
+): Promise<void> {
+  try {
+    const response = await fetch(`${WORKER_URL}/api/calls/ring`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callId, recipientId, callerName })
+    });
+
+    if (!response.ok && response.status !== 202) {
+      const errText = await response.text();
+      console.warn(`Ringer delegation warn: ${errText}`);
+    }
+  } catch (err) {
+    console.warn("delegateCallRinger failed, worker might not have Workflow endpoints deployed:", err);
+  }
+}
+
+/**
+ * Generates an individual, secure, short-lived participant access token for a RealtimeKit room
+ */
+export async function getRealtimeKitToken(
+  meetingId: string,
+  userId: string,
+  userName: string
+): Promise<string> {
+  const response = await fetch(`${WORKER_URL}/api/calls/join-room`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ meetingId, userId, name: userName })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Failed to acquire participant token: ${errText}`);
+  }
+
+  const data = await response.json();
+  const token = data?.result?.token || data?.token;
+  if (!token) {
+    throw new Error(`Invalid token layout received: ${JSON.stringify(data)}`);
+  }
+  return token;
+}
+
+/**
  * Creates a new WebRTC session on Cloudflare Calls
  */
 export async function createCfSession(sdpOffer: string): Promise<{ sessionId: string; sdpAnswer: string }> {
