@@ -161,6 +161,10 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const storedContent = newMessage.trim();
     setNewMessage('');
     scrollToBottom();
+    setTimeout(() => {
+      const textarea = document.querySelector('textarea[placeholder="Message..."]') as HTMLElement;
+      if (textarea) textarea.focus();
+    }, 10);
     try {
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: storedContent }).select().single();
       if (error) {
@@ -311,6 +315,12 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     
     // Toggle active date on longpress
     setActiveDateMsgId(prev => prev === msg.id ? null : msg.id);
+
+    const isCall = msg.media_type === "call_audio" || msg.media_type === "call_video";
+    if (isCall) {
+      if (navigator.vibrate) navigator.vibrate(5);
+      return;
+    }
 
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;

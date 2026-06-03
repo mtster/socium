@@ -203,10 +203,15 @@ export const MessageBubble = React.memo(
           {showDate && (
             <motion.div
               initial={{ opacity: 0, height: 0, scale: 0.9, y: 15 }}
-              animate={{ opacity: 1, height: "auto", scale: 1, y: 0 }}
+              animate={
+                contextMenuId === msg.id 
+                  ? { opacity: 1, height: "auto", scale: 1.05, y: -8, zIndex: 110 } 
+                  : { opacity: 1, height: "auto", scale: 1, y: 0, zIndex: 10 }
+              }
               exit={{ opacity: 0, height: 0, scale: 0.9, y: 15 }}
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className="flex justify-center w-full mb-1 select-none pointer-events-none mt-2 shrink-0"
+              className="flex justify-center w-full mb-1 select-none pointer-events-none mt-2 shrink-0 relative"
+              style={{ originY: 1, willChange: "transform, opacity" }}
             >
               <span className="text-[11px] font-sans font-medium text-white/40 tracking-wide text-center">
                 {formatMessageDate(msg.created_at)}
@@ -272,7 +277,7 @@ export const MessageBubble = React.memo(
             onTouchMove={onTouchMove}
             onTouchEnd={onTouchEnd}
             onClick={(e) => {
-              if (!isMediaOnly) {
+              if (!isMediaOnly || isCall) {
                 e.stopPropagation();
                 onToggleDate?.();
               }
@@ -283,6 +288,7 @@ export const MessageBubble = React.memo(
                 : { scale: 1, zIndex: 1 }
             }
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            style={{ willChange: "transform", transform: "translateZ(0)", backfaceVisibility: "hidden" }}
             className={cn(
               "min-w-[2rem] text-[15px] whitespace-pre-wrap break-words transition-colors duration-300 relative select-none [user-select:none] [-webkit-user-select:none]",
               rounded,

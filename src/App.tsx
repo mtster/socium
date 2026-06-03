@@ -1034,7 +1034,7 @@ export default function App() {
              transition={{ type: "tween", duration: 0.3 }}
              className="fixed inset-0 z-[80] bg-black overflow-y-auto"
              >
-               <div className="sticky top-0 left-0 w-full px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 gap-4">
+               <div style={{ display: isImageViewerOpen ? 'none' : 'flex' }} className="sticky top-0 left-0 w-full px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 gap-4">
                  <button 
                    onClick={() => setViewingProfileId(null)} 
                    className="p-3 -ml-2 text-white/90 active:scale-95 transition-transform"

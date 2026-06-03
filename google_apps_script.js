@@ -44,15 +44,15 @@ Your task is to analyze the following raw text snippets posted by real users on 
 ${JSON.stringify(userPostCaptions)}
 
 INSTRUCTIONS:
-1. QUANTITY: Generate exactly 21 completely distinct, high-quality jokes, witty observations, or humorous short anecdotes.
+1. QUANTITY: Generate exactly 7 completely distinct, high-quality jokes, witty observations, or humorous short anecdotes.
 2. VAST DATA HANDLING: If the array above contains large amounts of selections (up to 300 entries), sift through the entire noise pool and cherry-pick only the absolute best, most distinct, and engaging phrases, concepts, or unique themes to build your comedy. 
 3. SMART HYBRID FALLBACK & SUPPLEMENTATION MECHANISM:
-   - Carefully evaluate the balance of the text snippets. If the posts are completely empty, hold too few elements, or are heavily dominated by the same 1 or 2 repetitive ideas, you MUST NOT write 21 jokes about those same repetitive concepts.
-   - Extract what little unique value or keywords you can find from those posts, but then actively SUPPLEMENT the remaining quota to reach 21 items by inventing completely random, highly diverse, unpredictable topics, target audiences, and absurd everyday situations from your own imagination. You can also mix in universal subjects like ${JSON.stringify(fallbackTopics)} written in styles like ${JSON.stringify(styles)}.
-   - If the user posts are completely sufficient, diverse, and plentiful enough to organically fuel 21 uniquely structured jokes, stay entirely grounded in the posts and do not inject random external subjects.
-4. VARIETY: Ensure extreme internal variety. Do not repeat punchlines, joke setups, or structural tropes across the 21 items.
+   - Carefully evaluate the balance of the text snippets. If the posts are completely empty, hold too few elements, or are heavily dominated by the same 1 or 2 repetitive ideas, you MUST NOT write 7 jokes about those same repetitive concepts.
+   - Extract what little unique value or keywords you can find from those posts, but then actively SUPPLEMENT the remaining quota to reach 7 items by inventing completely random, highly diverse, unpredictable topics, target audiences, and absurd everyday situations from your own imagination. You can also mix in universal subjects like ${JSON.stringify(fallbackTopics)} written in styles like ${JSON.stringify(styles)}.
+   - If the user posts are completely sufficient, diverse, and plentiful enough to organically fuel 7 uniquely structured jokes, stay entirely grounded in the posts and do not inject random external subjects.
+4. VARIETY: Ensure extreme internal variety. Do not repeat punchlines, joke setups, or structural tropes across the 7 items.
 
-Return the final output strictly as a structured JSON object containing a "jokes" key holding an array of exactly 21 elements, where each element is an object with a single "caption" key.`;
+Return the final output strictly as a structured JSON object containing a "jokes" key holding an array of exactly 7 elements, where each element is an object with a single "caption" key.`;
 
     // 5. Query Gemini (Targeting your gemini-3.5-flash model endpoint)
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -95,18 +95,18 @@ Return the final output strictly as a structured JSON object containing a "jokes
     const rawTextResult = geminiJson.candidates[0].content.parts[0].text;
     let parsedJokesArray = JSON.parse(rawTextResult).jokes;
 
-    // Direct guardrail: ensure array truncation matches exactly 21 elements max
-    if (parsedJokesArray.length > 21) {
-      parsedJokesArray = parsedJokesArray.slice(0, 21);
+    // Direct guardrail: ensure array truncation matches exactly 7 elements max
+    if (parsedJokesArray.length > 7) {
+      parsedJokesArray = parsedJokesArray.slice(0, 7);
     }
 
-    // 6. Loop through the jokes and stagger their timestamps over the next 7 days (every 8 hours)
+    // 6. Loop through the jokes and stagger their timestamps over the next 7 days (every 24 hours)
     const bulkInsertPayload = [];
     const baseTime = new Date(); // Start scheduling from right now
 
     for (let i = 0; i < parsedJokesArray.length; i++) {
-      // 21 jokes staggered 8 hours apart perfectly spans a 168-hour (7-day) week
-      const futureTimestamp = new Date(baseTime.getTime() + (i * 8 * 60 * 60 * 1000));
+      // 7 jokes staggered 24 hours apart perfectly spans a 168-hour (7-day) week
+      const futureTimestamp = new Date(baseTime.getTime() + (i * 24 * 60 * 60 * 1000));
       
       bulkInsertPayload.push({
         user_id: BOT_ID,
@@ -118,7 +118,7 @@ Return the final output strictly as a structured JSON object containing a "jokes
       });
     }
 
-    // 7. Bulk insert all 21 entries to Supabase in exactly ONE network request
+    // 7. Bulk insert all 7 entries to Supabase in exactly ONE network request
     const supabaseInsertUrl = `${SUPABASE_URL}/rest/v1/posts`;
     const insertOptions = {
       method: "post",

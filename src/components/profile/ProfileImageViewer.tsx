@@ -54,15 +54,16 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
           initial={{ opacity: 0 }} 
           animate={{ opacity: 1 }} 
           exit={{ opacity: 0 }} 
-          className="fixed inset-0 z-[10000] bg-black"
+          className="fixed inset-0 z-[10000] bg-black touch-none cursor-grab active:cursor-grabbing"
+          drag="y"
+          dragConstraints={{ top: 0, bottom: 0 }}
+          dragElastic={{ top: 0.1, bottom: 0.8 }}
+          onDragEnd={(event, info) => {
+            if (info.offset.y > 120) {
+              setViewingImage(null);
+            }
+          }}
         >
-          <button 
-            onClick={() => saveToDevice(viewingImage, 'socium_profile')} 
-            className="absolute z-[10100] top-safe left-4 mt-4 p-3 bg-white/10 text-white rounded-full active:scale-90 transition-transform"
-          >
-            <Download size={24} />
-          </button>
-          
           <button 
             onClick={() => setViewingImage(null)} 
             className="absolute z-[10100] top-safe right-4 mt-4 p-3 bg-white/10 text-white rounded-full active:scale-90 transition-transform"
@@ -76,7 +77,7 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
                 wrapperStyle={{ width: "100%", height: "100%" }} 
                 contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
               >
-                <img src={viewingImage} className="max-w-full max-h-screen object-contain" alt="Profile" />
+                <img src={viewingImage} className="max-w-full max-h-screen object-contain pointer-events-none" alt="Profile" />
               </TransformComponent>
             </TransformWrapper>
           </div>
