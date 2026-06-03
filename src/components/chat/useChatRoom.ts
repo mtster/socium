@@ -161,10 +161,6 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const storedContent = newMessage.trim();
     setNewMessage('');
     scrollToBottom();
-    setTimeout(() => {
-      const textarea = document.querySelector('textarea[placeholder="Message..."]') as HTMLElement;
-      if (textarea) textarea.focus();
-    }, 10);
     try {
       const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: storedContent }).select().single();
       if (error) {
