@@ -29,6 +29,17 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       mainEl.scrollTop = useStore.getState().feedScrollPos;
     }
 
+    const handleScroll = (e: Event) => {
+      const target = e.currentTarget as HTMLElement;
+      if (target) {
+        useStore.getState().setFeedScrollPos(target.scrollTop);
+      }
+    };
+
+    if (mainEl) {
+      mainEl.addEventListener('scroll', handleScroll);
+    }
+
     const handleResetTab = (e: any) => {
       if (e.detail?.tabId === 'feed') {
         const mainEl = document.querySelector('main');
@@ -36,7 +47,12 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
       }
     };
     window.addEventListener('resetTab', handleResetTab);
-    return () => window.removeEventListener('resetTab', handleResetTab);
+    return () => {
+      if (mainEl) {
+        mainEl.removeEventListener('scroll', handleScroll);
+      }
+      window.removeEventListener('resetTab', handleResetTab);
+    };
   }, []);
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {

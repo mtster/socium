@@ -73,6 +73,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [showRemovePfpConfirm, setShowRemovePfpConfirm] = useState(false);
   const [showConnectedMenu, setShowConnectedMenu] = useState(false);
   const [showRequestsSlide, setShowRequestsSlide] = useState(false);
   const [showConnectionsSlide, setShowConnectionsSlide] = useState(false);
@@ -103,11 +104,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   }, []);
   
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: showRequestsSlide || showConnectionsSlide } }));
+    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: showRequestsSlide || showConnectionsSlide || !!viewingImage } }));
     return () => {
       window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
     };
-  }, [showRequestsSlide, showConnectionsSlide]);
+  }, [showRequestsSlide, showConnectionsSlide, viewingImage]);
 
   // Local state for immediate avatar update
   const [localAvatar, setLocalAvatar] = useState(profile.avatar_url);
@@ -224,6 +225,21 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
   const handleRemovePfp = async () => {
     try {
       setIsUploading(true);
+      setShowPfpMenu(false);
+      setShowRemovePfpConfirm(false);
+
+      if (localAvatar) {
+        try {
+          const parts = localAvatar.split('/avatars/');
+          if (parts.length > 1) {
+            const pathInBucket = decodeURIComponent(parts[1]);
+            await supabase.storage.from('avatars').remove([pathInBucket]);
+          }
+        } catch (storageErr) {
+          console.warn('Could not delete avatar from storage:', storageErr);
+        }
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update({ avatar_url: null })
@@ -231,11 +247,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       if (error) throw error;
       setLocalAvatar(null);
+      // Immediately notify parent component to refresh stats/cache
+      onRefetch?.();
     } catch (e: any) {
       alert(`Failed to remove profile picture: ${e.message}`);
     } finally {
       setIsUploading(false);
-      setShowPfpMenu(false);
     }
   };
 
@@ -322,7 +339,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           />
         )}
         {/* Full Name above picture */}
-        <div className="flex items-center justify-center gap-2 mb-6 max-w-full px-4">
+        <div className="relative w-full max-w-md flex justify-center items-center mb-6 px-16">
           <h1 
             className={`text-3xl font-bold tracking-tight text-center truncate ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
             onClick={() => {
@@ -350,7 +367,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   window.dispatchEvent(new CustomEvent('openCompleteProfile'));
                 }
               }}
-              className="text-white/40 hover:text-white/80 transition-colors active:scale-90 p-1 shrink-0"
+              className="absolute right-2 md:right-8 text-white/40 hover:text-white/80 transition-colors active:scale-90 p-1 shrink-0"
               title="Edit Display Name"
             >
               <Pencil size={18} className="stroke-current" />
@@ -433,7 +450,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
                     {localAvatar && (
                       <button 
-                        onClick={handleRemovePfp}
+                        onClick={() => {
+                          setShowPfpMenu(false);
+                          setShowRemovePfpConfirm(true);
+                        }}
                         className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors mt-1 text-red-500 font-medium"
                       >
                         <Trash size={18} className="mr-3" />
@@ -452,51 +472,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
         {/* Action Buttons for Other Profile */}
         {!isOwnProfile && !isHumorBot && (
-          <div className="flex space-x-3 mb-8 w-full max-w-xs relative">
-            <AnimatePresence>
-              {showDisconnectConfirm && createPortal(
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
-            onClick={() => setShowDisconnectConfirm(false)}
-          >
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-xs bg-[#1A1A1A] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl p-8 text-center"
-            >
-              <h3 className="text-white text-base font-bold mb-8 tracking-tight">Are you sure you want to remove this connection?</h3>
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setShowDisconnectConfirm(false)}
-                  className="flex-1 bg-white text-black font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/90 text-sm"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => {
-                    if (connectionId) {
-                      handleRemoveConnection(connectionId);
-                    } else if (!isOwnProfile) {
-                       handleRemoveConnection('unknown', profile.id);
-                    }
-                    setShowDisconnectConfirm(false);
-                  }}
-                  className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
-                >
-                  Remove
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>,
-          document.body
-              )}
-            </AnimatePresence>
-
+          <div className="flex space-x-3 mb-8 w-full max-w-xs relative animate-[fadeIn_0.2s_ease-out]">
             {connectionStatus === 'none' && (
               <button 
                 onClick={handleRequestConnection}
@@ -546,9 +522,11 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button 
-                            onClick={() => {
-                              setShowConnectedMenu(false);
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
                               setShowDisconnectConfirm(true);
+                              setShowConnectedMenu(false);
                             }}
                             className="w-full px-4 py-3 flex items-center justify-center text-sm hover:bg-white/5 transition-colors text-red-500 font-medium"
                           >
@@ -876,6 +854,93 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   </div>
                 )}
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+
+      {/* Disconnect Connection Confirmation Modal */}
+      {createPortal(
+        <AnimatePresence>
+          {showDisconnectConfirm && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[10002] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+              onClick={() => setShowDisconnectConfirm(false)}
+            >
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 10 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-xs bg-[#1A1A1A] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl p-8 text-center"
+              >
+                <h3 className="text-white text-base font-bold mb-8 tracking-tight">Are you sure you want to remove this connection?</h3>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setShowDisconnectConfirm(false)}
+                    className="flex-1 bg-white text-black font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/90 text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (connectionId) {
+                        handleRemoveConnection(connectionId);
+                      } else if (!isOwnProfile) {
+                         handleRemoveConnection('unknown', profile.id);
+                      }
+                      setShowDisconnectConfirm(false);
+                    }}
+                    className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+
+      {/* Remove Profile Picture Confirmation Modal */}
+      {createPortal(
+        <AnimatePresence>
+          {showRemovePfpConfirm && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[10001] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+              onClick={() => setShowRemovePfpConfirm(false)}
+            >
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 10 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-xs bg-[#1A1A1A] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl p-8 text-center"
+              >
+                <h3 className="text-white text-base font-bold mb-8 tracking-tight">Are you sure you want to delete your profile picture?</h3>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setShowRemovePfpConfirm(false)}
+                    className="flex-1 bg-white text-black font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:bg-white/90 text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleRemovePfp}
+                    className="flex-1 bg-red-500 text-white font-bold py-3.5 rounded-2xl active:scale-[0.98] transition-all hover:brightness-110 text-sm shadow-[0_4px_12px_rgba(239,68,68,0.25)]"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>,

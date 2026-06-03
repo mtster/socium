@@ -23,6 +23,35 @@ import { initPresence } from '@/src/lib/presence';
 import { ref, set } from 'firebase/database';
 import { rtdb } from '@/src/lib/firebase';
 
+let audioUnlocked = false;
+let messageSound: HTMLAudioElement | null = null;
+
+const unlockAudio = () => {
+  if (audioUnlocked) return;
+  if (!messageSound) {
+    messageSound = new Audio('/message-sound.mp3');
+    messageSound.volume = 0.8;
+  }
+  // Play and pause silently to register the device playback unlock
+  messageSound.play().then(() => {
+    if (messageSound) {
+      messageSound.pause();
+      messageSound.currentTime = 0;
+    }
+    audioUnlocked = true;
+  }).catch(() => {});
+  
+  if (audioUnlocked) {
+    window.removeEventListener('click', unlockAudio);
+    window.removeEventListener('touchstart', unlockAudio);
+  }
+};
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('click', unlockAudio, { passive: true });
+  window.addEventListener('touchstart', unlockAudio, { passive: true });
+}
+
 export default function App() {
   const { 
     profile, setProfile, 
@@ -286,7 +315,8 @@ export default function App() {
            // We don't trigger if we sent it
            if (msg.sender_id === session.user.id || !isForUs) return;
            try {
-             const audioObj = new Audio('/message-sound.mp3');
+             const audioObj = messageSound || new Audio('/message-sound.mp3');
+             audioObj.currentTime = 0;
              audioObj.volume = 0.8;
              audioObj.play().catch(pErr => console.log('Audio play blocked:', pErr));
            } catch (aErr) {
@@ -900,11 +930,6 @@ export default function App() {
       {/* Main View Area */}
       <main 
         ref={mainRef} 
-        onScroll={(e) => {
-          if (activeTab === 'feed') {
-            useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
-          }
-        }}
         className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]"
       >
         <AnimatePresence mode="wait">

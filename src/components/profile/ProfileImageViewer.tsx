@@ -46,7 +46,10 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
                   onClick={(e) => e.stopPropagation()}
                 >
                   <motion.img 
-                    layoutId="profile-pfp"
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
                     src={viewingImage} 
                     alt="Profile" 
                     className="max-w-[95vw] max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/5"

@@ -56,38 +56,20 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   const [showLikers, setShowLikers] = useState(false);
   const [likers, setLikers] = useState<any[]>([]);
   const [loadingLikers, setLoadingLikers] = useState(false);
-  const pressTimeoutRef = useRef<any>(null);
+  
+  const prefetchTimeoutRef = useRef<any>(null);
+  const longPressTimeoutRef = useRef<any>(null);
   const isLongPressRef = useRef(false);
+  const isPrefetchingRef = useRef(false);
 
-  const startPress = () => {
-    isLongPressRef.current = false;
-    pressTimeoutRef.current = setTimeout(() => {
-      isLongPressRef.current = true;
-      handleLongPress();
-    }, 600);
-  };
-
-  const endPress = (e: React.MouseEvent | React.TouchEvent) => {
-    if (pressTimeoutRef.current) {
-      clearTimeout(pressTimeoutRef.current);
-      pressTimeoutRef.current = null;
-    }
-  };
-
-  const cancelPress = () => {
-    if (pressTimeoutRef.current) {
-      clearTimeout(pressTimeoutRef.current);
-      pressTimeoutRef.current = null;
-    }
-  };
-
-  const handleLongPress = async () => {
-    setShowLikers(true);
+  const startPrefetch = async () => {
+    if (isPrefetchingRef.current) return;
+    isPrefetchingRef.current = true;
     setLoadingLikers(true);
     try {
       const { data, error } = await supabase
         .from('likes')
-        .select('user_id, profiles(id, full_name, username)')
+        .select('user_id, profiles(id, full_name, username, avatar_url)')
         .eq('post_id', post.id);
 
       if (data) {
@@ -100,6 +82,45 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       console.error('Error fetching likers:', err);
     } finally {
       setLoadingLikers(false);
+    }
+  };
+
+  const startPress = () => {
+    isLongPressRef.current = false;
+    isPrefetchingRef.current = false;
+
+    // Start prefetching after 200ms to eliminate load latency
+    prefetchTimeoutRef.current = setTimeout(() => {
+      startPrefetch();
+    }, 200);
+
+    // Show likers list popup after 600ms total hold
+    longPressTimeoutRef.current = setTimeout(() => {
+      isLongPressRef.current = true;
+      setShowLikers(true);
+      startPrefetch(); // Guard in case it was not triggered/failed
+    }, 600);
+  };
+
+  const endPress = (e: React.MouseEvent | React.TouchEvent) => {
+    if (prefetchTimeoutRef.current) {
+      clearTimeout(prefetchTimeoutRef.current);
+      prefetchTimeoutRef.current = null;
+    }
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  };
+
+  const cancelPress = () => {
+    if (prefetchTimeoutRef.current) {
+      clearTimeout(prefetchTimeoutRef.current);
+      prefetchTimeoutRef.current = null;
+    }
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
     }
   };
 
@@ -296,14 +317,30 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                   ) : likers.length === 0 ? (
                     <p className="text-xs text-white/45 py-1">No likes yet</p>
                   ) : (
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
                       {likers.map((u: any) => (
-                        <p 
+                        <div 
                           key={u.id} 
-                          className="text-xs font-semibold text-white/90 border-b border-white/[0.03] pb-1.5 last:border-none last:pb-0"
+                          onClick={() => {
+                            setShowLikers(false);
+                            if (onUserClick) onUserClick(u.id);
+                          }}
+                          className="flex items-center space-x-2.5 py-1.5 px-1.5 rounded-lg hover:bg-white/5 cursor-pointer transition-colors"
                         >
-                          {u.full_name || u.username || 'Anonymous User'}
-                        </p>
+                          <div className="w-6 h-6 rounded-full overflow-hidden bg-white/10 shrink-0 border border-white/10">
+                            {u.avatar_url ? (
+                              <img src={u.avatar_url} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-white/60 uppercase">
+                                {u.username?.[0] || '?'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="truncate flex-1">
+                            <p className="text-[11px] font-bold text-white truncate">{u.full_name || u.username || 'Anonymous'}</p>
+                            <p className="text-[9px] text-white/40 truncate leading-none">@{u.username}</p>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}

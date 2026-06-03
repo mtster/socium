@@ -183,8 +183,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     const { data } = await query
-      .order('created_at', { ascending: false })
-      .limit(30);
+      .order('created_at', { ascending: false });
 
     if (data) {
       let processed = data.map((p: any) => ({
