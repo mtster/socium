@@ -285,6 +285,13 @@ export default function App() {
            const isForUs = msg.receiver_id === session.user.id || msg.group_chat_id !== null;
            // We don't trigger if we sent it
            if (msg.sender_id === session.user.id || !isForUs) return;
+           try {
+             const audioObj = new Audio('/message-sound.mp3');
+             audioObj.volume = 0.8;
+             audioObj.play().catch(pErr => console.log('Audio play blocked:', pErr));
+           } catch (aErr) {
+             console.error('Audio load error:', aErr);
+           }
            
            getUnread();
            const senderId = msg.sender_id;
@@ -651,8 +658,10 @@ export default function App() {
 
   // Ensure scroll is reset when tab changes (unless we are scrolling to a specific post)
   useEffect(() => {
-    if (activeTab === 'profile' && !sessionStorage.getItem('scroll_to_post_id')) {
-      mainRef.current?.scrollTo(0, 0);
+    if (activeTab !== 'feed' && !sessionStorage.getItem('scroll_to_post_id')) {
+      if (mainRef.current) {
+        mainRef.current.scrollTop = 0;
+      }
     }
   }, [activeTab]);
 
@@ -680,6 +689,29 @@ export default function App() {
       if (!currentProfile || currentProfile.id !== userId) {
         await createInitialProfile(userId);
       }
+      
+      // Auto-connect to Socium (ADMIN_ID)
+      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+      if (userId !== ADMIN_ID) {
+        try {
+          const { data: existingCheck } = await supabase
+            .from('connections')
+            .select('id')
+            .or(`and(requester_id.eq.${ADMIN_ID},receiver_id.eq.${userId}),and(requester_id.eq.${userId},receiver_id.eq.${ADMIN_ID})`)
+            .maybeSingle();
+
+          if (!existingCheck) {
+            await supabase.from('connections').insert({
+              requester_id: ADMIN_ID,
+              receiver_id: userId,
+              status: 'accepted'
+            });
+          }
+        } catch (connErr) {
+          console.error('Error establishing default Socium connection:', connErr);
+        }
+      }
+
       fetchUserPosts(userId, userId);
     } catch (error) {
       console.error('Error fetching profile:', error);
@@ -899,6 +931,12 @@ export default function App() {
                initial={{ opacity: 0, scale: 0.95 }} 
                animate={{ opacity: 1, scale: 1 }} 
                exit={{ opacity: 0, scale: 1.05 }}
+               onAnimationStart={() => {
+                 if (mainRef.current) mainRef.current.scrollTop = 0;
+               }}
+               onAnimationComplete={() => {
+                 if (mainRef.current) mainRef.current.scrollTop = 0;
+               }}
                className="page-transition min-h-screen"
              >
                {profile ? (

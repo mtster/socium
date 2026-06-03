@@ -97,7 +97,10 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         combined.unshift(adminProf);
       }
 
-      setConnections(combined.filter(c => c.id !== profile.id));
+      const finalConns = combined.filter(c => c.id !== profile.id);
+      profileConnectionsCache[profile.id] = finalConns;
+      profileConnectionsTime[profile.id] = Date.now();
+      setConnections(finalConns);
     }
   };
 

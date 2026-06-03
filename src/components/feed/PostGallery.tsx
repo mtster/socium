@@ -11,12 +11,16 @@ export const PostGallery = ({ images, firstImgAspect, setViewingImages, getOptim
   if (images.length === 0) return null;
 
   if (images.length === 1) {
+    const isPortrait = firstImgAspect === 'portrait';
+    const isLandscape = firstImgAspect === 'landscape';
+    const aspectClass = isPortrait ? 'aspect-[4/5]' : isLandscape ? 'aspect-video' : 'min-h-[300px] h-fit';
+
     return (
-      <div className="relative w-full bg-white/5 overflow-hidden mb-2">
+      <div className={`relative w-full bg-white/5 overflow-hidden mb-2 ${aspectClass}`}>
         <img 
           src={getOptimizedUrl(images[0])} 
           alt="Post content" 
-          className="w-full h-auto max-h-[80vh] object-cover cursor-pointer hover:brightness-95 transition-all"
+          className="w-full h-full object-cover cursor-pointer hover:brightness-95 transition-all absolute inset-0 md:relative"
           onClick={() => setViewingImages({ images, startIndex: 0 })}
           loading="lazy"
         />

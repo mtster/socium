@@ -10,6 +10,7 @@ import EditPostModal from './EditPostModal';
 import { PostGallery } from './feed/PostGallery';
 import { ImageDetailView } from './feed/ImageDetailView';
 import { useStore } from '../store/useStore';
+import { supabase } from '@/src/lib/supabase';
 
 interface PostCardProps {
   post: Post;
@@ -51,6 +52,64 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [viewingImages, setViewingImages] = useState<{ images: string[], startIndex: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const [showLikers, setShowLikers] = useState(false);
+  const [likers, setLikers] = useState<any[]>([]);
+  const [loadingLikers, setLoadingLikers] = useState(false);
+  const pressTimeoutRef = useRef<any>(null);
+  const isLongPressRef = useRef(false);
+
+  const startPress = () => {
+    isLongPressRef.current = false;
+    pressTimeoutRef.current = setTimeout(() => {
+      isLongPressRef.current = true;
+      handleLongPress();
+    }, 600);
+  };
+
+  const endPress = (e: React.MouseEvent | React.TouchEvent) => {
+    if (pressTimeoutRef.current) {
+      clearTimeout(pressTimeoutRef.current);
+      pressTimeoutRef.current = null;
+    }
+  };
+
+  const cancelPress = () => {
+    if (pressTimeoutRef.current) {
+      clearTimeout(pressTimeoutRef.current);
+      pressTimeoutRef.current = null;
+    }
+  };
+
+  const handleLongPress = async () => {
+    setShowLikers(true);
+    setLoadingLikers(true);
+    try {
+      const { data, error } = await supabase
+        .from('likes')
+        .select('user_id, profiles(id, full_name, username)')
+        .eq('post_id', post.id);
+
+      if (data) {
+        const list = data
+          .map((l: any) => l.profiles)
+          .filter((u: any) => u && u.id !== '00000000-0000-0000-0000-000000000001');
+        setLikers(list);
+      }
+    } catch (err) {
+      console.error('Error fetching likers:', err);
+    } finally {
+      setLoadingLikers(false);
+    }
+  };
+
+  const handleLikeClick = (e: React.MouseEvent) => {
+    if (isLongPressRef.current) {
+      isLongPressRef.current = false;
+      return;
+    }
+    onLike?.(post.id, !!post.has_liked);
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -196,13 +255,62 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       {/* Interactions */}
       <div className="px-4 py-1">
         <div className="flex items-center space-x-2.5">
-          <button 
-            onClick={() => onLike?.(post.id, !!post.has_liked)}
-            className={cn("flex items-center justify-center space-x-2 px-4 py-2 rounded-full border active:scale-95 transition-all text-sm font-medium", post.has_liked ? "bg-red-500/10 border-red-500/20 text-red-500" : "bg-white/5 border-white/10 hover:bg-white/10 text-white/90")}
-          >
-            <Heart size={18} fill={post.has_liked ? "currentColor" : "none"} />
-            <span>{post.likes_count || 0}</span>
-          </button>
+          <div className="relative">
+            <button 
+              onMouseDown={startPress}
+              onMouseUp={endPress}
+              onMouseLeave={cancelPress}
+              onTouchStart={startPress}
+              onTouchEnd={endPress}
+              onContextMenu={(e) => {
+                if (isLongPressRef.current) {
+                  e.preventDefault();
+                }
+              }}
+              onClick={handleLikeClick}
+              className={cn("flex items-center justify-center space-x-2 px-4 py-2 rounded-full border active:scale-95 transition-all text-sm font-medium select-none touch-none", post.has_liked ? "bg-red-500/10 border-red-500/20 text-red-500" : "bg-white/5 border-white/10 hover:bg-white/10 text-white/90")}
+            >
+              <Heart size={18} fill={post.has_liked ? "currentColor" : "none"} />
+              <span>{post.likes_count || 0}</span>
+            </button>
+
+            {showLikers && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => setShowLikers(false)}
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute left-0 bottom-full mb-2.5 z-50 w-52 bg-[#1A1A1A] border border-white/10 rounded-2xl p-4 shadow-2xl backdrop-blur-md text-left"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <p className="text-white/40 text-[10px] font-bold uppercase tracking-wider mb-2.5">Liked by</p>
+                  {loadingLikers ? (
+                    <div className="flex items-center space-x-2 py-1">
+                      <div className="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      <span className="text-xs text-white/50">Fetching...</span>
+                    </div>
+                  ) : likers.length === 0 ? (
+                    <p className="text-xs text-white/45 py-1">No likes yet</p>
+                  ) : (
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                      {likers.map((u: any) => (
+                        <p 
+                          key={u.id} 
+                          className="text-xs font-semibold text-white/90 border-b border-white/[0.03] pb-1.5 last:border-none last:pb-0"
+                        >
+                          {u.full_name || u.username || 'Anonymous User'}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              </>
+            )}
+          </div>
           
           <button 
             onClick={() => setShowComments(true)}

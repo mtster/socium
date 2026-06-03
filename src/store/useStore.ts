@@ -152,6 +152,8 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchFeedPosts: async (currentUserId) => {
+    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+
     const { data: connectionsData } = await supabase
       .from('connections')
       .select('requester_id, receiver_id')
@@ -171,13 +173,14 @@ export const useStore = create<AppState>((set, get) => ({
       });
     }
 
-    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
-
     let query = supabase
       .from('posts')
       .select('*, profiles(*), likes(user_id), comments(id)')
-      .in('user_id', connectionIds)
       .lte('created_at', new Date().toISOString());
+
+    if (currentUserId !== ADMIN_ID) {
+      query = query.in('user_id', connectionIds);
+    }
 
     const { data } = await query
       .order('created_at', { ascending: false })
