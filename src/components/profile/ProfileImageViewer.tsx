@@ -57,9 +57,14 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
           className="fixed inset-0 z-[10000] bg-black touch-none cursor-grab active:cursor-grabbing"
           drag="y"
           dragConstraints={{ top: 0, bottom: 0 }}
-          dragElastic={{ top: 0.1, bottom: 0.8 }}
+          dragElastic={0.25}
           onDragEnd={(event, info) => {
-            if (info.offset.y > 120) {
+            const threshold = 100;
+            const velocityThreshold = 400;
+            if (
+              Math.abs(info.offset.y) > threshold ||
+              Math.abs(info.velocity.y) > velocityThreshold
+            ) {
               setViewingImage(null);
             }
           }}

@@ -157,12 +157,26 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            <div className="flex items-center gap-3">
              <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
              <div className="relative flex-1 flex items-center">
-               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => setShowFeatures(false)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.closest('form')?.requestSubmit(); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
-               <button type="submit" disabled={!newMessage.trim()} className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"><SendHorizonal size={18} /></button>
+               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => setShowFeatures(false)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
+               <button type="submit"
+                  disabled={!newMessage.trim()}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                  }}
+                  onTouchStart={(e) => {
+                    if (newMessage.trim()) {
+                      e.preventDefault();
+                      handleSendMessage(e);
+                    }
+                  }}
+                  className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"
+                >
+                  <SendHorizonal size={18} />
+                </button>
              </div>
            </div>
            <AnimatePresence>
-             {showFeatures && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden mt-4"><div className="grid grid-cols-4 gap-4 px-2 pb-2">
+             {showFeatures && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18, ease: "easeInOut" }} className="overflow-hidden mt-4"><div className="grid grid-cols-4 gap-4 px-2 pb-2">
                 <button type="button" className="flex flex-col items-center gap-2" onClick={() => cameraInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><Camera size={22} /></div><span className="text-[10px] text-white/50">Camera</span></button>
                 <button type="button" className="flex flex-col items-center gap-2" onClick={() => fileInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><ImageIcon size={22} /></div><span className="text-[10px] text-white/50">Photos</span></button>
                 <button type="button" className="flex flex-col items-center gap-2" onClick={isRecording ? stopRecording : startRecording}><div className={cn("w-12 h-12 rounded-full border flex items-center justify-center", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>{isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}</div><span className={cn("text-[10px]", isRecording ? "text-red-500" : "text-white/50")}>{isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}</span></button>

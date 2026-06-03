@@ -202,20 +202,22 @@ export const MessageBubble = React.memo(
         <AnimatePresence>
           {showDate && (
             <motion.div
-              initial={{ opacity: 0, height: 0, scale: 0.9, y: 15 }}
+              initial={{ opacity: 0, height: 0 }}
               animate={
                 contextMenuId === msg.id 
                   ? { opacity: 1, height: "auto", scale: 1.05, y: -8, zIndex: 110 } 
                   : { opacity: 1, height: "auto", scale: 1, y: 0, zIndex: 10 }
               }
-              exit={{ opacity: 0, height: 0, scale: 0.9, y: 15 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className="flex justify-center w-full mb-1 select-none pointer-events-none mt-2 shrink-0 relative"
-              style={{ originY: 1, willChange: "transform, opacity" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              className="flex justify-center w-full overflow-hidden select-none pointer-events-none relative"
+              style={{ originY: 1, willChange: "height, opacity" }}
             >
-              <span className="text-[11px] font-sans font-medium text-white/40 tracking-wide text-center">
-                {formatMessageDate(msg.created_at)}
-              </span>
+              <div className="pt-2 pb-1 block">
+                <span className="text-[11px] font-sans font-medium text-white/40 tracking-wide text-center">
+                  {formatMessageDate(msg.created_at)}
+                </span>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -298,7 +300,7 @@ export const MessageBubble = React.memo(
                   : "bg-[#262626] text-white shadow-sm"),
               !msg.media_type && !isLoc && "px-3.5 py-2",
               (msg.media_type === "image" || isLoc || msg.media_type === "shared_post") &&
-                "p-0 rounded-[22px] overflow-hidden",
+                "p-0 rounded-[22px] overflow-hidden bg-transparent border-0 shadow-none",
             )}
           >
             {msg.media_type === "shared_post" && (
