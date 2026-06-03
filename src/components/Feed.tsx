@@ -8,11 +8,17 @@ import { useStore } from '../store/useStore';
 interface FeedProps {
   currentUserId: string;
   onUserClick: (userId: string) => void;
+  activeTab: string;
 }
 
-export default function Feed({ currentUserId, onUserClick }: FeedProps) {
+export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProps) {
   const { feedPosts, fetchFeedPosts } = useStore();
   const [loading, setLoading] = useState(feedPosts.length === 0);
+
+  const activeTabRef = React.useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   useEffect(() => {
     if (feedPosts.length === 0) {
@@ -31,7 +37,7 @@ export default function Feed({ currentUserId, onUserClick }: FeedProps) {
 
     const handleScroll = (e: Event) => {
       const target = e.currentTarget as HTMLElement;
-      if (target) {
+      if (target && activeTabRef.current === 'feed') {
         useStore.getState().setFeedScrollPos(target.scrollTop);
       }
     };

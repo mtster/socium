@@ -29,6 +29,18 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     }
   }, [profile?.id, currentUserId]);
 
+  useEffect(() => {
+    const handleConnectionsChanged = () => {
+      profileConnectionsCache = {};
+      profileConnectionsTime = {};
+      fetchConnections();
+    };
+    window.addEventListener('connectionsChanged', handleConnectionsChanged);
+    return () => {
+      window.removeEventListener('connectionsChanged', handleConnectionsChanged);
+    };
+  }, [profile?.id, currentUserId]);
+
   const fetchConnections = async () => {
     if (!currentUserId || !profile?.id) return;
 
@@ -113,6 +125,11 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       }).select().single();
       
       if (error) throw error;
+      
+      profileConnectionsCache = {};
+      profileConnectionsTime = {};
+      window.dispatchEvent(new CustomEvent('connectionsChanged'));
+      
       setConnectionStatus('pending_sent');
       setConnectionId(data.id);
 
@@ -149,6 +166,11 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     try {
       const { error } = await supabase.from('connections').update({ status: 'accepted' }).eq('id', id);
       if (error) throw error;
+      
+      profileConnectionsCache = {};
+      profileConnectionsTime = {};
+      window.dispatchEvent(new CustomEvent('connectionsChanged'));
+
       if (isOwnProfile) {
         fetchConnections();
       } else {
@@ -161,6 +183,10 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
 
   const handleRemoveConnection = async (id: string, connectionProfileId?: string) => {
     try {
+      profileConnectionsCache = {};
+      profileConnectionsTime = {};
+      window.dispatchEvent(new CustomEvent('connectionsChanged'));
+
       let mainError = null;
       if (id !== 'unknown') {
         const { error } = await supabase.from('connections').delete().eq('id', id);

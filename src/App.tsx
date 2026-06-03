@@ -313,7 +313,7 @@ export default function App() {
            // Filter for messages meant for us
            const isForUs = msg.receiver_id === session.user.id || msg.group_chat_id !== null;
            // We don't trigger if we sent it
-           if (msg.sender_id === session.user.id || !isForUs) return;
+           if (msg.sender_id === session.user.id || !isForUs || (window as any).currentChatUserId === (msg.group_chat_id || msg.sender_id)) return;
            try {
              const audioObj = messageSound || new Audio('/message-sound.mp3');
              audioObj.currentTime = 0;
@@ -946,7 +946,7 @@ export default function App() {
                }}
                className="page-transition"
              >
-               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} />
+               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
              </motion.div>
            )}
            

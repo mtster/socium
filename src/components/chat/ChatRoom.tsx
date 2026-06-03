@@ -175,13 +175,27 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
       <AnimatePresence>
         {pendingMedia && (
-          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="absolute inset-0 z-[500] bg-black/90 flex flex-col justify-between backdrop-blur-md">
-            <div className="p-4 pt-[env(safe-area-inset-top)] flex items-center justify-between"><button onClick={() => setPendingMedia(null)} className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center"><X size={24} /></button><h2 className="text-white font-bold">Send {pendingMedia.type}</h2><div className="w-10" /></div>
-            <div className="flex-1 flex items-center justify-center p-4">
-              {pendingMedia.type === 'image' && <img src={pendingMedia.dataUrl} className="max-w-full max-h-full object-contain rounded-2xl" />}
+          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="absolute inset-0 z-[500] bg-black/95 flex flex-col justify-between backdrop-blur-md overflow-hidden">
+            <div className="p-4 pt-[env(safe-area-inset-top)] flex items-center justify-between z-10 shrink-0">
+              <button onClick={() => setPendingMedia(null)} className="w-10 h-10 bg-white/20 text-white rounded-full flex items-center justify-center backdrop-blur shadow-lg active:scale-90 transition-transform"><X size={24} /></button>
+              <h2 className="text-white font-bold tracking-wide uppercase text-xs bg-black/40 px-4 py-2 rounded-full backdrop-blur">Send {pendingMedia.type}</h2>
+              <div className="w-10" />
+            </div>
+            
+            <div className="flex-1 min-h-0 overflow-hidden flex items-center justify-center p-4 pb-24 relative">
+              {pendingMedia.type === 'image' && <img src={pendingMedia.dataUrl} className="max-w-full max-h-full object-contain rounded-2xl shadow-xl" />}
               {pendingMedia.type === 'audio' && <div className="w-full max-w-sm"><AudioPlayer src={pendingMedia.dataUrl!} isMine={true} /></div>}
             </div>
-            <div className="p-4 pb-safe flex justify-end"><button onClick={() => { if (pendingMedia.file) handleMediaMessage(pendingMedia.file, pendingMedia.type); setPendingMedia(null); }} className="bg-white text-black font-bold px-8 py-3.5 rounded-full shadow-2xl flex items-center gap-2">Send <SendHorizonal size={20} /></button></div>
+            
+            {/* Fixed Send button to the bottom-right part to ensure it remains visible above high aspect-ratio screenshots */}
+            <div className="absolute bottom-6 right-6 z-20">
+              <button 
+                onClick={() => { if (pendingMedia.file) handleMediaMessage(pendingMedia.file, pendingMedia.type); setPendingMedia(null); }} 
+                className="bg-white text-black font-extrabold px-8 py-3.5 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.25)] flex items-center gap-2.5 active:scale-95 hover:bg-neutral-100 transition-all text-xs uppercase tracking-widest"
+              >
+                Send <SendHorizonal size={18} />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
