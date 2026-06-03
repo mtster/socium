@@ -1,11 +1,38 @@
 import React, { useState, useEffect } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { MapPin, Phone, Video } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 import { parseLocation, openInNativeMaps } from "./locationUtils";
 import { AudioPlayer } from "./AudioPlayer";
 import { Linkify } from "./Linkify";
 import { supabase } from "@/src/lib/supabase";
+
+function formatMessageDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return "";
+  
+  const now = new Date();
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const timeStr = `${hours}:${minutes}`;
+  
+  const isSameYear = date.getFullYear() === now.getFullYear();
+  const isSameDay = date.getDate() === now.getDate() &&
+                    date.getMonth() === now.getMonth() &&
+                    isSameYear;
+                    
+  if (isSameDay) return timeStr;
+  
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthName = months[date.getMonth()];
+  const day = date.getDate();
+  
+  if (isSameYear) {
+    return `${monthName} ${day} at ${timeStr}`;
+  } else {
+    return `${date.getFullYear()}, ${monthName} ${day} at ${timeStr}`;
+  }
+}
 
 export const MessageBubble = React.memo(
   ({
@@ -22,6 +49,8 @@ export const MessageBubble = React.memo(
     contextMenuId,
     currentUserId,
     onOpenProfile,
+    showDate,
+    onToggleDate,
   }: any) => {
     let senderProfile = null;
     if (!isMine && activeChat.isGroup && activeChat.participants) {
@@ -169,17 +198,33 @@ export const MessageBubble = React.memo(
         (!msg.content || (locMatch && msg.content === locMatch[0])));
 
     return (
-      <div
-        className={cn(
-          "flex w-full gap-2 relative",
-          isMine ? "justify-end" : "justify-start",
-          isConsecutive
-            ? "mb-[2px]"
-            : !isMine && !isPrevConsecutive && activeChat.isGroup
-              ? "mb-4"
-              : "mb-3",
-        )}
-      >
+      <div className="flex flex-col w-full">
+        <AnimatePresence>
+          {showDate && (
+            <motion.div
+              initial={{ opacity: 0, height: 0, scale: 0.9, y: 15 }}
+              animate={{ opacity: 1, height: "auto", scale: 1, y: 0 }}
+              exit={{ opacity: 0, height: 0, scale: 0.9, y: 15 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              className="flex justify-center w-full mb-1 select-none pointer-events-none mt-2 shrink-0"
+            >
+              <span className="text-[11px] font-sans font-medium text-white/40 tracking-wide text-center">
+                {formatMessageDate(msg.created_at)}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div
+          className={cn(
+            "flex w-full gap-2 relative",
+            isMine ? "justify-end" : "justify-start",
+            isConsecutive
+              ? "mb-[2px]"
+              : !isMine && !isPrevConsecutive && activeChat.isGroup
+                ? "mb-4"
+                : "mb-3",
+          )}
+        >
         {!isMine && (
           <div className="w-8 shrink-0 flex items-end mb-0.5">
             {showAvatar ? (
@@ -226,6 +271,12 @@ export const MessageBubble = React.memo(
             onTouchStart={(e: any) => onTouchStart(e, msg)}
             onTouchMove={onTouchMove}
             onTouchEnd={onTouchEnd}
+            onClick={(e) => {
+              if (!isMediaOnly) {
+                e.stopPropagation();
+                onToggleDate?.();
+              }
+            }}
             animate={
               contextMenuId === msg.id
                 ? { scale: 1.05, zIndex: 100 }
@@ -397,6 +448,7 @@ export const MessageBubble = React.memo(
           </motion.div>
         </div>
       </div>
+      </div>
     );
-  },
+  }
 );

@@ -37,7 +37,7 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
 
     const handleScroll = (e: Event) => {
       const target = e.currentTarget as HTMLElement;
-      if (target && activeTabRef.current === 'feed') {
+      if (target && activeTabRef.current === 'feed' && (window as any).currentActiveTab === 'feed') {
         useStore.getState().setFeedScrollPos(target.scrollTop);
       }
     };

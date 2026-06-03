@@ -1,8 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X } from 'lucide-react';
+import { X, Download } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
-import { createPortal } from 'react-dom';
 
 interface ProfileImageViewerProps {
   viewingImage: string | null;
@@ -10,56 +9,78 @@ interface ProfileImageViewerProps {
 }
 
 export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileImageViewerProps) {
+  const saveToDevice = async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const file = new File([blob], `${filename}.jpg`, { type: blob.type });
+      
+      const blobUrl = window.URL.createObjectURL(blob);
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+        } catch (shareErr: any) {
+          if (shareErr.name === 'AbortError' || shareErr.message?.toLowerCase().includes('cancel')) {
+            window.URL.revokeObjectURL(blobUrl);
+            return;
+          }
+          // Same-origin fallback download
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = `${filename}.jpg`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } else {
+        // Same-origin fallback download
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = `${filename}.jpg`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error("Profile picture download error:", e);
+    }
+  };
+
   return (
     <AnimatePresence>
-      {viewingImage && createPortal(
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[10000] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden"
-          onClick={() => setViewingImage(null)}
+      {viewingImage && (
+        <motion.div 
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
+          exit={{ opacity: 0 }} 
+          className="fixed inset-0 z-[10000] bg-black"
         >
           <button 
-            className="absolute top-10 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
-            onClick={(e) => { e.stopPropagation(); setViewingImage(null); }}
+            onClick={() => saveToDevice(viewingImage, 'socium_profile')} 
+            className="absolute z-[10100] top-safe left-4 mt-4 p-3 bg-white/10 text-white rounded-full active:scale-90 transition-transform"
+          >
+            <Download size={24} />
+          </button>
+          
+          <button 
+            onClick={() => setViewingImage(null)} 
+            className="absolute z-[10100] top-safe right-4 mt-4 p-3 bg-white/10 text-white rounded-full active:scale-90 transition-transform"
           >
             <X size={24} />
           </button>
           
-          <div className="w-full h-full flex items-center justify-center p-4">
-            <TransformWrapper
-              initialScale={1}
-              minScale={1}
-              maxScale={4}
-              centerOnInit={true}
-            >
-              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
-                <motion.div
-                  drag="y"
-                  dragConstraints={{ top: 0, bottom: 0 }}
-                  dragElastic={0.6}
-                  onDragEnd={(_, info) => {
-                    if (Math.abs(info.offset.y) > 80) setViewingImage(null);
-                  }}
-                  className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <motion.img 
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.9, opacity: 0 }}
-                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                    src={viewingImage} 
-                    alt="Profile" 
-                    className="max-w-[95vw] max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/5"
-                  />
-                </motion.div>
+          <div className="w-full h-full">
+            <TransformWrapper centerOnInit>
+              <TransformComponent 
+                wrapperStyle={{ width: "100%", height: "100%" }} 
+                contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <img src={viewingImage} className="max-w-full max-h-screen object-contain" alt="Profile" />
               </TransformComponent>
             </TransformWrapper>
           </div>
-        </motion.div>,
-        document.body
+        </motion.div>
       )}
     </AnimatePresence>
   );

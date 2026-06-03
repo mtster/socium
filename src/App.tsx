@@ -26,12 +26,15 @@ import { rtdb } from '@/src/lib/firebase';
 let audioUnlocked = false;
 let messageSound: HTMLAudioElement | null = null;
 
+if (typeof window !== 'undefined') {
+  (window as any).currentActiveTab = 'feed';
+  messageSound = new Audio('/message-sound.mp3');
+  messageSound.volume = 0.8;
+  messageSound.load();
+}
+
 const unlockAudio = () => {
-  if (audioUnlocked) return;
-  if (!messageSound) {
-    messageSound = new Audio('/message-sound.mp3');
-    messageSound.volume = 0.8;
-  }
+  if (audioUnlocked || !messageSound) return;
   // Play and pause silently to register the device playback unlock
   messageSound.play().then(() => {
     if (messageSound) {
@@ -68,6 +71,10 @@ export default function App() {
   const activeTabRef = React.useRef('feed');
   
   const setActiveTab = (tab: string) => {
+    if (activeTabRef.current === 'feed' && mainRef.current) {
+      useStore.getState().setFeedScrollPos(mainRef.current.scrollTop);
+    }
+    (window as any).currentActiveTab = tab;
     previousTabRef.current = activeTabRef.current;
     activeTabRef.current = tab;
     setActiveTabState(tab);
@@ -315,7 +322,7 @@ export default function App() {
            // We don't trigger if we sent it
            if (msg.sender_id === session.user.id || !isForUs || (window as any).currentChatUserId === (msg.group_chat_id || msg.sender_id)) return;
            try {
-             const audioObj = messageSound || new Audio('/message-sound.mp3');
+             const audioObj = messageSound; if (!audioObj) return;
              audioObj.currentTime = 0;
              audioObj.volume = 0.8;
              audioObj.play().catch(pErr => console.log('Audio play blocked:', pErr));

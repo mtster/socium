@@ -54,7 +54,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     saveToDevice,
     onTouchStart,
     onTouchMove,
-    onTouchEnd
+    onTouchEnd,
+    activeDateMsgId,
+    setActiveDateMsgId
   } = useChatRoom(currentUserId, activeChat);
 
   return (
@@ -135,7 +137,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               <AnimatePresence initial={false}>
               {messages.slice().reverse().map((msg, idx, arr) => (
                  <motion.div key={msg.id} layout initial={{ opacity: 0, scale: 0.95, y: 15 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 400, damping: 30 }}>
-                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} />
+                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} />
                  </motion.div>
                ))}
               </AnimatePresence>

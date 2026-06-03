@@ -12,6 +12,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const [pullProgress, setPullProgress] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
+  const [activeDateMsgId, setActiveDateMsgId] = useState<string | null>(null);
   
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -272,25 +273,45 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       const blob = await res.blob();
       const fileExt = mediaType === 'audio' ? 'webm' : 'jpg';
       const file = new File([blob], `${filename}.${fileExt}`, { type: blob.type });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: filename });
-      else {
-        const blobUrl = window.URL.createObjectURL(blob);
+      
+      const blobUrl = window.URL.createObjectURL(blob);
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+        } catch (shareErr: any) {
+          if (shareErr.name === 'AbortError' || shareErr.message?.toLowerCase().includes('cancel')) {
+            window.URL.revokeObjectURL(blobUrl);
+            return;
+          }
+          // Same-origin safe fallback to prevent page redirects
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = `${filename}.${fileExt}`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } else {
+        // Same-origin safe fallback
         const link = document.createElement('a');
         link.href = blobUrl;
         link.download = `${filename}.${fileExt}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        window.URL.revokeObjectURL(blobUrl);
       }
+      window.URL.revokeObjectURL(blobUrl);
     } catch (e) {
-      const link = document.createElement('a'); link.href = url; link.download = filename;
-      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      console.error("Save to device error:", e);
     }
   };
 
   const handleLongPress = (e: any, msg: any) => {
     if (!msg) return setContextMenu(null);
+    
+    // Toggle active date on longpress
+    setActiveDateMsgId(prev => prev === msg.id ? null : msg.id);
+
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     e.preventDefault();
@@ -320,6 +341,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     isRecording, recordingDuration, startRecording, stopRecording, handleLocationShare,
     cameraInputRef, fileInputRef, uploadingMedia, pendingMedia, setPendingMedia, handleMediaMessage,
     messagesEndRef, scrollContainerRef, viewingImage, setViewingImage, contextMenu,
-    handleLongPress, handleDeleteMessage, saveToDevice, onTouchStart, onTouchMove, onTouchEnd
+    handleLongPress, handleDeleteMessage, saveToDevice, onTouchStart, onTouchMove, onTouchEnd,
+    activeDateMsgId, setActiveDateMsgId
   };
 }
