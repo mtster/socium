@@ -4,6 +4,17 @@ import { X, Shield, Trash2, ArrowLeft, MoreHorizontal, UserCog } from 'lucide-re
 import { cn } from '@/src/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 
+function stripEmail(val: string | null | undefined): string {
+  if (!val) return '';
+  if (val.includes('@')) {
+    const parts = val.split('@');
+    if (parts[1] && parts[1].includes('.')) {
+      return parts[0];
+    }
+  }
+  return val;
+}
+
 export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, isAdmin, onRemoved, onMakeAdmin }: any) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -112,10 +123,10 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
                  </div>
                  <div className="flex-1 min-w-0">
                     <span className="font-bold text-white flex items-center gap-2">
-                       {p.full_name} {isSelf && <span className="text-[11px] font-normal text-white/40">(You)</span>}
+                       {stripEmail(p.full_name || p.username)} {isSelf && <span className="text-[11px] font-normal text-white/40">(You)</span>}
                        {isUserAdmin && <Shield size={12} className="text-blue-400" />}
                     </span>
-                    <span className="text-white/40 text-sm truncate block">@{p.username}</span>
+                    <span className="text-white/40 text-sm truncate block">@{stripEmail(p.username)}</span>
                  </div>
                  
                  {isAdmin && !isSelf && (

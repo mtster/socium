@@ -5,6 +5,17 @@ import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
 import { Profile } from '@/src/types';
 
+function stripEmail(val: string | null | undefined): string {
+  if (!val) return '';
+  if (val.includes('@')) {
+    const parts = val.split('@');
+    if (parts[1] && parts[1].includes('.')) {
+      return parts[0];
+    }
+  }
+  return val;
+}
+
 interface UserSearchModalProps {
   onClose: () => void;
   onUserClick: (userId: string) => void;
@@ -92,8 +103,8 @@ export default function UserSearchModal({ onClose, onUserClick }: UserSearchModa
                 )}
               </div>
               <div>
-                <p className="font-bold text-sm text-white">{user.full_name || user.username}</p>
-                <p className="text-xs text-white/50 tracking-wide">@{user.username}</p>
+                <p className="font-bold text-sm text-white">{stripEmail(user.full_name || user.username)}</p>
+                <p className="text-xs text-white/50 tracking-wide">@{stripEmail(user.username)}</p>
               </div>
             </div>
           ))}

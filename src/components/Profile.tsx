@@ -12,6 +12,17 @@ import ImageCropperModal from './ImageCropperModal';
 import { useConnections } from './profile/useConnections';
 import { ProfileImageViewer } from './profile/ProfileImageViewer';
 
+function stripEmail(val: string | null | undefined): string {
+  if (!val) return '';
+  if (val.includes('@')) {
+    const parts = val.split('@');
+    if (parts[1] && parts[1].includes('.')) {
+      return parts[0];
+    }
+  }
+  return val;
+}
+
 interface ProfileViewProps {
   profile: Profile;
   posts: Post[];
@@ -339,9 +350,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           />
         )}
         {/* Full Name above picture */}
-        <div className="flex items-center justify-center gap-3 mb-6 max-w-full px-4 select-none">
+        <div className="relative w-full max-w-sm flex items-center justify-center mb-6 px-10 select-none">
           <h1 
-            className={`text-3xl font-bold tracking-tight text-center truncate ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
+            className={`text-3xl font-bold tracking-tight text-center truncate w-full ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
             onClick={() => {
               if (isAdminViewingBot) {
                 setBotFullName(profile.full_name || '');
@@ -353,7 +364,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
               }
             }}
           >
-            {profile.full_name || profile.username}
+            {stripEmail(profile.full_name || profile.username)}
           </h1>
           {canEditProfile && (
             <button 
@@ -367,7 +378,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   window.dispatchEvent(new CustomEvent('openCompleteProfile'));
                 }
               }}
-              className="text-white/40 hover:text-white/80 transition-colors active:scale-90 p-2 shrink-0"
+              className="absolute right-2 text-white/40 hover:text-white/80 transition-colors active:scale-90 p-2 shrink-0"
               title="Edit Display Name"
             >
               <Pencil size={18} className="stroke-current" />
@@ -468,7 +479,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         </div>
 
         {/* Username */}
-        <p className="text-white/50 text-sm font-medium tracking-widest uppercase items-center mb-8">@{profile.username}</p>
+        <p className="text-white/50 text-sm font-medium tracking-widest uppercase items-center mb-8">@{stripEmail(profile.username)}</p>
 
         {/* Action Buttons for Other Profile */}
         {!isOwnProfile && !isHumorBot && (
@@ -725,8 +736,8 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                           )}
                         </div>
                         <div className="truncate pr-2">
-                          <p className="text-sm font-bold text-white truncate">{req.profiles.full_name || req.profiles.username}</p>
-                          <p className="text-xs text-white/50 truncate">@{req.profiles.username}</p>
+                          <p className="text-sm font-bold text-white truncate">{stripEmail(req.profiles.full_name || req.profiles.username)}</p>
+                          <p className="text-xs text-white/50 truncate">@{stripEmail(req.profiles.username)}</p>
                         </div>
                       </div>
                       <div className="flex space-x-2 shrink-0">
@@ -846,8 +857,8 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                           )}
                         </div>
                         <div className="flex-1 text-left overflow-hidden">
-                          <p className="truncate text-sm font-bold text-white">{conn.full_name || conn.username}</p>
-                          <p className="text-xs text-white/40 truncate mt-1">@{conn.username}</p>
+                          <p className="truncate text-sm font-bold text-white">{stripEmail(conn.full_name || conn.username)}</p>
+                          <p className="text-xs text-white/40 truncate mt-1">@{stripEmail(conn.username)}</p>
                         </div>
                       </div>
                     ))}

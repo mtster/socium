@@ -12,6 +12,17 @@ import { ImageDetailView } from './feed/ImageDetailView';
 import { useStore } from '../store/useStore';
 import { supabase } from '@/src/lib/supabase';
 
+function stripEmail(val: string | null | undefined): string {
+  if (!val) return '';
+  if (val.includes('@')) {
+    const parts = val.split('@');
+    if (parts[1] && parts[1].includes('.')) {
+      return parts[0];
+    }
+  }
+  return val;
+}
+
 interface PostCardProps {
   post: Post;
   currentUserId: string;
@@ -337,8 +348,8 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                             )}
                           </div>
                           <div className="truncate flex-1">
-                            <p className="text-[11px] font-bold text-white truncate">{u.full_name || u.username || 'Anonymous'}</p>
-                            <p className="text-[9px] text-white/40 truncate leading-none">@{u.username}</p>
+                            <p className="text-[11px] font-bold text-white truncate">{stripEmail(u.full_name || u.username) || 'Anonymous'}</p>
+                            <p className="text-[9px] text-white/40 truncate leading-none">@{stripEmail(u.username)}</p>
                           </div>
                         </div>
                       ))}

@@ -154,6 +154,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || isSendingRef.current) return;
+    (document.activeElement as HTMLElement)?.blur();
     isSendingRef.current = true;
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: newMessage.trim(), created_at: new Date().toISOString() };

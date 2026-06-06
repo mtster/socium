@@ -7,6 +7,7 @@ import { Profile } from '@/src/types';
 import { cn } from '@/src/lib/utils';
 import { GroupMembersModal } from './GroupMembersModal';
 import { GroupAddMembersModal } from './GroupAddMembersModal';
+import { ProfileImageViewer } from '../profile/ProfileImageViewer';
 
 interface GroupChatSettingsProps {
   currentUserId: string;
@@ -362,21 +363,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
       </motion.div>
 
       {/* ImageViewer for Group Avatar */}
-      <AnimatePresence>
-        {viewingImage && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[110] bg-black flex flex-col">
-            <div className="absolute top-0 left-0 right-0 p-4 pt-safe flex items-center justify-end z-10 bg-gradient-to-b from-black/50 to-transparent">
-              <button 
-                onClick={() => setViewingImage(null)} 
-                className="w-10 h-10 bg-black/50 hover:bg-black/70 rounded-full flex items-center justify-center text-white backdrop-blur-md transition-colors"
-               >
-                <X size={20}/>
-               </button>
-            </div>
-            <div className="flex-1 flex items-center justify-center"><img src={viewingImage} className="w-full h-auto max-h-[100dvh] object-contain" /></div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ProfileImageViewer viewingImage={viewingImage} setViewingImage={setViewingImage} />
 
       <GroupMembersModal 
          isOpen={showMembers} 

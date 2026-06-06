@@ -176,12 +176,22 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              </div>
            </div>
            <AnimatePresence>
-             {showFeatures && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden mt-4"><div className="grid grid-cols-4 gap-4 px-2 pb-2">
-                <button type="button" className="flex flex-col items-center gap-2" onClick={() => cameraInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><Camera size={22} /></div><span className="text-[10px] text-white/50">Camera</span></button>
-                <button type="button" className="flex flex-col items-center gap-2" onClick={() => fileInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><ImageIcon size={22} /></div><span className="text-[10px] text-white/50">Photos</span></button>
-                <button type="button" className="flex flex-col items-center gap-2" onClick={isRecording ? stopRecording : startRecording}><div className={cn("w-12 h-12 rounded-full border flex items-center justify-center", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>{isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}</div><span className={cn("text-[10px]", isRecording ? "text-red-500" : "text-white/50")}>{isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}</span></button>
-                <button type="button" className="flex flex-col items-center gap-2" onClick={handleLocationShare}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><MapPin size={22} /></div><span className="text-[10px] text-white/50">Location</span></button>
-             </div></motion.div>}
+             {showFeatures && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 15, scale: 0.98 }} 
+                  animate={{ opacity: 1, y: 0, scale: 1 }} 
+                  exit={{ opacity: 0, y: 15, scale: 0.98 }} 
+                  transition={{ type: 'spring', stiffness: 380, damping: 32, mass: 0.9 }}
+                  className="mt-4 px-2 pb-2 origin-top"
+                >
+                  <div className="grid grid-cols-4 gap-4">
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={() => cameraInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><Camera size={22} /></div><span className="text-[10px] text-white/50">Camera</span></button>
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={() => fileInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><ImageIcon size={22} /></div><span className="text-[10px] text-white/50">Photos</span></button>
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={isRecording ? stopRecording : startRecording}><div className={cn("w-12 h-12 rounded-full border flex items-center justify-center", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>{isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}</div><span className={cn("text-[10px]", isRecording ? "text-red-500" : "text-white/50")}>{isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}</span></button>
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={handleLocationShare}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><MapPin size={22} /></div><span className="text-[10px] text-white/50">Location</span></button>
+                  </div>
+                </motion.div>
+             )}
            </AnimatePresence>
            {uploadingMedia && <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50 rounded-t-3xl"><div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /></div>}
            <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />

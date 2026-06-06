@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Download } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
@@ -9,6 +9,8 @@ interface ProfileImageViewerProps {
 }
 
 export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileImageViewerProps) {
+  const [isZoomed, setIsZoomed] = useState(false);
+
   const saveToDevice = async (url: string, filename: string) => {
     try {
       const res = await fetch(url);
@@ -55,10 +57,11 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
           animate={{ opacity: 1 }} 
           exit={{ opacity: 0 }} 
           className="fixed inset-0 z-[10000] bg-black touch-none cursor-grab active:cursor-grabbing"
-          drag="y"
+          drag={isZoomed ? false : "y"}
           dragConstraints={{ top: 0, bottom: 0 }}
           dragElastic={0.25}
           onDragEnd={(event, info) => {
+            if (isZoomed) return;
             const threshold = 100;
             const velocityThreshold = 400;
             if (
@@ -77,7 +80,18 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
           </button>
           
           <div className="w-full h-full">
-            <TransformWrapper centerOnInit>
+            <TransformWrapper 
+              centerOnInit
+              initialScale={1}
+              minScale={1}
+              maxScale={4}
+              wheel={{ disabled: false, step: 0.05 }}
+              pinch={{ step: 1.5 }}
+              doubleTap={{ disabled: false, step: 0.3 }}
+              onTransformed={(ref) => {
+                setIsZoomed(ref.state.scale > 1.01);
+              }}
+            >
               <TransformComponent 
                 wrapperStyle={{ width: "100%", height: "100%" }} 
                 contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
