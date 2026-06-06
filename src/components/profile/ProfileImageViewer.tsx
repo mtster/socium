@@ -59,7 +59,7 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
           className="fixed inset-0 z-[10000] bg-black touch-none cursor-grab active:cursor-grabbing"
           drag={isZoomed ? false : "y"}
           dragConstraints={{ top: 0, bottom: 0 }}
-          dragElastic={0.25}
+          dragElastic={0.15}
           onDragEnd={(event, info) => {
             if (isZoomed) return;
             const threshold = 100;
@@ -82,12 +82,6 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
           <div className="w-full h-full">
             <TransformWrapper 
               centerOnInit
-              initialScale={1}
-              minScale={1}
-              maxScale={4}
-              wheel={{ disabled: false, step: 0.05 }}
-              pinch={{ step: 1.5 }}
-              doubleTap={{ disabled: false, step: 0.3 }}
               onTransformed={(ref) => {
                 setIsZoomed(ref.state.scale > 1.01);
               }}

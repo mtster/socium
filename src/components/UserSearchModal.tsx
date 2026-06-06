@@ -104,7 +104,7 @@ export default function UserSearchModal({ onClose, onUserClick }: UserSearchModa
               </div>
               <div>
                 <p className="font-bold text-sm text-white">{stripEmail(user.full_name || user.username)}</p>
-                <p className="text-xs text-white/50 tracking-wide">@{stripEmail(user.username)}</p>
+                
               </div>
             </div>
           ))}

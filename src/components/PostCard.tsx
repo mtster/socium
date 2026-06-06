@@ -349,7 +349,6 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
                           </div>
                           <div className="truncate flex-1">
                             <p className="text-[11px] font-bold text-white truncate">{stripEmail(u.full_name || u.username) || 'Anonymous'}</p>
-                            <p className="text-[9px] text-white/40 truncate leading-none">@{stripEmail(u.username)}</p>
                           </div>
                         </div>
                       ))}

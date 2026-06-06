@@ -478,8 +478,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           )}
         </div>
 
-        {/* Username */}
-        <p className="text-white/50 text-sm font-medium tracking-widest uppercase items-center mb-8">@{stripEmail(profile.username)}</p>
+        {/* Username removed for privacy */}
 
         {/* Action Buttons for Other Profile */}
         {!isOwnProfile && !isHumorBot && (
@@ -737,7 +736,6 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                         </div>
                         <div className="truncate pr-2">
                           <p className="text-sm font-bold text-white truncate">{stripEmail(req.profiles.full_name || req.profiles.username)}</p>
-                          <p className="text-xs text-white/50 truncate">@{stripEmail(req.profiles.username)}</p>
                         </div>
                       </div>
                       <div className="flex space-x-2 shrink-0">
@@ -858,7 +856,6 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                         </div>
                         <div className="flex-1 text-left overflow-hidden">
                           <p className="truncate text-sm font-bold text-white">{stripEmail(conn.full_name || conn.username)}</p>
-                          <p className="text-xs text-white/40 truncate mt-1">@{stripEmail(conn.username)}</p>
                         </div>
                       </div>
                     ))}

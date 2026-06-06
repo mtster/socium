@@ -126,7 +126,7 @@ export function GroupMembersModal({ isOpen, onClose, activeChat, currentUserId, 
                        {stripEmail(p.full_name || p.username)} {isSelf && <span className="text-[11px] font-normal text-white/40">(You)</span>}
                        {isUserAdmin && <Shield size={12} className="text-blue-400" />}
                     </span>
-                    <span className="text-white/40 text-sm truncate block">@{stripEmail(p.username)}</span>
+                    
                  </div>
                  
                  {isAdmin && !isSelf && (

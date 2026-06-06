@@ -178,11 +178,11 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            <AnimatePresence>
              {showFeatures && (
                 <motion.div 
-                  initial={{ opacity: 0, y: 15, scale: 0.98 }} 
-                  animate={{ opacity: 1, y: 0, scale: 1 }} 
-                  exit={{ opacity: 0, y: 15, scale: 0.98 }} 
-                  transition={{ type: 'spring', stiffness: 380, damping: 32, mass: 0.9 }}
-                  className="mt-4 px-2 pb-2 origin-top"
+                  initial={{ height: 0, opacity: 0, scale: 0.95 }} 
+                  animate={{ height: 'auto', opacity: 1, scale: 1 }} 
+                  exit={{ height: 0, opacity: 0, scale: 0.95 }} 
+                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                  className="overflow-hidden mt-4 px-2 pb-2 origin-top"
                 >
                   <div className="grid grid-cols-4 gap-4">
                     <button type="button" className="flex flex-col items-center gap-2" onClick={() => cameraInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><Camera size={22} /></div><span className="text-[10px] text-white/50">Camera</span></button>

@@ -194,8 +194,8 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
              <div className="relative mb-6 z-10 group">
                {activeChat.avatar_url ? (
                  <div 
-                   className={cn("w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 shadow-2xl ring-1 ring-white/10", !canEdit && "cursor-pointer active:scale-95 transition-transform")}
-                   onClick={() => !canEdit && setViewingImage(activeChat.avatar_url!)}
+                   className="w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 shadow-2xl ring-1 ring-white/10 cursor-pointer active:scale-95 transition-transform"
+                   onClick={() => setViewingImage(activeChat.avatar_url!)}
                  >
                    <img src={activeChat.avatar_url} className="w-full h-full object-cover" />
                  </div>

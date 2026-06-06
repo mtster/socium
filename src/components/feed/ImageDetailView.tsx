@@ -92,7 +92,7 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
             className="w-full h-full flex items-center justify-center touch-none"
             drag={scale <= 1.01 ? "both" : false}
             dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-            dragElastic={0.4}
+            dragElastic={0.15}
             dragDirectionLock
             onTouchStart={(e) => {
               if (e.touches.length > 1) {
@@ -123,9 +123,6 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
               minScale={1}
               maxScale={4}
               centerOnInit={true}
-              wheel={{ disabled: false, step: 0.05 }}
-              doubleTap={{ disabled: false, step: 0.3 }}
-              pinch={{ step: 1.5 }}
               panning={{ disabled: scale <= 1.01, velocityDisabled: false }}
               onTransformed={(ref) => setScale(ref.state.scale)}
             >
