@@ -57,6 +57,42 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
 
   const LIMIT = 20;
 
+  const fetchMissingProfiles = async (items: any[], currentMap: Record<string, any>) => {
+    const missingIds = Array.from(
+      new Set(items.map((item: any) => item.messages?.sender_id))
+    ).filter((id): id is string => !!id && !currentMap[id]);
+
+    if (missingIds.length > 0) {
+      try {
+        const { data: profiles, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('id', missingIds);
+        
+        if (error) {
+          console.error('Error fetching missing profiles:', error);
+          return;
+        }
+
+        if (profiles && profiles.length > 0) {
+          setProfilesMap(prev => {
+            const next = { ...prev };
+            profiles.forEach((p: any) => {
+              next[p.id] = p;
+            });
+            // Also update the cache!
+            if (vaultCache[activeChat.id]) {
+              vaultCache[activeChat.id].profilesMap = next;
+            }
+            return next;
+          });
+        }
+      } catch (err) {
+        console.error('fetchMissingProfiles error:', err);
+      }
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       const cached = vaultCache[activeChat.id];
@@ -66,6 +102,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
         setOffset(cached.offset);
         setHasMore(cached.hasMore);
         setIsEditing(false);
+        fetchMissingProfiles(cached.vaultItems, cached.profilesMap);
       } else {
         setVaultItems([]);
         const initialProfiles: Record<string, any> = {};
@@ -579,99 +616,111 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
             }}
             className="fixed inset-0 z-[300] bg-black flex flex-col justify-between items-center py-20 px-8 touch-none cursor-pointer"
           >
-            {/* Centered Quote Container Content (sitting on the absolute vertical center) */}
-            <div className="absolute inset-x-8 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center">
-              {/* Profile section - Sits naturally above content */}
-              <div className="flex flex-col items-center gap-2 mb-6 select-none shrink-0" onClick={(e) => e.stopPropagation()}>
-                <div className="w-16 h-16 rounded-full overflow-hidden bg-white/5 border border-white/10 shadow-2xl">
-                  {selectedQuote.profile.avatar_url ? (
-                    <img src={selectedQuote.profile.avatar_url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <div className="w-full h-full bg-white/10 flex items-center justify-center font-bold text-xl text-white/50">
-                      {(selectedQuote.profile.full_name?.charAt(0) || selectedQuote.profile.username?.charAt(0) || '?').toUpperCase()}
+            {/* Absolute Centered Content Wrapper */}
+            <div className="flex-1 flex flex-col items-center justify-center w-full z-10 relative">
+              
+              {/* Outer relative container that is perfectly centered by flex-1 parent */}
+              <div className="w-full max-w-lg px-4 flex flex-col items-center justify-center relative">
+                
+                {/* Profile section - Positioned absolutely ABOVE the content block */}
+                <div 
+                  className="absolute bottom-full mb-8 flex flex-col items-center gap-2 select-none shrink-0"
+                >
+                  <div className="w-16 h-16 rounded-full overflow-hidden bg-white/5 border border-white/10 shadow-2xl">
+                    {selectedQuote.profile.avatar_url ? (
+                      <img src={selectedQuote.profile.avatar_url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full bg-white/10 flex items-center justify-center font-bold text-xl text-white/50">
+                        {(selectedQuote.profile.full_name?.charAt(0) || selectedQuote.profile.username?.charAt(0) || '?').toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-white/40 text-xs italic">
+                    {formatDateDMY(selectedQuote.item.messages.created_at)}
+                  </span>
+                </div>
+
+                {/* Centered Content block */}
+                <div className="w-full flex items-center justify-center">
+                  {selectedQuote.item.messages.media_type === 'image' ? (
+                    <div 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewingFullscreenImage(selectedQuote.item.messages.media_url);
+                      }}
+                      className="rounded-3xl overflow-hidden border border-white/5 max-h-[40vh] w-auto h-auto shadow-2xl cursor-pointer hover:scale-[1.02] active:scale-95 transition-transform"
+                    >
+                      <img 
+                        src={selectedQuote.item.messages.media_url} 
+                        className="max-h-[40vh] w-auto h-auto object-contain rounded-3xl" 
+                        alt="Vault visual item"
+                      />
                     </div>
+                  ) : selectedQuote.item.messages.media_type === 'audio' ? (
+                    /* Audio player sitting directly on page background per request */
+                    <div 
+                      className="flex items-center gap-6 py-3 w-[280px] justify-center" 
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={(e) => { e.stopPropagation(); togglePlayAudio(selectedQuote.item.messages.media_url); }}
+                        className="w-10 h-10 text-white hover:text-white flex items-center justify-center shrink-0 active:scale-90 transition-transform bg-transparent border-0 outline-none select-none"
+                      >
+                        {isAudioLoading ? (
+                          <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        ) : isPlaying ? (
+                          <Pause size={28} className="fill-current text-white shrink-0" />
+                        ) : (
+                          <Play size={28} className="fill-current text-white shrink-0 ml-0.5" />
+                        )}
+                      </button>
+
+                      <div 
+                        ref={waveformRef}
+                        onPointerDown={(e) => { e.stopPropagation(); handleWaveformPointerDown(e); }}
+                        className="w-48 h-10 flex items-center justify-between gap-[3px] cursor-pointer select-none shrink-0"
+                      >
+                        {Array.from({ length: 24 }).map((_, idx) => {
+                          const barProgress = (idx / 24) * 100;
+                          const isActive = audioProgress > barProgress;
+                          const waveHeights = [10, 14, 22, 30, 26, 18, 22, 28, 38, 32, 24, 20, 18, 22, 28, 34, 26, 18, 14, 18, 24, 22, 14, 10];
+                          const height = waveHeights[idx] || 18;
+                          return (
+                            <div 
+                              key={idx}
+                              style={{ height: `${height}px` }}
+                              className={cn(
+                                "w-[3px] rounded-full transition-all duration-150",
+                                isActive ? "bg-white shadow-[0_0_8px_rgba(255,255,255,0.7)]" : "bg-white/10"
+                              )}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <p 
+                      className="text-white text-center font-serif text-[24px] md:text-[28px] leading-relaxed italic tracking-wide select-text px-4"
+                    >
+                      "{selectedQuote.item.messages.content}"
+                    </p>
                   )}
                 </div>
-                <span className="text-white/40 text-xs italic">
-                  {formatDateDMY(selectedQuote.item.messages.created_at)}
-                </span>
-              </div>
 
-              {/* Centered Content block */}
-              <div className="w-full flex flex-col items-center relative">
-                {selectedQuote.item.messages.media_type === 'image' ? (
-                  <div 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setViewingFullscreenImage(selectedQuote.item.messages.media_url);
-                    }}
-                    className="rounded-3xl overflow-hidden border border-white/5 max-h-[40vh] w-auto h-auto shadow-2xl cursor-pointer hover:scale-[1.02] active:scale-95 transition-transform"
-                  >
-                    <img 
-                      src={selectedQuote.item.messages.media_url} 
-                      className="max-h-[40vh] w-auto h-auto object-contain rounded-3xl" 
-                      alt="Vault visual item"
-                    />
-                  </div>
-                ) : selectedQuote.item.messages.media_type === 'audio' ? (
-                  /* Audio player sitting directly on page background per request */
-                  <div className="w-full max-w-sm flex items-center gap-4 py-3 px-2 justify-center" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); togglePlayAudio(selectedQuote.item.messages.media_url); }}
-                      className="w-10 h-10 text-white/90 hover:text-white flex items-center justify-center shrink-0 active:scale-90 transition-transform bg-transparent border-0"
-                    >
-                      {isAudioLoading ? (
-                        <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                      ) : isPlaying ? (
-                        <Pause size={28} className="fill-current text-white shrink-0" />
-                      ) : (
-                        <Play size={28} className="fill-current text-white shrink-0 ml-0.5" />
-                      )}
-                    </button>
-
-                    <div 
-                      ref={waveformRef}
-                      onPointerDown={(e) => { e.stopPropagation(); handleWaveformPointerDown(e); }}
-                      className="flex-1 flex items-center justify-between gap-[3px] h-10 cursor-pointer select-none"
-                    >
-                      {Array.from({ length: 24 }).map((_, idx) => {
-                        const barProgress = (idx / 24) * 100;
-                        const isActive = audioProgress > barProgress && audioProgress > 0;
-                        const waveHeights = [10, 14, 22, 30, 26, 18, 22, 28, 38, 32, 24, 20, 18, 22, 28, 34, 26, 18, 14, 18, 24, 22, 14, 10];
-                        const height = waveHeights[idx] || 18;
-                        return (
-                          <div 
-                            key={idx}
-                            style={{ height: `${height}px` }}
-                            className={cn(
-                              "w-[3px] rounded-full transition-all duration-150",
-                              isActive ? "bg-white shadow-[0_0_8px_rgba(255,255,255,0.7)]" : "bg-white/10"
-                            )}
-                          />
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <p 
-                    className="text-white text-center text-[22px] md:text-[26px] leading-relaxed italic tracking-wide select-text px-4"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {selectedQuote.item.messages.content}
-                  </p>
-                )}
-
-                {/* Author element drifting slightly to the right of content edge */}
-                <div className="w-full mt-6 justify-end flex select-none pr-4" onClick={(e) => e.stopPropagation()}>
+                {/* Author element drifting slightly below and right of content edge */}
+                <div 
+                  className="absolute top-full mt-8 right-0 flex select-none pr-4"
+                >
                   <p className="text-white/60 text-sm md:text-base font-semibold tracking-wide translate-x-[20px] shrink-0">
                     — {selectedQuote.profile.full_name || selectedQuote.profile.username || 'Someone'}
                   </p>
                 </div>
+
               </div>
             </div>
 
             {/* Bottom App Name Watermark */}
-            <div className="text-center pb-2 shrink-0">
+            <div className="text-center pb-2 shrink-0 select-none">
               <span className="text-white/15 text-sm uppercase tracking-[0.4em] font-light">
                 socium
               </span>
