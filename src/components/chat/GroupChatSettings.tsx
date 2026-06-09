@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Camera, Settings2, LogOut, Trash2, Pencil, Search, Shield, X, Edit2, PencilLine, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Camera, Settings2, LogOut, Trash2, Pencil, Search, Shield, X, Edit2, PencilLine, ChevronRight, Users, UserPlus, Vault } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { ChatListItemType } from '@/src/types/chat';
 import { Profile } from '@/src/types';
@@ -192,7 +192,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
         </div>
         
          <div className="flex-1 overflow-y-auto pb-safe">
-           <div className="p-8 flex flex-col items-center border-b border-white/5 bg-gradient-to-b from-[#1c1c1c]/50 to-transparent">
+           <div className="p-8 flex flex-col items-center bg-gradient-to-b from-[#1c1c1c]/50 to-transparent">
              <div className="relative mb-6 z-10 group">
                {activeChat.avatar_url ? (
                  <div 
@@ -307,20 +307,38 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
           <div className="px-5 py-6 space-y-5">
             <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden border border-white/5 shadow-xl">
                <button onClick={() => setShowMembers(true)} className="w-full flex items-center justify-between p-5 text-white hover:bg-white/5 transition-colors">
-                  <span className="text-[17px] font-medium tracking-tight">Chat Members</span>
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 text-white/80">
+                      <Users size={18} />
+                    </div>
+                    <span className="text-[17px] font-semibold tracking-tight">Chat Members</span>
+                  </div>
                   <div className="flex items-center gap-2">
                      <span className="text-[17px] text-white/40">{participants.length}</span>
                      <ChevronRight size={20} className="text-white/20" />
                   </div>
                </button>
-               <div className="h-[1px] w-full bg-white/5 ml-5" />
+               <div className="h-[1px] w-full bg-white/5 ml-14" />
                <button onClick={() => setShowAddMembers(true)} className="w-full flex items-center justify-between p-5 text-white hover:bg-white/5 transition-colors">
-                  <span className="text-[17px] font-medium tracking-tight">Add Member</span>
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 text-white/80">
+                      <UserPlus size={18} />
+                    </div>
+                    <span className="text-[17px] font-semibold tracking-tight">Add Member</span>
+                  </div>
                   <ChevronRight size={20} className="text-white/20" />
                </button>
-               <div className="h-[1px] w-full bg-white/5 ml-5" />
+               <div className="h-[1px] w-full bg-white/5 ml-14" />
                <button onClick={() => setShowVault(true)} className="w-full flex items-center justify-between p-5 text-white hover:bg-white/5 transition-colors">
-                  <span className="text-[17px] font-medium tracking-tight">Vault</span>
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 text-white/80">
+                      <Vault size={18} />
+                    </div>
+                    <div className="flex flex-col text-left flex-1 min-w-0">
+                      <span className="text-[17px] font-semibold tracking-tight">Vault</span>
+                      <span className="text-[11px] text-white/40 mt-0.5">Shared messages, quotes & voice notes</span>
+                    </div>
+                  </div>
                   <ChevronRight size={20} className="text-white/20" />
                </button>
             </div>

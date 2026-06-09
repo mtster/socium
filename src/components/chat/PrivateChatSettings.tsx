@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, ChevronRight, Lock, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Vault } from 'lucide-react';
 import { ChatListItemType } from '@/src/types/chat';
 import { VaultModal } from './VaultModal';
 
@@ -32,7 +32,7 @@ export function PrivateChatSettings({ currentUserId, activeChat, onClose }: Priv
         
         {/* Content */}
         <div className="flex-1 overflow-y-auto pb-safe">
-          <div className="p-8 flex flex-col items-center border-b border-white/5 bg-gradient-to-b from-[#1c1c1c]/50 to-transparent">
+          <div className="p-8 flex flex-col items-center bg-gradient-to-b from-[#1c1c1c]/50 to-transparent">
             {/* Recipient Profile Picture */}
             <div className="relative mb-6 z-10">
               <div className="w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 shadow-2xl ring-1 ring-white/10">
@@ -50,35 +50,26 @@ export function PrivateChatSettings({ currentUserId, activeChat, onClose }: Priv
             <h2 className="text-[26px] tracking-tight font-bold text-white max-w-[250px] truncate select-text">
               {activeChat.name || 'Private Chat'}
             </h2>
-            
-            {/* Safe / Secure Encryption status description */}
-            <div className="flex items-center gap-1.5 text-xs text-white/40 mt-3 font-semibold tracking-wider uppercase">
-              <Lock size={12} />
-              <span>Direct Connection</span>
-            </div>
           </div>
 
-          <div className="px-5 py-6 space-y-5">
+          <div className="px-5 py-2 space-y-5">
             {/* Single Vault Feature Link */}
             <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden border border-white/5 shadow-xl">
                <button 
                  onClick={() => setShowVault(true)} 
                  className="w-full flex items-center justify-between p-5 text-white hover:bg-white/5 transition-colors"
                >
-                 <div className="flex flex-col text-left">
-                   <span className="text-[17px] font-medium tracking-tight">Vault</span>
-                   <span className="text-[11px] text-white/40 mt-1">Shared quotes, files & voices</span>
+                 <div className="flex items-center gap-4">
+                   <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 text-white/80">
+                     <Vault size={18} />
+                   </div>
+                   <div className="flex flex-col text-left">
+                     <span className="text-[17px] font-semibold tracking-tight">Vault</span>
+                     <span className="text-[11px] text-white/40 mt-0.5">Shared messages, quotes & voice notes</span>
+                   </div>
                  </div>
                  <ChevronRight size={20} className="text-white/20" />
                </button>
-            </div>
-
-            {/* Subtle disclaimer in layout to keep visual aesthetics balanced */}
-            <div className="flex items-center justify-center p-4">
-              <div className="flex items-center gap-2 text-white/20 text-xs">
-                <ShieldCheck size={14} />
-                <span>Privately synchronized secure vault</span>
-              </div>
             </div>
           </div>
         </div>

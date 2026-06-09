@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Trash2, Play, Pause, Volume2, Mic, Image, FileText, Sparkles } from 'lucide-react';
+import { ArrowLeft, Trash2, Play, Pause, Volume2, Mic, Image, FileText, Sparkles, Vault } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { cn } from '@/src/lib/utils';
 
@@ -246,7 +246,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
               ) : vaultItems.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-32 text-center px-6">
                   <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6">
-                    <Sparkles size={28} className="text-white/40" />
+                    <Vault size={28} className="text-white/40" />
                   </div>
                   <h3 className="text-lg font-bold text-white/90 mb-2">Vault is completely empty</h3>
                   <p className="text-xs text-white/40 max-w-xs leading-relaxed">

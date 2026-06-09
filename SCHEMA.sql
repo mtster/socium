@@ -396,15 +396,6 @@ begin
   ) then
     alter publication supabase_realtime add table messages;
   end if;
-
-  if not exists (
-    select 1 from pg_publication_tables 
-    where pubname = 'supabase_realtime' 
-    and schemaname = 'public' 
-    and tablename = 'vault_messages'
-  ) then
-    alter publication supabase_realtime add table vault_messages;
-  end if;
 end $$;
 
 -- ==========================================
@@ -501,6 +492,21 @@ CREATE POLICY "Users can delete vault messages in their chats" ON public.vault_m
 );
 
 CREATE INDEX IF NOT EXISTS idx_vault_message_id ON public.vault_messages(message_id);
+
+-- ==========================================
+-- REALTIME FOR VAULT
+-- ==========================================
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+    and schemaname = 'public' 
+    and tablename = 'vault_messages'
+  ) then
+    alter publication supabase_realtime add table vault_messages;
+  end if;
+end $$;
 
 
 
