@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { MapPin, Phone, Video } from "lucide-react";
+import { MapPin, Phone, Video, ShieldCheck } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 import { parseLocation, openInNativeMaps } from "./locationUtils";
 import { AudioPlayer } from "./AudioPlayer";
@@ -200,13 +200,6 @@ export const MessageBubble = React.memo(
 
     return (
       <div className="flex flex-col w-full">
-        {isVaulted && (
-          <div className={cn("flex w-full px-12 mb-1 mt-1.5 opacity-60", isMine ? "justify-end text-right" : "justify-start text-left")}>
-            <span className="text-[9px] text-white/40 tracking-wider font-semibold uppercase select-none">
-              Added to Vault
-            </span>
-          </div>
-        )}
         <AnimatePresence>
           {showDate && (
             <motion.div
@@ -280,8 +273,12 @@ export const MessageBubble = React.memo(
                   senderProfile.username}
               </span>
             )}
-          <motion.div
-            id={`msg-inner-${msg.id}`}
+          <div className="flex items-center gap-2">
+            {isMine && isVaulted && (
+              <ShieldCheck size={14} className="text-white/40 shrink-0 self-center" />
+            )}
+            <motion.div
+              id={`msg-inner-${msg.id}`}
             onContextMenu={(e) => e.preventDefault()}
             onTouchStart={(e: any) => onTouchStart(e, msg)}
             onTouchMove={onTouchMove}
@@ -462,6 +459,10 @@ export const MessageBubble = React.memo(
               </div>
             )}
           </motion.div>
+          {!isMine && isVaulted && (
+            <ShieldCheck size={14} className="text-white/40 shrink-0 self-center" />
+          )}
+          </div>
         </div>
       </div>
       </div>

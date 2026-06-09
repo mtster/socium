@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Trash2, Play, Pause, Volume2, Mic, Image, FileText, Sparkles, FolderLock } from 'lucide-react';
+import { ArrowLeft, Trash2, Play, Pause, Mic, Image, Shield, ShieldX, ShieldCheck, ShieldPlus } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { cn } from '@/src/lib/utils';
+import { ProfileImageViewer } from '../profile/ProfileImageViewer';
 
 interface VaultModalProps {
   isOpen: boolean;
   onClose: () => void;
   activeChat: any;
   currentUserId: string;
+}
+
+// Shared global cache to save unnecessary fetches
+export const vaultCache: Record<string, {
+  vaultItems: any[];
+  profilesMap: Record<string, any>;
+  offset: number;
+  hasMore: boolean;
+}> = {};
+
+export function invalidateVaultCache(chatId: string) {
+  delete vaultCache[chatId];
 }
 
 export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: VaultModalProps) {
@@ -26,21 +39,35 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
   // Screenshot Ready Detail/Quote view
   const [selectedQuote, setSelectedQuote] = useState<any | null>(null);
 
+  // Zoomable full screen view for tapped image insidequote modal
+  const [viewingFullscreenImage, setViewingFullscreenImage] = useState<string | null>(null);
+
   // Audio playing state inside Quote view
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const waveformRef = useRef<HTMLDivElement>(null);
 
   const LIMIT = 20;
 
   useEffect(() => {
     if (isOpen) {
-      setVaultItems([]);
-      setOffset(0);
-      setHasMore(true);
-      setIsEditing(false);
-      fetchVaultItems(0, true);
+      const cached = vaultCache[activeChat.id];
+      if (cached) {
+        setVaultItems(cached.vaultItems);
+        setProfilesMap(cached.profilesMap);
+        setOffset(cached.offset);
+        setHasMore(cached.hasMore);
+        setIsEditing(false);
+      } else {
+        setVaultItems([]);
+        const initialProfiles: Record<string, any> = {};
+        setProfilesMap(initialProfiles);
+        setOffset(0);
+        setHasMore(true);
+        setIsEditing(false);
+        fetchVaultItems(0, true);
+      }
     }
   }, [isOpen, activeChat.id]);
 
@@ -89,8 +116,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
       }
 
       if (data) {
-        // Transform msg + joined vault records back to the format the UI expects:
-        // { id: vault_messages.id, created_at, message_id, messages: { ... } }
+        // Transform msg + joined vault records back to format code expects
         const transformed = data.map((msg: any) => {
           const vaultEntry = Array.isArray(msg.vault_messages) ? msg.vault_messages[0] : msg.vault_messages;
           if (!vaultEntry) return null;
@@ -115,23 +141,32 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
           new Set(transformed.map((item: any) => item.messages.sender_id))
         ).filter(Boolean) as string[];
 
+        const newProfilesMap = { ...profilesMap };
         if (uniqueSenderIds.length > 0) {
           const { data: profiles } = await supabase
             .from('profiles')
             .select('*')
             .in('id', uniqueSenderIds);
           if (profiles) {
-            const newProfilesMapMap = { ...profilesMap };
             profiles.forEach((p: any) => {
-              newProfilesMapMap[p.id] = p;
+              newProfilesMap[p.id] = p;
             });
-            setProfilesMap(newProfilesMapMap);
+            setProfilesMap(newProfilesMap);
           }
         }
 
-        setVaultItems(prev => initial ? transformed : [...prev, ...transformed]);
+        const nextItems = initial ? transformed : [...vaultItems, ...transformed];
+        setVaultItems(nextItems);
         setHasMore(data.length === LIMIT);
         setOffset(currentOffset + LIMIT);
+
+        // Update cache
+        vaultCache[activeChat.id] = {
+          vaultItems: nextItems,
+          profilesMap: newProfilesMap,
+          offset: currentOffset + LIMIT,
+          hasMore: data.length === LIMIT
+        };
       }
     } catch (e) {
       console.error(e);
@@ -163,7 +198,12 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
         console.error('Error removing vault item:', error);
         alert('Failed to remove item from vault.');
       } else {
-        setVaultItems(prev => prev.filter(item => item.id !== itemToRemove.id));
+        const nextItems = vaultItems.filter(item => item.id !== itemToRemove.id);
+        setVaultItems(nextItems);
+        // Also update cache!
+        if (vaultCache[activeChat.id]) {
+          vaultCache[activeChat.id].vaultItems = nextItems;
+        }
       }
     } catch (err) {
       console.warn(err);
@@ -179,6 +219,14 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
       day: 'numeric',
       year: 'numeric'
     });
+  };
+
+  const formatDateNoZeroes = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const year = d.getFullYear();
+    return `${month}/${day}/${year}`;
   };
 
   // Playback handlers
@@ -212,6 +260,32 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
     }
     setIsPlaying(false);
     setAudioProgress(0);
+  };
+
+  const handleWaveformScrub = (clientX: number) => {
+    if (!waveformRef.current || !audioRef.current || !audioRef.current.duration) return;
+    const rect = waveformRef.current.getBoundingClientRect();
+    const pos = (clientX - rect.left) / rect.width;
+    const clampedPos = Math.max(0, Math.min(pos, 1));
+    audioRef.current.currentTime = clampedPos * audioRef.current.duration;
+    setAudioProgress(clampedPos * 100);
+  };
+
+  const handleWaveformPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 && e.button !== undefined) return;
+    handleWaveformScrub(e.clientX);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      handleWaveformScrub(moveEvent.clientX);
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
   };
 
   useEffect(() => {
@@ -257,7 +331,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
 
             {/* List */}
             <div
-              className="flex-1 overflow-y-auto pb-safe px-4 py-4 space-y-3"
+              className="flex-1 overflow-y-auto pb-safe px-6 py-4 divide-y divide-white/5 space-y-0"
               onScroll={handleScroll}
             >
               {loading ? (
@@ -268,7 +342,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
               ) : vaultItems.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-32 text-center px-6">
                   <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6">
-                    <FolderLock size={28} className="text-white/40" />
+                    <Shield size={28} className="text-white/40" />
                   </div>
                   <h3 className="text-lg font-bold text-white/90 mb-2">Vault is completely empty</h3>
                   <p className="text-xs text-white/40 max-w-xs leading-relaxed">
@@ -281,7 +355,6 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
                     const message = item.messages;
                     if (!message) return null;
                     const profile = profilesMap[message.sender_id] || {};
-                    const isMine = message.sender_id === currentUserId;
 
                     return (
                       <motion.div
@@ -293,65 +366,68 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
                           }
                         }}
                         className={cn(
-                          "w-full bg-[#1c1c1c] active:bg-[#262626] rounded-2xl flex items-center p-4 gap-4 border border-white/5 shadow-md relative transition-all group overflow-hidden decoration-none",
-                          isEditing ? "cursor-default pl-12" : "cursor-pointer"
+                          "w-full flex flex-col py-4 relative border-b border-white/5 last:border-0 transition-all group overflow-hidden decoration-none",
+                          isEditing ? "cursor-default pr-12" : "cursor-pointer"
                         )}
                       >
-                        {/* Remove actions overlay */}
+                        {/* Remove actions overlay - Right Side */}
                         <AnimatePresence>
                           {isEditing && (
                             <motion.button
-                              initial={{ x: -40, opacity: 0 }}
+                              initial={{ x: 40, opacity: 0 }}
                               animate={{ x: 0, opacity: 1 }}
-                              exit={{ x: -40, opacity: 0 }}
+                              exit={{ x: 40, opacity: 0 }}
                               transition={{ duration: 0.2 }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setItemToRemove(item);
                               }}
-                              className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white z-10"
                             >
                               <Trash2 size={15} />
                             </motion.button>
                           )}
                         </AnimatePresence>
 
-                        {/* Profile pic of author */}
-                        <div className="w-10 h-10 rounded-full overflow-hidden bg-white/5 border border-white/10 shrink-0">
-                          {profile.avatar_url ? (
-                            <img src={profile.avatar_url} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full bg-white/10 flex items-center justify-center font-bold text-xs text-white/60">
-                              {(profile.full_name?.charAt(0) || profile.username?.charAt(0) || '?').toUpperCase()}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Content text/visuals and meta */}
-                        <div className="flex-1 min-w-0 flex flex-col justify-center">
-                          <div className="flex items-center justify-between mb-1 gap-2">
-                            <span className="font-bold text-sm text-white/90 truncate">
+                        {/* Top Line: Profile pic, Full Name & Date */}
+                        <div className="flex items-center gap-2.5 mb-2 select-none">
+                          <div className="w-6 h-6 rounded-full overflow-hidden bg-white/5 border border-white/10 shrink-0">
+                            {profile.avatar_url ? (
+                              <img src={profile.avatar_url} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-white/10 flex items-center justify-center font-bold text-[9px] text-white/60">
+                                {(profile.full_name?.charAt(0) || profile.username?.charAt(0) || '?').toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center gap-1.5 text-xs text-white/80 shrink-0">
+                            <span className="font-bold text-[13px] text-white/90">
                               {profile.full_name || profile.username || 'Someone'}
                             </span>
-                            <span className="text-[10px] text-white/30 shrink-0">
+                            <span className="text-white/30 font-light">-</span>
+                            <span className="text-[11px] text-white/40">
                               {formatDate(message.created_at)}
                             </span>
                           </div>
+                        </div>
 
+                        {/* Bottom Line: Content begins fresh from below */}
+                        <div className="pl-[34px] text-left">
                           {/* Render preview style based on message content type */}
                           {message.media_type === 'image' ? (
-                            <div className="flex items-center gap-2 mt-0.5">
+                            <div className="flex items-center gap-2 mt-0.5 select-none">
                               <Image size={13} className="text-white/40" />
                               <span className="text-xs text-white/40 font-medium italic">Image</span>
                             </div>
                           ) : message.media_type === 'audio' ? (
-                            <div className="flex items-center gap-2 mt-0.5">
+                            <div className="flex items-center gap-2 mt-0.5 select-none">
                               <Mic size={13} className="text-white/40" />
                               <span className="text-xs text-white/40 font-medium italic">Voice Note</span>
                             </div>
                           ) : (
-                            <p className="text-[13px] text-white/60 truncate leading-relaxed">
-                              {message.content}
+                            <p className="text-[13px] text-white/60 italic font-medium leading-relaxed select-text font-serif">
+                              "{message.content}"
                             </p>
                           )}
                         </div>
@@ -419,77 +495,93 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
             }}
             className="fixed inset-0 z-[300] bg-black flex flex-col justify-between items-center py-20 px-8 touch-none cursor-pointer"
           >
-            {/* Top Author Metadata */}
-            <div className="flex flex-col items-center gap-2 mt-4">
-              <div className="w-20 h-20 rounded-full overflow-hidden bg-white/5 border border-white/10 shadow-2xl">
-                {selectedQuote.profile.avatar_url ? (
-                  <img src={selectedQuote.profile.avatar_url} className="w-full h-full object-cover referrer-no-referrer" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-full h-full bg-white/10 flex items-center justify-center font-bold text-2xl text-white/50">
-                    {(selectedQuote.profile.full_name?.charAt(0) || selectedQuote.profile.username?.charAt(0) || '?').toUpperCase()}
+            {/* Centered Quote Container Content (sitting on the absolute vertical center) */}
+            <div className="flex-1 flex flex-col items-center justify-center w-full z-10">
+              <div 
+                className="w-full max-w-lg flex flex-col items-center justify-center px-4" 
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Author Metadata - positioned closer to content message */}
+                <div className="flex flex-col items-center gap-2 mb-6">
+                  <div className="w-24 h-24 rounded-full overflow-hidden bg-white/5 border border-white/10 shadow-2xl">
+                    {selectedQuote.profile.avatar_url ? (
+                      <img src={selectedQuote.profile.avatar_url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full bg-white/10 flex items-center justify-center font-bold text-3xl text-white/50">
+                        {(selectedQuote.profile.full_name?.charAt(0) || selectedQuote.profile.username?.charAt(0) || '?').toUpperCase()}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              <span className="text-white/40 text-[11px] tracking-widest uppercase font-semibold mt-2">
-                {formatDate(selectedQuote.item.messages.created_at)}
-              </span>
-            </div>
-
-            {/* Middle Quote Content */}
-            <div className="w-full max-w-lg flex flex-col items-center justify-center px-4 self-center" onClick={(e) => e.stopPropagation()}>
-              {selectedQuote.item.messages.media_type === 'image' ? (
-                <div className="rounded-3xl overflow-hidden border border-white/10 max-h-[45vh] shadow-2xl">
-                  <img src={selectedQuote.item.messages.media_url} className="w-full max-h-[45vh] object-contain" />
+                  <span className="text-white/40 text-xs italic">
+                    {formatDateNoZeroes(selectedQuote.item.messages.created_at)}
+                  </span>
                 </div>
-              ) : selectedQuote.item.messages.media_type === 'audio' ? (
-                /* Sleek Audio Waveform Visualizer for screenshot ready display */
-                <div className="w-full flex flex-col items-center gap-8 py-6 px-10 bg-white/5 border border-white/5 rounded-3xl shadow-xl w-full max-w-sm backdrop-blur-md">
-                  <div className="flex items-center gap-4">
-                    <button
-                      onClick={() => togglePlayAudio(selectedQuote.item.messages.media_url)}
-                      className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-2xl active:scale-90 transition-transform hover:bg-gray-100"
+
+                {/* Content block */}
+                <div className="w-full flex flex-col items-center relative">
+                  {selectedQuote.item.messages.media_type === 'image' ? (
+                    <div 
+                      onClick={() => setViewingFullscreenImage(selectedQuote.item.messages.media_url)}
+                      className="rounded-3xl overflow-hidden border border-white/5 max-h-[45vh] w-auto h-auto shadow-2xl cursor-pointer hover:scale-[1.02] active:scale-95 transition-transform"
                     >
-                      {isPlaying ? <Pause size={28} className="ml-0" /> : <Play size={28} className="ml-1" />}
-                    </button>
-                    <div className="flex flex-col">
-                      <span className="text-white text-sm font-bold">Voice Transcription</span>
-                      <span className="text-white/50 text-[11px] mt-0.5">Tap to play / listen</span>
+                      <img 
+                        src={selectedQuote.item.messages.media_url} 
+                        className="max-h-[45vh] w-auto h-auto object-contain rounded-3xl" 
+                        alt="Vault visual item"
+                      />
                     </div>
-                  </div>
+                  ) : selectedQuote.item.messages.media_type === 'audio' ? (
+                    /* Horizonal audio scrubbing view player without any texts */
+                    <div className="w-full h-16 flex items-center gap-4 py-3 px-6 bg-white/5 border border-white/5 rounded-3xl shadow-xl w-full max-w-sm backdrop-blur-md">
+                      <button
+                        onClick={() => togglePlayAudio(selectedQuote.item.messages.media_url)}
+                        className="p-1.5 text-white/90 hover:text-white flex items-center justify-center shrink-0 active:scale-90 transition-transform"
+                      >
+                        {isPlaying ? <Pause size={28} className="fill-current text-white" /> : <Play size={28} className="fill-current text-white ml-0.5" />}
+                      </button>
 
-                  {/* High End Pulse Wave */}
-                  <div className="w-full flex items-center justify-between gap-1 h-12">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((bar) => {
-                      const isActive = isPlaying && audioProgress > (bar - 1) * 5;
-                      const randomHeight = [24, 40, 16, 32, 28, 48, 12, 36, 44, 20, 28, 40, 16, 32, 28, 48, 12, 36, 44, 20];
-                      return (
-                        <div
-                          key={bar}
-                          style={{ height: `${randomHeight[bar - 1]}px` }}
-                          className={cn(
-                            "w-[4px] rounded-full transition-all duration-300",
-                            isActive ? "bg-white shadow-[0_0_12px_rgba(255,255,255,0.7)]" : "bg-white/10",
-                            isPlaying && "animate-pulse"
-                          )}
-                        />
-                      );
-                    })}
+                      {/* Scalable interactive audio waveforms */}
+                      <div 
+                        ref={waveformRef}
+                        onPointerDown={handleWaveformPointerDown}
+                        className="flex-1 flex items-center justify-between gap-[3px] h-10 cursor-pointer select-none"
+                      >
+                        {Array.from({ length: 24 }).map((_, idx) => {
+                          const barProgress = (idx / 24) * 100;
+                          const isActive = audioProgress >= barProgress;
+                          const waveHeights = [10, 14, 22, 30, 26, 18, 22, 28, 38, 32, 24, 20, 18, 22, 28, 34, 26, 18, 14, 18, 24, 22, 14, 10];
+                          const height = waveHeights[idx] || 18;
+                          return (
+                            <div 
+                              key={idx}
+                              style={{ height: `${height}px` }}
+                              className={cn(
+                                "w-[3px] rounded-full transition-all duration-150",
+                                isActive ? "bg-white shadow-[0_0_8px_rgba(255,255,255,0.7)]" : "bg-white/10"
+                              )}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-white text-center font-serif text-[24px] md:text-[28px] leading-relaxed italic tracking-wide select-text px-4">
+                      "{selectedQuote.item.messages.content}"
+                    </p>
+                  )}
+
+                  {/* Author element drifting slightly to the right of content edge */}
+                  <div className="w-full mt-6 justify-end flex select-none pr-4">
+                    <p className="text-white/60 text-sm md:text-base font-semibold tracking-wide translate-x-[20px] shrink-0">
+                      — {selectedQuote.profile.full_name || selectedQuote.profile.username || 'Someone'}
+                    </p>
                   </div>
                 </div>
-              ) : (
-                <div className="flex flex-col">
-                  <p className="text-white text-center font-serif text-2xl md:text-3xl leading-relaxed italic tracking-wide select-text">
-                    "{selectedQuote.item.messages.content}"
-                  </p>
-                  <p className="text-white/60 text-right text-sm md:text-base font-semibold mt-6 tracking-wide self-end">
-                    — {selectedQuote.profile.full_name || selectedQuote.profile.username || 'Someone'}
-                  </p>
-                </div>
-              )}
+              </div>
             </div>
 
-            {/* Bottom App Name Watermark (Subtle yet elegant placeholder) */}
-            <div className="text-center">
+            {/* Bottom App Name Watermark */}
+            <div className="text-center pb-2 shrink-0">
               <span className="text-white/15 text-sm uppercase tracking-[0.4em] font-light">
                 socium
               </span>
@@ -497,6 +589,12 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Dynamic Pop-up Full Screen view with Pinch, Zoom support */}
+      <ProfileImageViewer 
+        viewingImage={viewingFullscreenImage} 
+        setViewingImage={setViewingFullscreenImage} 
+      />
     </>
   );
 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAndNotify } from '@/src/lib/presence';
 import { ChatListItemType } from '@/src/types/chat';
+import { invalidateVaultCache } from './VaultModal';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -61,6 +62,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       if (error) {
         console.error('handleAddToVault error:', error);
       } else {
+        invalidateVaultCache(activeChat.id);
         setVaultedMessageIds(prev => {
           const next = new Set(prev);
           next.add(messageId);
@@ -78,6 +80,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       if (error) {
         console.error('handleRemoveFromVault error:', error);
       } else {
+        invalidateVaultCache(activeChat.id);
         setVaultedMessageIds(prev => {
           const next = new Set(prev);
           next.delete(messageId);
