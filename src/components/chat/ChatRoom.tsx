@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, Phone, Video } from 'lucide-react';
+import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, Phone, Video, Sparkles } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { MessageBubble } from './MessageBubble';
@@ -56,7 +56,10 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     onTouchMove,
     onTouchEnd,
     activeDateMsgId,
-    setActiveDateMsgId
+    setActiveDateMsgId,
+    vaultedMessageIds,
+    handleAddToVault,
+    handleRemoveFromVault
   } = useChatRoom(currentUserId, activeChat);
 
   return (
@@ -71,7 +74,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       >
         <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
-           <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={() => activeChat.isGroup ? openSettings() : onOpenProfile(activeChat.id)}>
+           <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                 {activeChat.isGroup ? (
                    <div className="w-full h-full relative">
@@ -137,7 +140,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               <AnimatePresence initial={false}>
               {messages.slice().reverse().map((msg, idx, arr) => (
                  <motion.div key={msg.id} initial={{ opacity: 0, scale: 0.95, y: 15 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 400, damping: 30 }}>
-                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} />
+                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
                  </motion.div>
                ))}
               </AnimatePresence>
@@ -241,6 +244,18 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
             {contextMenu.message.content && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content!); handleLongPress(null as any, null); }}><Copy size={16} className="text-white/50" />Copy Text</button>}
             
             {(contextMenu.message.media_type === 'image' || contextMenu.message.media_type === 'audio') && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url!, 'socium', contextMenu.message.media_type as string); handleLongPress(null as any, null); }}><Download size={16} className="text-white/50" />Save</button>}
+
+            {contextMenu && (
+              contextMenu.message.media_type === 'image' || 
+              contextMenu.message.media_type === 'audio' || 
+              (!contextMenu.message.media_type && contextMenu.message.content)
+            ) && (
+              vaultedMessageIds?.has(contextMenu.message.id) ? (
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleRemoveFromVault(contextMenu.message.id); handleLongPress(null as any, null); }}><Sparkles size={16} className="text-white/50" />Remove from Vault</button>
+              ) : (
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleAddToVault(contextMenu.message.id); handleLongPress(null as any, null); }}><Sparkles size={16} className="text-white/50" />Add to Vault</button>
+              )
+            )}
 
             {(contextMenu.message.media_type === 'location' || !!contextMenu.message.content?.match(/(https?:\/\/(www\.)?(google\.com\/maps|maps\.apple\.com)[^\s]*)/)) && (
                <>

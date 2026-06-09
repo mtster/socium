@@ -7,6 +7,7 @@ import { useChatList } from './chat/useChatList';
 import { ChatRoom } from './chat/ChatRoom';
 import { CreateGroupModal } from './chat/CreateGroupModal';
 import { GroupChatSettings } from './chat/GroupChatSettings';
+import { PrivateChatSettings } from './chat/PrivateChatSettings';
 import { cn } from '@/src/lib/utils';
 import { Search } from 'lucide-react';
 
@@ -143,21 +144,29 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       )}
 
       <AnimatePresence>
-      {isGroupSettingsOpen && activeChat?.isGroup && (
-        <GroupChatSettings
-          currentUserId={currentUserId}
-          activeChat={activeChat}
-          onClose={() => setIsGroupSettingsOpen(false)}
-          onUpdate={(updatedChat) => {
-            setActiveChat(updatedChat);
-            updateChatList(prev => prev.map(c => c.id === updatedChat.id ? updatedChat : c));
-          }}
-          onLeave={() => {
-            setIsGroupSettingsOpen(false);
-            setActiveChat(null);
-            updateChatList(prev => prev.filter(c => c.id !== activeChat.id));
-          }}
-        />
+      {isGroupSettingsOpen && activeChat && (
+        activeChat.isGroup ? (
+          <GroupChatSettings
+            currentUserId={currentUserId}
+            activeChat={activeChat}
+            onClose={() => setIsGroupSettingsOpen(false)}
+            onUpdate={(updatedChat) => {
+              setActiveChat(updatedChat);
+              updateChatList(prev => prev.map(c => c.id === updatedChat.id ? updatedChat : c));
+            }}
+            onLeave={() => {
+              setIsGroupSettingsOpen(false);
+              setActiveChat(null);
+              updateChatList(prev => prev.filter(c => c.id !== activeChat.id));
+            }}
+          />
+        ) : (
+          <PrivateChatSettings
+            currentUserId={currentUserId}
+            activeChat={activeChat}
+            onClose={() => setIsGroupSettingsOpen(false)}
+          />
+        )
       )}
       </AnimatePresence>
     </div>

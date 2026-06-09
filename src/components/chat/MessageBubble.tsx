@@ -51,6 +51,7 @@ export const MessageBubble = React.memo(
     onOpenProfile,
     showDate,
     onToggleDate,
+    isVaulted = false,
   }: any) => {
     let senderProfile = null;
     if (!isMine && activeChat.isGroup && activeChat.participants) {
@@ -199,6 +200,13 @@ export const MessageBubble = React.memo(
 
     return (
       <div className="flex flex-col w-full">
+        {isVaulted && (
+          <div className={cn("flex w-full px-12 mb-1 mt-1.5 opacity-60", isMine ? "justify-end text-right" : "justify-start text-left")}>
+            <span className="text-[9px] text-white/40 tracking-wider font-semibold uppercase select-none">
+              Added to Vault
+            </span>
+          </div>
+        )}
         <AnimatePresence>
           {showDate && (
             <motion.div

@@ -21,6 +21,66 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: any } | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<any>(null);
+  const [vaultedMessageIds, setVaultedMessageIds] = useState<Set<string>>(new Set());
+
+  const fetchVaultedMessageIds = async () => {
+    try {
+      let query = supabase.from('vault_messages').select('message_id, messages!inner(group_chat_id, sender_id, receiver_id)');
+      if (activeChat.isGroup) {
+        query = query.eq('messages.group_chat_id', activeChat.id);
+      } else {
+        query = query
+          .is('messages.group_chat_id', null)
+          .or(`and(messages.sender_id.eq.${activeChat.id},messages.receiver_id.eq.${currentUserId}),and(messages.sender_id.eq.${currentUserId},messages.receiver_id.eq.${activeChat.id})`);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.error('fetchVaultedMessageIds error:', error);
+      } else if (data) {
+        setVaultedMessageIds(new Set(data.map((v: any) => v.message_id)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddToVault = async (messageId: string) => {
+    try {
+      const { error } = await supabase.from('vault_messages').insert({
+        message_id: messageId,
+        added_by: currentUserId
+      });
+      if (error) {
+        console.error('handleAddToVault error:', error);
+      } else {
+        setVaultedMessageIds(prev => {
+          const next = new Set(prev);
+          next.add(messageId);
+          return next;
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRemoveFromVault = async (messageId: string) => {
+    try {
+      const { error } = await supabase.from('vault_messages').delete().eq('message_id', messageId);
+      if (error) {
+        console.error('handleRemoveFromVault error:', error);
+      } else {
+        setVaultedMessageIds(prev => {
+          const next = new Set(prev);
+          next.delete(messageId);
+          return next;
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -91,6 +151,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisChange);
 
     fetchMessages();
+    fetchVaultedMessageIds();
 
     // Setup realtime listener
     const filter = activeChat.isGroup 
@@ -120,9 +181,15 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         }
       }).subscribe();
 
+    const vaultChannel = supabase.channel(`chat_vault_${activeChat.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_messages' }, () => {
+        fetchVaultedMessageIds();
+      }).subscribe();
+
     return () => { 
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVisChange);
       supabase.removeChannel(channel); 
+      supabase.removeChannel(vaultChannel);
       (window as any).currentChatUserId = null; 
       setChatLocation(currentUserId, null);
     };
@@ -349,6 +416,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     cameraInputRef, fileInputRef, uploadingMedia, pendingMedia, setPendingMedia, handleMediaMessage,
     messagesEndRef, scrollContainerRef, viewingImage, setViewingImage, contextMenu,
     handleLongPress, handleDeleteMessage, saveToDevice, onTouchStart, onTouchMove, onTouchEnd,
-    activeDateMsgId, setActiveDateMsgId
+    activeDateMsgId, setActiveDateMsgId,
+    vaultedMessageIds, handleAddToVault, handleRemoveFromVault, fetchVaultedMessageIds
   };
 }

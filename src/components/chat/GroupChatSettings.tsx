@@ -8,6 +8,7 @@ import { cn } from '@/src/lib/utils';
 import { GroupMembersModal } from './GroupMembersModal';
 import { GroupAddMembersModal } from './GroupAddMembersModal';
 import { ProfileImageViewer } from '../profile/ProfileImageViewer';
+import { VaultModal } from './VaultModal';
 
 interface GroupChatSettingsProps {
   currentUserId: string;
@@ -28,6 +29,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
   const [tempName, setTempName] = useState(activeChat.name || '');
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [showVault, setShowVault] = useState(false);
   
   useEffect(() => {
     const fetchRole = async () => {
@@ -316,6 +318,11 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
                   <span className="text-[17px] font-medium tracking-tight">Add Member</span>
                   <ChevronRight size={20} className="text-white/20" />
                </button>
+               <div className="h-[1px] w-full bg-white/5 ml-5" />
+               <button onClick={() => setShowVault(true)} className="w-full flex items-center justify-between p-5 text-white hover:bg-white/5 transition-colors">
+                  <span className="text-[17px] font-medium tracking-tight">Vault</span>
+                  <ChevronRight size={20} className="text-white/20" />
+               </button>
             </div>
 
             <div className="bg-[#1c1c1c] rounded-[24px] overflow-hidden border border-white/5 shadow-xl">
@@ -385,6 +392,13 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
          activeChat={activeChat}
          currentUserId={currentUserId}
          onAdded={handleAddedMembers}
+      />
+
+      <VaultModal
+         isOpen={showVault}
+         onClose={() => setShowVault(false)}
+         activeChat={activeChat}
+         currentUserId={currentUserId}
       />
     </>
   );

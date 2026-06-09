@@ -396,6 +396,15 @@ begin
   ) then
     alter publication supabase_realtime add table messages;
   end if;
+
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+    and schemaname = 'public' 
+    and tablename = 'vault_messages'
+  ) then
+    alter publication supabase_realtime add table vault_messages;
+  end if;
 end $$;
 
 -- ==========================================
@@ -429,5 +438,69 @@ USING (
   bucket_id = 'avatars' AND
   (storage.foldername(name))[1] = auth.uid()::text
 );
+
+
+-- ==========================================
+-- CHAT VAULT SYSTEM
+-- ==========================================
+-- Vault Messages Table
+CREATE TABLE IF NOT EXISTS public.vault_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID REFERENCES public.messages(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  added_by UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  UNIQUE(message_id)
+);
+
+ALTER TABLE public.vault_messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can read vault messages in their chats" ON public.vault_messages;
+CREATE POLICY "Users can read vault messages in their chats" ON public.vault_messages FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.messages m 
+    WHERE m.id = vault_messages.message_id 
+    AND (
+      m.sender_id = auth.uid() 
+      OR m.receiver_id = auth.uid() 
+      OR m.group_chat_id IN (
+        SELECT chat_id FROM public.group_chat_participants WHERE user_id = auth.uid()
+      )
+    )
+  )
+);
+
+DROP POLICY IF EXISTS "Users can add vault messages in their chats" ON public.vault_messages;
+CREATE POLICY "Users can add vault messages in their chats" ON public.vault_messages FOR INSERT WITH CHECK (
+  auth.uid() = added_by AND
+  EXISTS (
+    SELECT 1 FROM public.messages m 
+    WHERE m.id = message_id 
+    AND (
+      m.sender_id = auth.uid() 
+      OR m.receiver_id = auth.uid() 
+      OR m.group_chat_id IN (
+        SELECT chat_id FROM public.group_chat_participants WHERE user_id = auth.uid()
+      )
+    )
+  )
+);
+
+DROP POLICY IF EXISTS "Users can delete vault messages in their chats" ON public.vault_messages;
+CREATE POLICY "Users can delete vault messages in their chats" ON public.vault_messages FOR DELETE USING (
+  EXISTS (
+    SELECT 1 FROM public.messages m 
+    WHERE m.id = vault_messages.message_id 
+    AND (
+      m.sender_id = auth.uid() 
+      OR m.receiver_id = auth.uid() 
+      OR m.group_chat_id IN (
+        SELECT chat_id FROM public.group_chat_participants WHERE user_id = auth.uid()
+      )
+    )
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_message_id ON public.vault_messages(message_id);
+
 
 
