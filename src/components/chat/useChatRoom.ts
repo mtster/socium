@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAndNotify } from '@/src/lib/presence';
 import { ChatListItemType } from '@/src/types/chat';
-import { invalidateVaultCache } from './VaultModal';
+import { invalidateVaultCache, vaultCache } from './VaultModal';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -55,14 +55,28 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
   const handleAddToVault = async (messageId: string) => {
     try {
-      const { error } = await supabase.from('vault_messages').insert({
+      const { data, error } = await supabase.from('vault_messages').insert({
         message_id: messageId,
         added_by: currentUserId
-      });
+      }).select().single();
+      
       if (error) {
         console.error('handleAddToVault error:', error);
-      } else {
-        invalidateVaultCache(activeChat.id);
+      } else if (data) {
+        // Optimistically add to cached list in memory
+        const messageObj = messages.find(m => m.id === messageId);
+        if (messageObj && vaultCache[activeChat.id]) {
+          const cached = vaultCache[activeChat.id];
+          if (!cached.vaultItems.some(item => item.message_id === messageId)) {
+            const newItem = {
+              id: data.id,
+              created_at: data.created_at,
+              message_id: messageId,
+              messages: messageObj
+            };
+            cached.vaultItems = [newItem, ...cached.vaultItems];
+          }
+        }
         setVaultedMessageIds(prev => {
           const next = new Set(prev);
           next.add(messageId);
@@ -80,7 +94,12 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       if (error) {
         console.error('handleRemoveFromVault error:', error);
       } else {
-        invalidateVaultCache(activeChat.id);
+        // Optimistically remove from cached list in memory
+        if (vaultCache[activeChat.id]) {
+          vaultCache[activeChat.id].vaultItems = vaultCache[activeChat.id].vaultItems.filter(
+            item => item.message_id !== messageId
+          );
+        }
         setVaultedMessageIds(prev => {
           const next = new Set(prev);
           next.delete(messageId);

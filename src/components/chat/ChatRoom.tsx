@@ -62,6 +62,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     handleRemoveFromVault
   } = useChatRoom(currentUserId, activeChat);
 
+  const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
+
   return (
     <>
       <motion.div 
@@ -251,7 +253,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               (!contextMenu.message.media_type && contextMenu.message.content)
             ) && (
               vaultedMessageIds?.has(contextMenu.message.id) ? (
-                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleRemoveFromVault(contextMenu.message.id); handleLongPress(null as any, null); }}><ShieldX size={16} className="text-white/50" />Remove from Vault</button>
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { setConfirmRemoveMsgId(contextMenu.message.id); handleLongPress(null as any, null); }}><ShieldX size={16} className="text-white/50" />Remove from Vault</button>
               ) : (
                 <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleAddToVault(contextMenu.message.id); handleLongPress(null as any, null); }}><ShieldPlus size={16} className="text-white/50" />Add to Vault</button>
               )
@@ -274,6 +276,41 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
             {contextMenu.message.sender_id === currentUserId && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-red-500 hover:bg-white/5 gap-3 transition-colors" onClick={handleDeleteMessage}><Trash2 size={16} />Delete</button>}
           </motion.div></>)}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {confirmRemoveMsgId && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-sm bg-[#1c1c1c] border border-white/10 rounded-3xl p-6 shadow-2xl space-y-6"
+            >
+              <h4 className="text-[17px] font-bold text-white text-center">
+                Are you sure you want to remove this message from Vault forever?
+              </h4>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  onClick={() => setConfirmRemoveMsgId(null)}
+                  className="w-full py-3 rounded-2xl bg-white text-black font-bold text-[14px] active:scale-95 transition-all text-center"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    handleRemoveFromVault(confirmRemoveMsgId);
+                    setConfirmRemoveMsgId(null);
+                  }}
+                  className="w-full py-3 rounded-2xl bg-red-600 text-white font-bold text-[14px] active:scale-95 transition-all text-center"
+                >
+                  Remove
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
     </>
   );
