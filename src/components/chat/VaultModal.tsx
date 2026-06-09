@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Trash2, Play, Pause, Volume2, Mic, Image, FileText, Sparkles, Vault } from 'lucide-react';
+import { ArrowLeft, Trash2, Play, Pause, Volume2, Mic, Image, FileText, Sparkles, FolderLock } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { cn } from '@/src/lib/utils';
 
@@ -54,31 +54,31 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
     try {
       // Build search query based on current chat
       let query = supabase
-        .from('vault_messages')
+        .from('messages')
         .select(`
           id,
+          content,
+          media_url,
+          media_type,
           created_at,
-          message_id,
-          messages!inner (
+          sender_id,
+          receiver_id,
+          group_chat_id,
+          vault_messages!inner (
             id,
-            content,
-            media_url,
-            media_type,
             created_at,
-            sender_id,
-            receiver_id,
-            group_chat_id
+            added_by
           )
         `)
         .order('created_at', { ascending: false })
         .range(currentOffset, currentOffset + LIMIT - 1);
 
       if (activeChat.isGroup) {
-        query = query.eq('messages.group_chat_id', activeChat.id);
+        query = query.eq('group_chat_id', activeChat.id);
       } else {
         query = query
-          .is('messages.group_chat_id', null)
-          .or(`and(messages.sender_id.eq.${activeChat.id},messages.receiver_id.eq.${currentUserId}),and(messages.sender_id.eq.${currentUserId},messages.receiver_id.eq.${activeChat.id})`);
+          .is('group_chat_id', null)
+          .or(`and(sender_id.eq.${activeChat.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${activeChat.id})`);
       }
 
       const { data, error } = await query;
@@ -89,8 +89,30 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
       }
 
       if (data) {
+        // Transform msg + joined vault records back to the format the UI expects:
+        // { id: vault_messages.id, created_at, message_id, messages: { ... } }
+        const transformed = data.map((msg: any) => {
+          const vaultEntry = Array.isArray(msg.vault_messages) ? msg.vault_messages[0] : msg.vault_messages;
+          if (!vaultEntry) return null;
+          return {
+            id: vaultEntry.id,
+            created_at: vaultEntry.created_at,
+            message_id: msg.id,
+            messages: {
+              id: msg.id,
+              content: msg.content,
+              media_url: msg.media_url,
+              media_type: msg.media_type,
+              created_at: msg.created_at,
+              sender_id: msg.sender_id,
+              receiver_id: msg.receiver_id,
+              group_chat_id: msg.group_chat_id
+            }
+          };
+        }).filter(Boolean);
+
         const uniqueSenderIds = Array.from(
-          new Set(data.map((item: any) => item.messages.sender_id))
+          new Set(transformed.map((item: any) => item.messages.sender_id))
         ).filter(Boolean) as string[];
 
         if (uniqueSenderIds.length > 0) {
@@ -107,7 +129,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
           }
         }
 
-        setVaultItems(prev => initial ? data : [...prev, ...data]);
+        setVaultItems(prev => initial ? transformed : [...prev, ...transformed]);
         setHasMore(data.length === LIMIT);
         setOffset(currentOffset + LIMIT);
       }
@@ -246,7 +268,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
               ) : vaultItems.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-32 text-center px-6">
                   <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6">
-                    <Vault size={28} className="text-white/40" />
+                    <FolderLock size={28} className="text-white/40" />
                   </div>
                   <h3 className="text-lg font-bold text-white/90 mb-2">Vault is completely empty</h3>
                   <p className="text-xs text-white/40 max-w-xs leading-relaxed">

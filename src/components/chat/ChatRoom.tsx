@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, Phone, Video, Vault } from 'lucide-react';
+import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, Phone, Video, FolderLock } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { MessageBubble } from './MessageBubble';
@@ -251,9 +251,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               (!contextMenu.message.media_type && contextMenu.message.content)
             ) && (
               vaultedMessageIds?.has(contextMenu.message.id) ? (
-                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleRemoveFromVault(contextMenu.message.id); handleLongPress(null as any, null); }}><Vault size={16} className="text-white/50" />Remove from Vault</button>
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleRemoveFromVault(contextMenu.message.id); handleLongPress(null as any, null); }}><FolderLock size={16} className="text-white/50" />Remove from Vault</button>
               ) : (
-                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleAddToVault(contextMenu.message.id); handleLongPress(null as any, null); }}><Vault size={16} className="text-white/50" />Add to Vault</button>
+                <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { handleAddToVault(contextMenu.message.id); handleLongPress(null as any, null); }}><FolderLock size={16} className="text-white/50" />Add to Vault</button>
               )
             )}
 

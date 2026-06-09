@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, ChevronRight, Vault } from 'lucide-react';
+import { ArrowLeft, ChevronRight, FolderLock } from 'lucide-react';
 import { ChatListItemType } from '@/src/types/chat';
 import { VaultModal } from './VaultModal';
 
@@ -61,7 +61,7 @@ export function PrivateChatSettings({ currentUserId, activeChat, onClose }: Priv
                >
                  <div className="flex items-center gap-4">
                    <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 text-white/80">
-                     <Vault size={18} />
+                     <FolderLock size={18} />
                    </div>
                    <div className="flex flex-col text-left">
                      <span className="text-[17px] font-semibold tracking-tight">Vault</span>

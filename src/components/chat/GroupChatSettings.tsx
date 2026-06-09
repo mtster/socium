@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Camera, Settings2, LogOut, Trash2, Pencil, Search, Shield, X, Edit2, PencilLine, ChevronRight, Users, UserPlus, Vault } from 'lucide-react';
+import { ArrowLeft, Camera, Settings2, LogOut, Trash2, Pencil, Search, Shield, X, Edit2, PencilLine, ChevronRight, Users, UserPlus, FolderLock } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { ChatListItemType } from '@/src/types/chat';
 import { Profile } from '@/src/types';
@@ -332,7 +332,7 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
                <button onClick={() => setShowVault(true)} className="w-full flex items-center justify-between p-5 text-white hover:bg-white/5 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 text-white/80">
-                      <Vault size={18} />
+                      <FolderLock size={18} />
                     </div>
                     <div className="flex flex-col text-left flex-1 min-w-0">
                       <span className="text-[17px] font-semibold tracking-tight">Vault</span>

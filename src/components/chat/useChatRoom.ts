@@ -25,20 +25,27 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
   const fetchVaultedMessageIds = async () => {
     try {
-      let query = supabase.from('vault_messages').select('message_id, messages!inner(group_chat_id, sender_id, receiver_id)');
+      let query = supabase
+        .from('messages')
+        .select(`
+          id,
+          vault_messages!inner (
+            id
+          )
+        `);
       if (activeChat.isGroup) {
-        query = query.eq('messages.group_chat_id', activeChat.id);
+        query = query.eq('group_chat_id', activeChat.id);
       } else {
         query = query
-          .is('messages.group_chat_id', null)
-          .or(`and(messages.sender_id.eq.${activeChat.id},messages.receiver_id.eq.${currentUserId}),and(messages.sender_id.eq.${currentUserId},messages.receiver_id.eq.${activeChat.id})`);
+          .is('group_chat_id', null)
+          .or(`and(sender_id.eq.${activeChat.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${activeChat.id})`);
       }
 
       const { data, error } = await query;
       if (error) {
         console.error('fetchVaultedMessageIds error:', error);
       } else if (data) {
-        setVaultedMessageIds(new Set(data.map((v: any) => v.message_id)));
+        setVaultedMessageIds(new Set(data.map((m: any) => m.id)));
       }
     } catch (e) {
       console.error(e);
