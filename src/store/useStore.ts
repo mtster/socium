@@ -11,6 +11,7 @@ interface AppState {
   totalUnread: number;
   pendingRequestsCount: number;
   hasUnseenRequest: boolean;
+  feedUnseenCount: number;
   floatingAvatar: Profile | null;
   sharePost: Post | null;
   chats: ChatListItemType[];
@@ -23,6 +24,7 @@ interface AppState {
   setTotalUnread: (count: number) => void;
   setPendingRequestsCount: (count: number) => void;
   setHasUnseenRequest: (val: boolean) => void;
+  setFeedUnseenCount: (count: number) => void;
   setFloatingAvatar: (profile: Profile | null) => void;
   setSharePost: (post: Post | null) => void;
   setChats: (chats: ChatListItemType[]) => void;
@@ -36,6 +38,7 @@ interface AppState {
   fetchUnreadCount: (userId: string) => Promise<void>;
   fetchPendingRequestsCount: (userId: string) => Promise<void>;
   markPendingRequestsAsSeen: (userId: string) => Promise<void>;
+  fetchFeedUnseenCount: (userId: string) => Promise<void>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -46,6 +49,7 @@ export const useStore = create<AppState>((set, get) => ({
   totalUnread: 0,
   pendingRequestsCount: 0,
   hasUnseenRequest: false,
+  feedUnseenCount: 0,
   floatingAvatar: null,
   sharePost: null,
   chats: [],
@@ -58,6 +62,7 @@ export const useStore = create<AppState>((set, get) => ({
   setTotalUnread: (totalUnread) => set({ totalUnread }),
   setPendingRequestsCount: (pendingRequestsCount) => set({ pendingRequestsCount }),
   setHasUnseenRequest: (hasUnseenRequest) => set({ hasUnseenRequest }),
+  setFeedUnseenCount: (feedUnseenCount) => set({ feedUnseenCount }),
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
   setSharePost: (sharePost) => set({ sharePost }),
   setChats: (chats) => set({ chats }),
@@ -156,9 +161,8 @@ export const useStore = create<AppState>((set, get) => ({
 
     const { data: connectionsData } = await supabase
       .from('connections')
-      .select('requester_id, receiver_id')
-      .eq('status', 'accepted')
-      .or(`requester_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
+      .select('connection_id')
+      .eq('user_id', currentUserId);
       
     // Always include currentUserId, Admin ID and Humor Bot ('00000000-0000-0000-0000-000000000001') in feed connections
     const connectionIds = [
@@ -168,8 +172,7 @@ export const useStore = create<AppState>((set, get) => ({
     ];
     if (connectionsData) {
       connectionsData.forEach(c => {
-        if (c.requester_id !== currentUserId) connectionIds.push(c.requester_id);
-        if (c.receiver_id !== currentUserId) connectionIds.push(c.receiver_id);
+        if (c.connection_id) connectionIds.push(c.connection_id);
       });
     }
 
@@ -246,7 +249,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   fetchPendingRequestsCount: async (userId) => {
     const { data } = await supabase
-      .from('connections')
+      .from('connection_requests')
       .select('id, is_seen')
       .eq('receiver_id', userId)
       .eq('status', 'pending');
@@ -254,21 +257,76 @@ export const useStore = create<AppState>((set, get) => ({
     if (data) {
       const hasUnseen = data.some((r: any) => r.is_seen === false);
       set({ 
-        pendingRequestsCount: data.length, 
-        hasUnseenRequest: hasUnseen 
+          pendingRequestsCount: data.length, 
+          hasUnseenRequest: hasUnseen 
       });
     }
   },
 
   markPendingRequestsAsSeen: async (userId) => {
     const { error } = await supabase
-      .from('connections')
+      .from('connection_requests')
       .update({ is_seen: true })
       .eq('receiver_id', userId)
       .eq('status', 'pending');
       
     if (!error) {
       set({ hasUnseenRequest: false });
+    }
+  },
+
+  fetchFeedUnseenCount: async (userId) => {
+    try {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('base_timestamp')
+        .eq('id', userId)
+        .maybeSingle();
+
+      const baseTimestamp = profileData?.base_timestamp || new Date(0).toISOString();
+
+      const { data: seenData } = await supabase
+        .from('seen_activities')
+        .select('activity_id')
+        .eq('user_id', userId);
+
+      const seenIds = new Set((seenData || []).map((s: any) => s.activity_id));
+
+      const { data: conns } = await supabase
+        .from('connections')
+        .select('connection_id')
+        .eq('user_id', userId);
+
+      const connectionIds = [
+        userId,
+        '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', // Admin
+        '00000000-0000-0000-0000-000000000001'  // Bot
+      ];
+      if (conns) {
+        conns.forEach(c => {
+          if (c.connection_id) connectionIds.push(c.connection_id);
+        });
+      }
+
+      // Query latest 15 activities
+      const { data: feats } = await supabase
+        .from('feed_activity')
+        .select('*')
+        .or(`initiator_id.in.(${connectionIds.join(',')}),target_user_id.eq.${userId}`)
+        .order('created_at', { ascending: false })
+        .limit(15);
+
+      if (feats) {
+        const unseen = feats.filter((act: any) => {
+          if (act.initiator_id === userId) return false;
+          const isOlderThanBase = act.created_at <= baseTimestamp;
+          const isSeen = seenIds.has(act.id);
+          return !isOlderThanBase && !isSeen;
+        });
+        set({ feedUnseenCount: unseen.length });
+      }
+    } catch (err) {
+      console.warn("Error fetching feed unseen count:", err);
     }
   }
 }));

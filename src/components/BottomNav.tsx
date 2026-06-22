@@ -12,10 +12,12 @@ interface BottomNavProps {
   floatingAvatar?: Profile | null;
   setFloatingAvatar?: (profile: Profile | null) => void;
   showFirstTimeChatDot?: boolean;
+  activeVibeInitiatorProfile?: Profile | null;
+  onClearVibeBubble?: () => void;
 }
 
-const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar, showFirstTimeChatDot = false }: BottomNavProps) => {
-  const { pendingRequestsCount, hasUnseenRequest } = useStore();
+const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, setFloatingAvatar, showFirstTimeChatDot = false, activeVibeInitiatorProfile, onClearVibeBubble }: BottomNavProps) => {
+  const { pendingRequestsCount, hasUnseenRequest, feedUnseenCount } = useStore();
 
   const tabs = [
     { id: 'feed', icon: Home, label: 'Feed' },
@@ -50,6 +52,9 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
             >
               <div className="relative flex flex-col items-center">
                 <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
+                {tab.id === 'feed' && feedUnseenCount > 0 && !activeVibeInitiatorProfile && (
+                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-sky-500 rounded-full border border-black shadow animate-pulse" />
+                )}
                 {tab.id === 'chat' && ((unreadCount > 0 && !floatingAvatar) || showFirstTimeChatDot) && (
                   <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />
                 )}
@@ -58,6 +63,26 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                 )}
                 
                 <AnimatePresence>
+                  {tab.id === 'feed' && activeVibeInitiatorProfile && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.5 }}
+                      animate={{ opacity: 1, y: -45, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.5, y: -20 }}
+                      className="absolute z-50 rounded-full border-2 border-sky-400 overflow-hidden bg-black/80 shadow-2xl w-10 h-10 flex items-center justify-center cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onClearVibeBubble) onClearVibeBubble();
+                      }}
+                    >
+                      {activeVibeInitiatorProfile.avatar_url ? (
+                        <img src={activeVibeInitiatorProfile.avatar_url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-white text-xs font-bold">{(activeVibeInitiatorProfile.full_name?.charAt(0) || activeVibeInitiatorProfile.username?.charAt(0) || '?').toUpperCase()}</span>
+                      )}
+                      <span className="absolute inset-0 border border-sky-400 rounded-full animate-ping opacity-75" />
+                    </motion.div>
+                  )}
+
                   {tab.id === 'chat' && floatingAvatar && (
                     <motion.div
                       initial={{ opacity: 0, y: 10, scale: 0.5 }}

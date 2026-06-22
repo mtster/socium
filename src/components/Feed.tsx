@@ -4,6 +4,7 @@ import { Post } from '@/src/types';
 import PostCard from './PostCard';
 import { motion } from 'motion/react';
 import { useStore } from '../store/useStore';
+import { logFeedActivity } from '@/src/lib/feed';
 
 interface FeedProps {
   currentUserId: string;
@@ -82,6 +83,12 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
       } else {
         const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: currentUserId });
         if (error) throw error;
+        
+        await logFeedActivity({
+          activityType: 'like',
+          initiatorId: currentUserId,
+          postId: postId
+        });
       }
     } catch (error) {
       // Revert on error

@@ -3,6 +3,7 @@ import { Camera, Image as ImageIcon, X, Send } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { Profile } from '@/src/types';
+import { logFeedActivity } from '@/src/lib/feed';
 
 interface CreatePostProps {
   onSuccess: () => void;
@@ -26,11 +27,12 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
   }, [userId]);
 
   const fetchConnections = async () => {
-    const { data: rel1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', userId).eq('status', 'accepted');
-    const { data: rel2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', userId).eq('status', 'accepted');
+    const { data: userConns } = await supabase
+      .from('connections')
+      .select('*, profiles!connections_connection_id_fkey(*)')
+      .eq('user_id', userId);
     
-    // @ts-ignore
-    const combined = [...(rel1?.map(c => c.profiles) || []), ...(rel2?.map(c => c.profiles) || [])].filter(Boolean);
+    const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
     setConnections(combined);
   };
 
@@ -97,7 +99,7 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
         }));
       }
 
-      // 2. Save to Supabase
+       // 2. Save to Supabase
       try {
         const payload: any = {
           user_id: userId,
@@ -109,16 +111,26 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
            payload.visible_to = visibleTo;
         }
 
-        const { error: supabaseError } = await supabase.from('posts').insert(payload);
+        const { data: newPost, error: supabaseError } = await supabase.from('posts').insert(payload).select().maybeSingle();
+        let finalPost = newPost;
 
         if (supabaseError) {
           if (supabaseError.message.includes('column "visible_to"')) {
             delete payload.visible_to;
-            const { error: retryError } = await supabase.from('posts').insert(payload);
+            const { data: retryPost, error: retryError } = await supabase.from('posts').insert(payload).select().maybeSingle();
             if (retryError) throw new Error(retryError.message);
+            finalPost = retryPost;
           } else {
             throw new Error(supabaseError.message);
           }
+        }
+
+        if (finalPost) {
+          await logFeedActivity({
+            activityType: 'post',
+            initiatorId: userId,
+            postId: finalPost.id,
+          });
         }
       } catch (dbError: any) {
         throw new Error(`Supabase Error: ${dbError.message}\nMake sure to run the updated SCHEMA.sql`);

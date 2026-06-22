@@ -4,6 +4,7 @@ import BottomNav from './components/BottomNav';
 import AuthView from './components/Auth';
 import CreatePost from './components/CreatePost';
 import Feed from './components/Feed';
+import FeedInbox from './components/feed/FeedInbox';
 import ProfileView from './components/Profile';
 import Chat from './components/Chat';
 import { Profile, Post } from './types';
@@ -11,7 +12,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
 import SharePostModal from './components/SharePostModal';
-import { Bell, ArrowLeft } from 'lucide-react';
+import { Bell, ArrowLeft, Inbox } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Toaster } from 'react-hot-toast';
 import { useStore } from './store/useStore';
@@ -19,8 +20,9 @@ import { CallsManager } from './components/chat/CallsManager';
 import ErudaDevTools from './components/ErudaDevTools';
 
 import { initPresence } from '@/src/lib/presence';
+import { logFeedActivity } from '@/src/lib/feed';
 
-import { ref, set } from 'firebase/database';
+import { ref, set, onValue } from 'firebase/database';
 import { rtdb } from '@/src/lib/firebase';
 
 let audioUnlocked = false;
@@ -97,6 +99,111 @@ export default function App() {
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
   const [isHeaderHidden, setIsHeaderHidden] = useState(false);
   const mainRef = React.useRef<HTMLElement>(null);
+
+  // Feed Inbox and live active activity vibe state parameters
+  const [isFeedInboxOpen, setIsFeedInboxOpen] = useState(false);
+  const [activeVibeInitiatorId, setActiveVibeInitiatorId] = useState<string | null>(null);
+  const [vibeInitiatorProfile, setVibeInitiatorProfile] = useState<Profile | null>(null);
+
+  const { feedUnseenCount, setFeedUnseenCount, fetchFeedUnseenCount } = useStore();
+
+  const playVibeSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc1 = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+      osc1.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.15); // E6
+
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(440, audioCtx.currentTime);
+      osc2.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15);
+
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc1.start();
+      osc2.start();
+      osc1.stop(audioCtx.currentTime + 0.35);
+      osc2.stop(audioCtx.currentTime + 0.35);
+    } catch (err) {
+      console.warn('Audio Context chime play failed:', err);
+    }
+  };
+
+  const handleClearVibeBubble = async () => {
+    if (!session?.user?.id || !rtdb) return;
+    try {
+      await set(ref(rtdb, `feed/${session.user.id}`), null);
+    } catch (e) {
+      console.warn('Failed to clear active vibe RTDB node:', e);
+    }
+    setActiveVibeInitiatorId(null);
+    setVibeInitiatorProfile(null);
+    setActiveTab('feed');
+    setIsFeedInboxOpen(true);
+  };
+
+  // Listen to live Feed notifications in Firebase RTDB
+  useEffect(() => {
+    if (!session?.user?.id || !rtdb) return;
+    const userId = session.user.id;
+    const feedRef = ref(rtdb, `feed/${userId}`);
+
+    const unsubscribe = onValue(feedRef, async (snapshot) => {
+      const initiatorId = snapshot.val();
+      if (initiatorId && typeof initiatorId === 'string') {
+        setActiveVibeInitiatorId(initiatorId);
+
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', initiatorId)
+          .maybeSingle();
+
+        if (data) {
+          setVibeInitiatorProfile(data);
+          playVibeSound();
+        }
+
+        fetchFeedUnseenCount(userId);
+      } else {
+        setActiveVibeInitiatorId(null);
+        setVibeInitiatorProfile(null);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [session?.user?.id]);
+
+  // Synchronize location tracking dynamically for active notification muting
+  useEffect(() => {
+    if (!session?.user?.id || !rtdb) return;
+    const userId = session.user.id;
+    let loc = 'none';
+    if (activeTab === 'feed') {
+      loc = isFeedInboxOpen ? 'feed_inbox' : 'feed';
+    }
+    set(ref(rtdb, `location/${userId}`), loc).catch(err => {
+      console.warn('Failed to update RTDB location node:', err);
+    });
+  }, [session?.user?.id, activeTab, isFeedInboxOpen]);
+
+  // Manage initial count loading and tab changes
+  useEffect(() => {
+    if (session?.user?.id) {
+      fetchFeedUnseenCount(session.user.id);
+    }
+  }, [session?.user?.id, activeTab]);
 
   // Inside useEffect where auth state is handled, or a new useEffect
   useEffect(() => {
@@ -732,17 +839,23 @@ export default function App() {
       if (userId !== ADMIN_ID) {
         try {
           const { data: existingCheck } = await supabase
-            .from('connections')
+            .from('connection_requests')
             .select('id')
             .or(`and(requester_id.eq.${ADMIN_ID},receiver_id.eq.${userId}),and(requester_id.eq.${userId},receiver_id.eq.${ADMIN_ID})`)
             .maybeSingle();
 
           if (!existingCheck) {
-            await supabase.from('connections').insert({
+            await supabase.from('connection_requests').insert({
               requester_id: ADMIN_ID,
               receiver_id: userId,
               status: 'accepted'
             });
+
+            // Insert bidirectional records in actual connections
+            await supabase.from('connections').insert([
+              { user_id: ADMIN_ID, connection_id: userId },
+              { user_id: userId, connection_id: ADMIN_ID }
+            ]);
           }
         } catch (connErr) {
           console.error('Error establishing default Socium connection:', connErr);
@@ -822,6 +935,11 @@ export default function App() {
         await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', session.user.id);
       } else {
         await supabase.from('likes').insert({ post_id: postId, user_id: session.user.id });
+        await logFeedActivity({
+          activityType: 'like',
+          initiatorId: session.user.id,
+          postId: postId
+        });
       }
     } catch (e) {
       console.error(e);
@@ -864,6 +982,18 @@ export default function App() {
         <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
           <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
           <div className="flex space-x-4">
+            {activeTab === 'feed' && !isFeedInboxOpen && (
+              <button 
+                id="feed-inbox-header-btn"
+                onClick={() => setIsFeedInboxOpen(true)}
+                className="text-white hover:text-white/80 transition-colors relative"
+              >
+                <Inbox size={24} />
+                {feedUnseenCount > 0 && (
+                  <div className="absolute top-0 right-[-2px] w-2.5 h-2.5 bg-sky-500 rounded-full border border-black shadow" />
+                )}
+              </button>
+            )}
             {activeTab === 'chat' && !initialActiveChat && (
               <button 
                 onClick={() => window.dispatchEvent(new CustomEvent('openCreateGroup'))}
@@ -953,7 +1083,18 @@ export default function App() {
                }}
                className="page-transition"
              >
-               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
+               {isFeedInboxOpen ? (
+                  <FeedInbox 
+                    currentUserId={session.user.id} 
+                    onBack={() => setIsFeedInboxOpen(false)} 
+                    onUserClick={(uid) => {
+                      setIsFeedInboxOpen(false);
+                      handleUserClick(uid);
+                    }}
+                  />
+                ) : (
+                  <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
+                )}
              </motion.div>
            )}
            
@@ -1093,7 +1234,9 @@ export default function App() {
              setActiveTab(tab);
              setViewingProfileId(null);
            }} 
-           unreadCount={totalUnread} 
+           unreadCount={totalUnread}
+            activeVibeInitiatorProfile={vibeInitiatorProfile}
+            onClearVibeBubble={handleClearVibeBubble} 
            floatingAvatar={floatingAvatar}
            setFloatingAvatar={setFloatingAvatar}
            showFirstTimeChatDot={!hasSeenPromo && !!session?.user}

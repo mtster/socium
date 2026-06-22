@@ -5,6 +5,7 @@ import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
 import { formatDate, cn } from '@/src/lib/utils';
 import { Profile, Post } from '@/src/types';
+import { logFeedActivity } from '@/src/lib/feed';
 
 interface CommentsModalProps {
   post: Post;
@@ -67,6 +68,15 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
         .single();
 
       if (error) throw error;
+      
+      if (data) {
+        await logFeedActivity({
+          activityType: 'comment',
+          initiatorId: currentUserId,
+          postId: post.id,
+          commentId: data.id
+        });
+      }
       
       setComments([...comments, data]);
       setText('');

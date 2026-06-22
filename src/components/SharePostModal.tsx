@@ -30,17 +30,10 @@ export default function SharePostModal() {
         const currentUserId = profile.id;
 
         // 1. Fetch 1-on-1 connections
-        const { data: rel1 } = await supabase
+        const { data: userConns } = await supabase
           .from('connections')
-          .select('*, profiles!connections_receiver_id_fkey(*)')
-          .eq('requester_id', currentUserId)
-          .eq('status', 'accepted');
-
-        const { data: rel2 } = await supabase
-          .from('connections')
-          .select('*, profiles!connections_requester_id_fkey(*)')
-          .eq('receiver_id', currentUserId)
-          .eq('status', 'accepted');
+          .select('*, profiles!connections_connection_id_fkey(*)')
+          .eq('user_id', currentUserId);
 
         // Include admin profile by default if present
         const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
@@ -50,10 +43,7 @@ export default function SharePostModal() {
           .eq('id', ADMIN_ID)
           .maybeSingle();
 
-        const combinedProfs = [
-          ...(rel1?.map((c) => c.profiles) || []),
-          ...(rel2?.map((c) => c.profiles) || []),
-        ].filter(Boolean);
+        const combinedProfs = (userConns?.map((c) => c.profiles) || []).filter(Boolean);
 
         if (adminProf && !combinedProfs.some((p) => p.id === ADMIN_ID) && currentUserId !== ADMIN_ID) {
           combinedProfs.push(adminProf);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { useStore } from '@/src/store/useStore';
+import { logFeedActivity } from '@/src/lib/feed';
 
 const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
 let cachedAdminProfile: any = null;
@@ -45,13 +46,12 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     if (!currentUserId || !profile?.id) return;
 
     if (isOwnProfile) {
-      const { data: accepted1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', profile.id).eq('status', 'accepted');
-      const { data: accepted2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'accepted');
+      const { data: userConns } = await supabase
+        .from('connections')
+        .select('*, profiles!connections_connection_id_fkey(*)')
+        .eq('user_id', profile.id);
       
-      const combined = [
-        ...(accepted1?.map(c => c.profiles) || []),
-        ...(accepted2?.map(c => c.profiles) || [])
-      ].filter(Boolean);
+      const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean);
       
       const adminProf = await getAdminProfile();
       if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
@@ -63,7 +63,11 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       profileConnectionsTime[profile.id] = Date.now();
       setConnections(filteredConnections);
 
-       const { data: pending } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'pending');
+      const { data: pending } = await supabase
+        .from('connection_requests')
+        .select('*, profiles!connections_requester_id_fkey(*)')
+        .eq('receiver_id', profile.id)
+        .eq('status', 'pending');
       setPendingRequests(pending || []);
       
       if (profile.id === currentUserId) {
@@ -76,7 +80,7 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         }
       }
     } else {
-      const { data: rel } = await supabase.from('connections')
+      const { data: rel } = await supabase.from('connection_requests')
         .select('*')
         .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`)
         .maybeSingle();
@@ -96,13 +100,12 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         }
       }
 
-      const { data: accepted1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', profile.id).eq('status', 'accepted');
-      const { data: accepted2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', profile.id).eq('status', 'accepted');
+      const { data: userConns } = await supabase
+        .from('connections')
+        .select('*, profiles!connections_connection_id_fkey(*)')
+        .eq('user_id', profile.id);
       
-      const combined = [
-        ...(accepted1?.map(c => c.profiles) || []),
-        ...(accepted2?.map(c => c.profiles) || [])
-      ].filter(Boolean);
+      const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean);
 
       const adminProf = await getAdminProfile();
       if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
@@ -118,13 +121,22 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
 
   const handleRequestConnection = async () => {
     try {
-      const { data, error } = await supabase.from('connections').insert({
+      const { data, error } = await supabase.from('connection_requests').insert({
         requester_id: currentUserId,
         receiver_id: profile.id,
         status: 'pending'
       }).select().single();
       
       if (error) throw error;
+      
+      // Log Feed Activity for Connection Request
+      if (data) {
+        await logFeedActivity({
+          activityType: 'connection_request',
+          initiatorId: currentUserId!,
+          connectionRequestId: data.id,
+        });
+      }
       
       profileConnectionsCache = {};
       profileConnectionsTime = {};
@@ -162,10 +174,23 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     }
   }
 
-  const handleAcceptConnection = async (id: string) => {
+  const handleAcceptConnection = async (id: string, requesterUserId?: string) => {
     try {
-      const { error } = await supabase.from('connections').update({ status: 'accepted' }).eq('id', id);
+      let rId = requesterUserId;
+      if (!rId) {
+        const { data: reqData } = await supabase.from('connection_requests').select('requester_id').eq('id', id).maybeSingle();
+        rId = reqData?.requester_id;
+      }
+      if (!rId) throw new Error("Could not identify requester ID");
+
+      const { error } = await supabase.from('connection_requests').update({ status: 'accepted' }).eq('id', id);
       if (error) throw error;
+
+      // Bidirectional insert into connections table
+      await supabase.from('connections').insert([
+        { user_id: currentUserId, connection_id: rId },
+        { user_id: rId, connection_id: currentUserId }
+      ]);
       
       profileConnectionsCache = {};
       profileConnectionsTime = {};
@@ -187,24 +212,17 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       profileConnectionsTime = {};
       window.dispatchEvent(new CustomEvent('connectionsChanged'));
 
-      let mainError = null;
-      if (id !== 'unknown') {
-        const { error } = await supabase.from('connections').delete().eq('id', id);
-        mainError = error;
-      }
-      
-      if (!isOwnProfile) {
+      const targetId = connectionProfileId || profile.id;
+      if (targetId) {
+        // Delete connections (bidirectional)
         await supabase.from('connections')
           .delete()
-          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`);
-      } else if (connectionProfileId) {
-         await supabase.from('connections')
+          .or(`and(user_id.eq.${currentUserId},connection_id.eq.${targetId}),and(user_id.eq.${targetId},connection_id.eq.${currentUserId})`);
+        
+        // Delete connection requests
+        await supabase.from('connection_requests')
           .delete()
-          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${connectionProfileId}),and(requester_id.eq.${connectionProfileId},receiver_id.eq.${currentUserId})`);
-      }
-      
-      if (mainError && mainError.code !== 'PGRST116') {
-        throw mainError;
+          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${targetId}),and(requester_id.eq.${targetId},receiver_id.eq.${currentUserId})`);
       }
       
       if (!isOwnProfile) {

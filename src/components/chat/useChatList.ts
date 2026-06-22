@@ -20,12 +20,14 @@ export function useChatList(currentUserId: string) {
       }
 
       // 1. Fetch 1-on-1 Connections
-      const { data: rel1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', currentUserId).eq('status', 'accepted');
-      const { data: rel2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', currentUserId).eq('status', 'accepted');
+      const { data: userConns } = await supabase
+        .from('connections')
+        .select('*, profiles!connections_connection_id_fkey(*)')
+        .eq('user_id', currentUserId);
       const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
       const { data: adminProf } = await supabase.from('profiles').select('*').eq('id', ADMIN_ID).maybeSingle();
       
-      const combinedProfs = [...(rel1?.map(c => c.profiles) || []), ...(rel2?.map(c => c.profiles) || [])].filter(Boolean) as Profile[];
+      const combinedProfs = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
       if (adminProf && !combinedProfs.some(c => c.id === ADMIN_ID) && currentUserId !== ADMIN_ID) combinedProfs.push(adminProf);
       const deduplicatedProfs = Array.from(new Map(combinedProfs.map(item => [item.id, item])).values());
 

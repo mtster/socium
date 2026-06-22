@@ -29,11 +29,12 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
   }, [post.user_id]);
 
   const fetchConnections = async () => {
-    const { data: rel1 } = await supabase.from('connections').select('*, profiles!connections_receiver_id_fkey(*)').eq('requester_id', post.user_id).eq('status', 'accepted');
-    const { data: rel2 } = await supabase.from('connections').select('*, profiles!connections_requester_id_fkey(*)').eq('receiver_id', post.user_id).eq('status', 'accepted');
+    const { data: userConns } = await supabase
+      .from('connections')
+      .select('*, profiles!connections_connection_id_fkey(*)')
+      .eq('user_id', post.user_id);
     
-    // @ts-ignore
-    const combined = [...(rel1?.map(c => c.profiles) || []), ...(rel2?.map(c => c.profiles) || [])].filter(Boolean);
+    const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
     setConnections(combined);
   };
 
