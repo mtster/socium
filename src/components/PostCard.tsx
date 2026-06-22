@@ -178,10 +178,12 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   };
 
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImages } }));
-    return () => {
-      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
-    };
+    if (viewingImages) {
+      window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: true } }));
+      return () => {
+        window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } }));
+      };
+    }
   }, [viewingImages]);
 
   return (

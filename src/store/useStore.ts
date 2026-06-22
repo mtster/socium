@@ -179,7 +179,8 @@ export const useStore = create<AppState>((set, get) => ({
     let query = supabase
       .from('posts')
       .select('*, profiles(*), likes(user_id), comments(id)')
-      .lte('created_at', new Date().toISOString());
+      .lte('created_at', new Date().toISOString())
+      .limit(50);
 
     if (currentUserId !== ADMIN_ID) {
       query = query.in('user_id', connectionIds);
@@ -308,15 +309,31 @@ export const useStore = create<AppState>((set, get) => ({
         });
       }
 
-      // Query latest 15 activities
-      const { data: feats } = await supabase
+      // Query latest activities - separate queries to avoid PostgREST parsing errors with long OR clauses
+      const { data: featsFromConnections, error: err1 } = await supabase
         .from('feed_activity')
         .select('*')
-        .or(`initiator_id.in.(${connectionIds.join(',')}),target_user_id.eq.${userId}`)
+        .in('initiator_id', connectionIds)
         .order('created_at', { ascending: false })
         .limit(15);
+        
+      const { data: featsToMe, error: err2 } = await supabase
+        .from('feed_activity')
+        .select('*')
+        .eq('target_user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(15);
+        
+      let feats: any[] = [];
+      if (featsFromConnections || featsToMe) {
+        const combined = [...(featsFromConnections || []), ...(featsToMe || [])];
+        // remove duplicates by id
+        const unique = new Map();
+        combined.forEach(f => unique.set(f.id, f));
+        feats = Array.from(unique.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 15);
+      }
 
-      if (feats) {
+      if (feats.length > 0) {
         const unseen = feats.filter((act: any) => {
           if (act.initiator_id === userId) return false;
           const isOlderThanBase = act.created_at <= baseTimestamp;
