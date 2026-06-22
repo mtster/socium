@@ -199,7 +199,7 @@ export function useRealtimeSync({
         .subscribe();
 
       const connectionsChannel = supabase.channel('global_connections')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'connections', filter: `receiver_id=eq.${userId}` }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'connection_requests', filter: `receiver_id=eq.${userId}` }, () => {
            getPending();
          })
         .subscribe();

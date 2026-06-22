@@ -66,17 +66,21 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       }
 
       // 4. Query activities
+      const escapedIds = connectionIds.map(id => `"${id}"`).join(',');
       const { data: feats, error } = await supabase
         .from('feed_activity')
         .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
-        .or(`initiator_id.in.(${connectionIds.join(',')}),target_user_id.eq.${currentUserId}`)
+        .or(`initiator_id.in.(${escapedIds}),target_user_id.eq.${currentUserId}`)
         .order('created_at', { ascending: false })
-        .limit(15);
+        .limit(30);
 
       if (error) throw error;
 
-      // Filter out own activities
-      const filtered = (feats || []).filter((act: any) => act.initiator_id !== currentUserId);
+      // Filter out own activities, and ensure the initiator is part of our connections
+      const filtered = (feats || []).filter((act: any) => {
+        if (act.initiator_id === currentUserId) return false;
+        return connectionIds.includes(act.initiator_id);
+      });
       setActivities(filtered);
     } catch (err) {
       console.error('Error loading inbox activities:', err);
