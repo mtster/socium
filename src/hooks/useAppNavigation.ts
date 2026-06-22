@@ -148,6 +148,18 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     if (typeof window === 'undefined') return;
     const urlParams = new URLSearchParams(window.location.search);
     const chatWith = urlParams.get('chat_with') || urlParams.get('chatId');
+    const activityId = urlParams.get('activity_id');
+    
+    if (activityId) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setActiveTab('feed');
+      setIsFeedInboxOpen(true);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('openActivityId', { detail: { activityId } }));
+      }, 500);
+      return;
+    }
+    
     if (!chatWith) return;
 
     try {
@@ -200,6 +212,24 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         
         const senderId = data.senderId;
         const groupChatId = data.groupChatId;
+        const targetUrl = data.url;
+
+        let activityId = null;
+        if (targetUrl) {
+          try {
+            const parsed = new URL(targetUrl);
+            activityId = parsed.searchParams.get('activity_id');
+          } catch(e) {}
+        }
+        
+        if (activityId) {
+          setActiveTab('feed');
+          setIsFeedInboxOpen(true);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('openActivityId', { detail: { activityId } }));
+          }, 500);
+          return;
+        }
         
         if (groupChatId) {
           const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
@@ -267,9 +297,27 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         if (event.data && event.data.type === 'OPEN_CHAT') {
           const senderId = event.data.senderId || event.data.sender_id;
           const groupChatId = event.data.groupChatId || event.data.group_chat_id;
+          const targetUrl = event.data.url;
           
           if (typeof window !== 'undefined' && 'caches' in window) {
             caches.open('notification-route').then(c => c.delete('/target-route')).catch(() => {});
+          }
+          
+          let activityId = null;
+          if (targetUrl) {
+            try {
+              const parsed = new URL(targetUrl);
+              activityId = parsed.searchParams.get('activity_id');
+            } catch(e) {}
+          }
+          
+          if (activityId) {
+            setActiveTab('feed');
+            setIsFeedInboxOpen(true);
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('openActivityId', { detail: { activityId } }));
+            }, 500);
+            return;
           }
           
           if (groupChatId) {

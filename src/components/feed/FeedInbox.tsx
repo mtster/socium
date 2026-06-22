@@ -25,6 +25,23 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
     fetchInboxData();
   }, [currentUserId]);
 
+  useEffect(() => {
+    const handleOpenActivityId = (e: any) => {
+      const actId = e.detail?.activityId;
+      if (actId) {
+        const fetchAndOpenActivity = async () => {
+          const { data } = await supabase.from('feed_activity').select('*').eq('id', actId).single();
+          if (data) {
+            handleActivityClick(data);
+          }
+        };
+        fetchAndOpenActivity();
+      }
+    };
+    window.addEventListener('openActivityId', handleOpenActivityId);
+    return () => window.removeEventListener('openActivityId', handleOpenActivityId);
+  }, [currentUserId, seenIds, baseTimestamp, activities]);
+
   const fetchInboxData = async () => {
     try {
       setLoading(true);

@@ -75,32 +75,18 @@ export default {
             const currentBadgeObj = await fetchFirebase(env, `/unseen_chat_count/${userId}.json`, firebaseToken);
             const currentUnseenBadge = currentBadgeObj || 1;
 
-            let title = 'New Action in Feed';
-            let body = `${initiatorName} did something new!`;
-            let clickActionUrl = 'https://sociumx.vercel.app/feed';
+            let title = initiatorName;
+            let body = 'did something new!';
+            let clickActionUrl = `/?activity_id=${activity.id}`;
 
             if (activity_type === 'post') {
-              const postDetails = await fetchSupabase(env, `/rest/v1/posts?id=eq.${post_id}&select=caption`);
-              const caption = postDetails[0]?.caption || '';
-              const truncatedCaption = caption.length > 50 ? caption.substring(0, 47) + '...' : caption;
-              title = 'New Post';
-              body = `${initiatorName} posted: ${truncatedCaption || 'image'}`;
-              clickActionUrl = `https://sociumx.vercel.app/feed/post/${post_id}`;
+              body = `🌏Posted`;
             } else if (activity_type === 'like') {
-              title = 'New Like';
-              body = `${initiatorName} liked your post!`;
-              clickActionUrl = `https://sociumx.vercel.app/feed/post/${post_id}`;
+              body = `❤️🔥Liked your post`;
             } else if (activity_type === 'comment') {
-              const commentDetails = await fetchSupabase(env, `/rest/v1/comments?id=eq.${comment_id}&select=content`);
-              const commentContent = commentDetails[0]?.content || '';
-              const truncatedComment = commentContent.length > 50 ? commentContent.substring(0, 47) + '...' : commentContent;
-              title = 'New Comment';
-              body = `${initiatorName} commented: "${truncatedComment}"`;
-              clickActionUrl = `https://sociumx.vercel.app/feed/post/${post_id}`;
+              body = `🗨️Commented on your post`;
             } else if (activity_type === 'connection_request') {
-              title = 'Connection Request';
-              body = `${initiatorName} sent you a connection request!`;
-              clickActionUrl = 'https://sociumx.vercel.app/profile';
+              body = `👥Sent you a connection request`;
             }
 
             const tokens = subscriptions.map((s) => s.endpoint);
