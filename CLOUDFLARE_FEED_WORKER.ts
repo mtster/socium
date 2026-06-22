@@ -82,7 +82,7 @@ export default {
             if (activity_type === 'post') {
               body = `🌏Posted`;
             } else if (activity_type === 'like') {
-              body = `❤️🔥Liked your post`;
+              body = `❤️‍🔥Liked your post`;
             } else if (activity_type === 'comment') {
               body = `🗨️Commented on your post`;
             } else if (activity_type === 'connection_request') {
