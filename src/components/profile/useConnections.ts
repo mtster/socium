@@ -46,10 +46,14 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     if (!currentUserId || !profile?.id) return;
 
     if (isOwnProfile) {
-      const { data: userConns } = await supabase
+      const { data: userConns, error: userConnsErr } = await supabase
         .from('connections')
-        .select('*, profiles!connections_connection_id_fkey(*)')
-        .eq('user_id', profile.id);
+        .select('*, profiles!connection_id(*)').eq('user_id', profile.id);
+      
+      if (userConnsErr) {
+        console.error('[useConnections] error fetching connections:', userConnsErr);
+        return;
+      }
       
       const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean);
       
@@ -63,27 +67,37 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       profileConnectionsTime[profile.id] = Date.now();
       setConnections(filteredConnections);
 
-      const { data: pending } = await supabase
+      const { data: pending, error: pendingErr } = await supabase
         .from('connection_requests')
-        .select('*, profiles!connections_requester_id_fkey(*)')
+        .select('*, profiles!requester_id(*)')
         .eq('receiver_id', profile.id)
         .eq('status', 'pending');
-      setPendingRequests(pending || []);
       
-      if (profile.id === currentUserId) {
-        const hasUnseen = pending?.some(r => r.is_seen === false) || false;
-        if (useStore.getState().setPendingRequestsCount) {
-          useStore.getState().setPendingRequestsCount(pending?.length || 0);
-        }
-        if (useStore.getState().setHasUnseenRequest) {
-          useStore.getState().setHasUnseenRequest(hasUnseen);
+      if (pendingErr) {
+        console.error('[useConnections] error fetching pending requests:', pendingErr);
+      } else {
+        setPendingRequests(pending || []);
+        
+        if (profile.id === currentUserId) {
+          const hasUnseen = pending?.some(r => r.is_seen === false) || false;
+          if (useStore.getState().setPendingRequestsCount) {
+            useStore.getState().setPendingRequestsCount(pending?.length || 0);
+          }
+          if (useStore.getState().setHasUnseenRequest) {
+            useStore.getState().setHasUnseenRequest(hasUnseen);
+          }
         }
       }
     } else {
-      const { data: rel } = await supabase.from('connection_requests')
+      const { data: rel, error: relErr } = await supabase.from('connection_requests')
         .select('*')
         .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`)
         .maybeSingle();
+      
+      if (relErr) {
+        console.error('[useConnections] error fetching relationship:', relErr);
+        return;
+      }
       
       if (profile.id === ADMIN_ID) {
         setConnectionStatus('accepted');
@@ -100,10 +114,15 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         }
       }
 
-      const { data: userConns } = await supabase
+      const { data: userConns, error: userConnsErr } = await supabase
         .from('connections')
-        .select('*, profiles!connections_connection_id_fkey(*)')
+        .select('*, profiles!connection_id(*)')
         .eq('user_id', profile.id);
+      
+      if (userConnsErr) {
+        console.error('[useConnections] error fetching other connections:', userConnsErr);
+        return;
+      }
       
       const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean);
 

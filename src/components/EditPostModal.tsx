@@ -29,13 +29,15 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
   }, [post.user_id]);
 
   const fetchConnections = async () => {
-    const { data: userConns } = await supabase
+    const { data: userConns, error } = await supabase
       .from('connections')
-      .select('*, profiles!connections_connection_id_fkey(*)')
+      .select('*, profiles!connection_id(*)')
       .eq('user_id', post.user_id);
     
-    const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
-    setConnections(combined);
+    if (!error && userConns) {
+      const combined = (userConns.map(c => c.profiles) || []).filter(Boolean) as Profile[];
+      setConnections(combined);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

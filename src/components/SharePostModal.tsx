@@ -30,10 +30,14 @@ export default function SharePostModal() {
         const currentUserId = profile.id;
 
         // 1. Fetch 1-on-1 connections
-        const { data: userConns } = await supabase
+        const { data: userConns, error } = await supabase
           .from('connections')
-          .select('*, profiles!connections_connection_id_fkey(*)')
+          .select('*, profiles!connection_id(*)')
           .eq('user_id', currentUserId);
+
+        if (error) {
+          console.error('[SharePostModal] failed to fetch connections:', error);
+        }
 
         // Include admin profile by default if present
         const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';

@@ -20,10 +20,13 @@ export function useChatList(currentUserId: string) {
       }
 
       // 1. Fetch 1-on-1 Connections
-      const { data: userConns } = await supabase
+      const { data: userConns, error: connErr } = await supabase
         .from('connections')
-        .select('*, profiles!connections_connection_id_fkey(*)')
+        .select('*, profiles!connection_id(*)')
         .eq('user_id', currentUserId);
+      if (connErr) {
+        console.error('[useChatList] Error fetching connections:', connErr);
+      }
       const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
       const { data: adminProf } = await supabase.from('profiles').select('*').eq('id', ADMIN_ID).maybeSingle();
       

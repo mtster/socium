@@ -199,9 +199,21 @@ export function useRealtimeSync({
         .subscribe();
 
       const connectionsChannel = supabase.channel('global_connections')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'connection_requests', filter: `receiver_id=eq.${userId}` }, () => {
-           getPending();
-         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'connection_requests' }, (payload) => {
+          const req: any = payload.new || payload.old;
+          if (req && (req.requester_id === userId || req.receiver_id === userId)) {
+            getPending();
+            window.dispatchEvent(new CustomEvent('connectionsChanged'));
+          }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'connections' }, (payload) => {
+          const conn: any = payload.new || payload.old;
+          if (conn && (conn.user_id === userId || conn.connection_id === userId)) {
+            window.dispatchEvent(new CustomEvent('connectionsChanged'));
+            getUnread();
+            window.dispatchEvent(new CustomEvent('refreshChatList'));
+          }
+        })
         .subscribe();
         
       return () => {

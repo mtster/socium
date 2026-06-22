@@ -13,7 +13,7 @@ import AddToHomeScreenModal from './components/AddToHomeScreenModal';
 import CompleteProfileModal from './components/CompleteProfileModal';
 import SharePostModal from './components/SharePostModal';
 import { Bell, ArrowLeft, Inbox } from 'lucide-react';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, toast } from 'react-hot-toast';
 import { useStore } from './store/useStore';
 import { CallsManager } from './components/chat/CallsManager';
 import ErudaDevTools from './components/ErudaDevTools';
@@ -37,6 +37,35 @@ export default function App() {
   } = useStore();
 
   const [session, setSession] = useState<any>(undefined);
+
+  // Eruda Tap System
+  const [headerTapCount, setHeaderTapCount] = useState(0);
+  const [lastTapTime, setLastTapTime] = useState(0);
+
+  const handleHeaderClick = () => {
+    const now = Date.now();
+    if (now - lastTapTime < 1000) {
+      const nextCount = headerTapCount + 1;
+      setHeaderTapCount(nextCount);
+      if (nextCount >= 5) {
+        setHeaderTapCount(0);
+        const currentActive = sessionStorage.getItem('eruda_active') === 'true';
+        if (currentActive) {
+          sessionStorage.removeItem('eruda_active');
+          toast.success('Eruda DevTools disabled! Reloading...', { icon: '🛠️' });
+        } else {
+          sessionStorage.setItem('eruda_active', 'true');
+          toast.success('Eruda DevTools enabled! Reloading...', { icon: '🛠️' });
+        }
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      }
+    } else {
+      setHeaderTapCount(1);
+    }
+    setLastTapTime(now);
+  };
 
   // 1. Push Notifications State Manager
   const {
@@ -210,13 +239,19 @@ export default function App() {
       
       {/* Header */}
       {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (
-        <header className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none]">
-          <h1 className="text-xl font-bold tracking-tighter uppercase italic">Socium</h1>
+        <header 
+          onClick={handleHeaderClick}
+          className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none] cursor-pointer"
+        >
+          <h1 className="text-xl font-bold tracking-tighter uppercase italic select-none">Socium</h1>
           <div className="flex space-x-4">
             {activeTab === 'feed' && !isFeedInboxOpen && (
               <button 
                 id="feed-inbox-header-btn"
-                onClick={() => setIsFeedInboxOpen(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsFeedInboxOpen(true);
+                }}
                 className="text-white hover:text-white/80 transition-colors relative"
               >
                 <Inbox size={24} />
@@ -227,7 +262,10 @@ export default function App() {
             )}
             {activeTab === 'chat' && !initialActiveChat && (
               <button 
-                onClick={() => window.dispatchEvent(new CustomEvent('openCreateGroup'))}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(new CustomEvent('openCreateGroup'));
+                }}
                 className="text-white hover:text-white/80 transition-colors relative flex items-center justify-center group"
               >
                 <div className="relative">
@@ -245,7 +283,8 @@ export default function App() {
             )}
             {activeTab === 'chat' && !initialActiveChat && (
               <button 
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowNotifPromoPopup(false);
                   if (typeof window !== 'undefined' && 'Notification' in window && (notifPermission !== 'granted' || hasPushSubscription !== true)) {
                     registerPush(session.user.id, true);
