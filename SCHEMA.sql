@@ -56,6 +56,38 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Safely migrate connections table to connection_requests if it contains old columns
+DO $$
+BEGIN
+  -- If table 'connections' exists, and has column 'requester_id', we know it is the old table
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'connections' AND column_name = 'requester_id'
+  ) THEN
+    -- Rename old table connections to connection_requests
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'connection_requests') THEN
+      ALTER TABLE public.connections RENAME TO connection_requests;
+      
+      -- Rename constraints if they exist
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'connections_pkey' 
+        AND conrelid = 'public.connection_requests'::regclass
+      ) THEN
+        ALTER TABLE public.connection_requests RENAME CONSTRAINT connections_pkey TO connection_requests_pkey;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'connections_requester_id_receiver_id_key' 
+        AND conrelid = 'public.connection_requests'::regclass
+      ) THEN
+        ALTER TABLE public.connection_requests RENAME CONSTRAINT connections_requester_id_receiver_id_key TO connection_requests_requester_id_receiver_id_key;
+      END IF;
+    END IF;
+  END IF;
+END $$;
+
 -- Connection Requests
 CREATE TABLE IF NOT EXISTS connection_requests (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

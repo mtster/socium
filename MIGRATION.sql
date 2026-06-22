@@ -49,9 +49,7 @@ CREATE TABLE IF NOT EXISTS public.connections (
   connection_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   is_activity_muted BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT connections_pkey PRIMARY KEY (user_id, connection_id),
-  CONSTRAINT connections_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE,
-  CONSTRAINT connections_connection_id_fkey FOREIGN KEY (connection_id) REFERENCES public.profiles(id) ON DELETE CASCADE
+  CONSTRAINT connections_pkey PRIMARY KEY (user_id, connection_id)
 );
 
 -- Migrate existing accepted connections bidirectionally
