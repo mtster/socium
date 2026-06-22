@@ -619,6 +619,8 @@ DECLARE
   cf_worker_url TEXT := 'https://socium-feed-notifications.brare-black.workers.dev/';
   payload JSONB;
   target_user_id UUID;
+  target_tokens JSONB;
+  initiator_name TEXT;
 BEGIN
   IF NEW.activity_type = 'connection_request' THEN
     SELECT receiver_id INTO target_user_id FROM public.connection_requests WHERE id = NEW.connection_request_id;
@@ -628,19 +630,42 @@ BEGIN
     SELECT user_id INTO target_user_id FROM public.posts WHERE id = NEW.post_id;
   END IF;
 
+  -- Don't send if it's the user's own action
+  IF target_user_id = NEW.initiator_id THEN
+    RETURN NEW;
+  END IF;
+
+  -- Fetch FCM tokens for target
+  SELECT jsonb_agg(endpoint) INTO target_tokens 
+  FROM public.push_subscriptions 
+  WHERE user_id = target_user_id AND endpoint IS NOT NULL;
+
+  -- Optional: If no tokens, don't ping worker at all
+  IF target_tokens IS NULL OR jsonb_array_length(target_tokens) = 0 THEN
+    RETURN NEW;
+  END IF;
+
+  -- Fetch initiator name
+  SELECT COALESCE(full_name, username, 'Someone') INTO initiator_name 
+  FROM public.profiles 
+  WHERE id = NEW.initiator_id;
+
   payload := jsonb_build_object(
     'id', NEW.id,
     'activity_type', NEW.activity_type,
     'initiator_id', NEW.initiator_id,
+    'initiator_name', initiator_name,
     'post_id', NEW.post_id,
     'comment_id', NEW.comment_id,
     'connection_request_id', NEW.connection_request_id,
     'created_at', NEW.created_at,
-    'target_user_id', target_user_id
+    'target_user_id', target_user_id,
+    'target_tokens', COALESCE(target_tokens, '[]'::jsonb)
   );
 
   PERFORM net.http_post(
       url := cf_worker_url,
+      headers := '{"Content-Type": "application/json"}'::jsonb,
       body := payload
   );
   RETURN NEW;
