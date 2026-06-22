@@ -202,7 +202,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
   };
 
   return (
-    <div className="absolute inset-0 bg-zinc-950 flex flex-col z-55">
+    <div className="w-full h-full bg-zinc-950 flex flex-col">
       {/* Header */}
       <header className="h-14 shrink-0 bg-black/80 border-b border-white/10 flex items-center px-4 relative">
         <button 

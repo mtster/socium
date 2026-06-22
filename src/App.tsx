@@ -1083,18 +1083,7 @@ export default function App() {
                }}
                className="page-transition"
              >
-               {isFeedInboxOpen ? (
-                  <FeedInbox 
-                    currentUserId={session.user.id} 
-                    onBack={() => setIsFeedInboxOpen(false)} 
-                    onUserClick={(uid) => {
-                      setIsFeedInboxOpen(false);
-                      handleUserClick(uid);
-                    }}
-                  />
-                ) : (
-                  <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
-                )}
+               <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
              </motion.div>
            )}
            
@@ -1243,6 +1232,27 @@ export default function App() {
         />
       )}
       <CallsManager />
+      <AnimatePresence>
+        {isFeedInboxOpen && (
+          <motion.div
+            key="feed-inbox-overlay"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'tween', ease: 'easeInOut', duration: 0.3 }}
+            className="fixed inset-0 z-[95] bg-zinc-950 flex flex-col overflow-hidden"
+          >
+            <FeedInbox 
+              currentUserId={session.user.id} 
+              onBack={() => setIsFeedInboxOpen(false)} 
+              onUserClick={(uid) => {
+                setIsFeedInboxOpen(false);
+                handleUserClick(uid);
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
       <ErudaDevTools />
     </div>
   );

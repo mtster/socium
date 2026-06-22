@@ -56,8 +56,8 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Connections (Friends/Followers)
-CREATE TABLE IF NOT EXISTS connections (
+-- Connection Requests
+CREATE TABLE IF NOT EXISTS connection_requests (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   requester_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   receiver_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
@@ -65,6 +65,15 @@ CREATE TABLE IF NOT EXISTS connections (
   is_seen BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(requester_id, receiver_id)
+);
+
+-- Connections (Bidirectional entries for accepted friendships)
+CREATE TABLE IF NOT EXISTS connections (
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  connection_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  is_activity_muted BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT connections_pkey PRIMARY KEY (user_id, connection_id)
 );
 
 -- RLS Policies Setup
@@ -94,6 +103,7 @@ ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE likes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connection_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connections ENABLE ROW LEVEL SECURITY;
 
 -- Profiles Policies
@@ -147,18 +157,18 @@ CREATE POLICY "Users can insert own comments" ON comments FOR INSERT WITH CHECK 
 DROP POLICY IF EXISTS "Users can delete own comments" ON comments;
 CREATE POLICY "Users can delete own comments" ON comments FOR DELETE USING (auth.uid() = user_id);
 
--- Connections Policies
-DROP POLICY IF EXISTS "Connections viewable by parties" ON connections;
-CREATE POLICY "Connections viewable by parties" ON connections FOR SELECT USING (true);
+-- Connection Requests Policies
+DROP POLICY IF EXISTS "Connection requests viewable by parties" ON connection_requests;
+CREATE POLICY "Connection requests viewable by parties" ON connection_requests FOR SELECT USING (true);
 
-DROP POLICY IF EXISTS "Users can request connection" ON connections;
-CREATE POLICY "Users can request connection" ON connections FOR INSERT WITH CHECK (auth.uid() = requester_id);
+DROP POLICY IF EXISTS "Users can request connection" ON connection_requests;
+CREATE POLICY "Users can request connection" ON connection_requests FOR INSERT WITH CHECK (auth.uid() = requester_id);
 
-DROP POLICY IF EXISTS "Users can update connection status" ON connections;
-CREATE POLICY "Users can update connection status" ON connections FOR UPDATE USING (auth.uid() = receiver_id);
+DROP POLICY IF EXISTS "Users can update connection status" ON connection_requests;
+CREATE POLICY "Users can update connection status" ON connection_requests FOR UPDATE USING (auth.uid() = receiver_id);
 
-DROP POLICY IF EXISTS "Users can delete their connections" ON connections;
-CREATE POLICY "Users can delete their connections" ON connections FOR DELETE USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+DROP POLICY IF EXISTS "Users can delete their connection requests" ON connection_requests;
+CREATE POLICY "Users can delete their connection requests" ON connection_requests FOR DELETE USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
 
 -- Messages policies
 DO $$ 
@@ -512,26 +522,6 @@ end $$;
 -- ==========================================
 -- FEED INBOX SYSTEM
 -- ==========================================
-
--- Alter the existing connections table to be connection_requests if running fresh index
--- (Done in migration, but defined here for documentation of clean schema)
-CREATE TABLE IF NOT EXISTS public.connection_requests (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  requester_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
-  receiver_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'accepted')),
-  is_seen BOOLEAN DEFAULT false,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(requester_id, receiver_id)
-);
-
-CREATE TABLE IF NOT EXISTS public.connections (
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  connection_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  is_activity_muted BOOLEAN NOT NULL DEFAULT false,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT connections_pkey PRIMARY KEY (user_id, connection_id)
-);
 
 CREATE TABLE IF NOT EXISTS public.feed_activity (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

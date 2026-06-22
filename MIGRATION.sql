@@ -5,6 +5,44 @@
 -- If 'connections' has constraints/indices, they will remain but be table-scoped.
 ALTER TABLE IF EXISTS public.connections RENAME TO connection_requests;
 
+-- Safely rename constraints on connection_requests to free up original index names
+DO $$
+BEGIN
+  -- Rename Primary Key index if still named connections_pkey
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conname = 'connections_pkey' 
+    AND conrelid = 'public.connection_requests'::regclass
+  ) THEN
+    ALTER TABLE public.connection_requests RENAME CONSTRAINT connections_pkey TO connection_requests_pkey;
+  END IF;
+
+  -- Rename unique key if still named connections_requester_id_receiver_id_key
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conname = 'connections_requester_id_receiver_id_key' 
+    AND conrelid = 'public.connection_requests'::regclass
+  ) THEN
+    ALTER TABLE public.connection_requests RENAME CONSTRAINT connections_requester_id_receiver_id_key TO connection_requests_requester_id_receiver_id_key;
+  END IF;
+END $$;
+
+-- Enable RLS for connection_requests
+ALTER TABLE public.connection_requests ENABLE ROW LEVEL SECURITY;
+
+-- Recreate policies for connection_requests to match new naming
+DROP POLICY IF EXISTS "Connection requests viewable by parties" ON public.connection_requests;
+CREATE POLICY "Connection requests viewable by parties" ON public.connection_requests FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Users can request connection" ON public.connection_requests;
+CREATE POLICY "Users can request connection" ON public.connection_requests FOR INSERT WITH CHECK (auth.uid() = requester_id);
+
+DROP POLICY IF EXISTS "Users can update connection status" ON public.connection_requests;
+CREATE POLICY "Users can update connection status" ON public.connection_requests FOR UPDATE USING (auth.uid() = receiver_id);
+
+DROP POLICY IF EXISTS "Users can delete their connection requests" ON public.connection_requests;
+CREATE POLICY "Users can delete their connection requests" ON public.connection_requests FOR DELETE USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+
 -- 2. Create the new high-performance 'connections' table (bidirectional entries)
 CREATE TABLE IF NOT EXISTS public.connections (
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
