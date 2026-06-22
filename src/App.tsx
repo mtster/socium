@@ -250,6 +250,7 @@ export default function App() {
                 id="feed-inbox-header-btn"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (handleClearVibeBubble) handleClearVibeBubble();
                   setIsFeedInboxOpen(true);
                 }}
                 className="text-white hover:text-white/80 transition-colors relative"

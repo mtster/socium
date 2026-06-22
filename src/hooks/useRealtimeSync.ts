@@ -40,7 +40,16 @@ export function useRealtimeSync({
   const handleClearVibeBubble = async () => {
     if (!userId || !rtdb) return;
     try {
-      await set(ref(rtdb, `feed/${userId}`), null);
+      await set(ref(rtdb, `feed/${userId}`), "");
+      
+      // Decrease unseen chat count when clearing feed if we navigated to feed
+      const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
+      onValue(countRef, (snap) => {
+        const val = snap.val();
+        if (typeof val === 'number' && val > 0) {
+           set(countRef, val - 1);
+        }
+      }, { onlyOnce: true });
     } catch (e) {
       console.warn('Failed to clear active vibe RTDB node:', e);
     }
@@ -72,7 +81,7 @@ export function useRealtimeSync({
           // Auto-clear after 4s to match chat bubble behavior
           setTimeout(() => {
             if (rtdb && userId) {
-              set(ref(rtdb, `feed/${userId}`), null).catch(() => {});
+              set(ref(rtdb, `feed/${userId}`), "").catch(() => {});
             }
           }, 4000);
         }

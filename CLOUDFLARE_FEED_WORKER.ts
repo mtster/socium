@@ -59,12 +59,17 @@ export default {
           continue;
         }
 
+        // Check if user already had pending feed notifications
+        const currentFeedValue = await fetchFirebase(env, `/feed/${userId}.json`, firebaseToken);
+
         // Update the 'feed' node to the initiator's UID
         await updateFirebase(env, `/feed/${userId}.json`, JSON.stringify(initiator_id), firebaseToken);
 
         if (!isOnline) {
-          // Increment unseen_chat_count
-          await transactionIncrementFirebase(env, userId, firebaseToken);
+          // Increment unseen_chat_count ONLY IF previously empty/cleared
+          if (!currentFeedValue || currentFeedValue === '""' || currentFeedValue === "") {
+             await transactionIncrementFirebase(env, userId, firebaseToken);
+          }
 
           const subscriptions = await fetchSupabase(
             env, 
@@ -82,7 +87,7 @@ export default {
             if (activity_type === 'post') {
               body = `🌏Posted`;
             } else if (activity_type === 'like') {
-              body = `❤️‍🔥Liked your post`;
+              body = `❤️🔥Liked your post`;
             } else if (activity_type === 'comment') {
               body = `🗨️Commented on your post`;
             } else if (activity_type === 'connection_request') {

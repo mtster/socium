@@ -130,7 +130,8 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             .select(`
               *,
               profiles(*),
-              has_liked:likes!left(user_id)
+              likes(user_id),
+              comments(id)
             `)
             .eq('id', activity.post_id)
             .maybeSingle();
@@ -138,7 +139,9 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
           if (postItem) {
             setActivePost({
               ...postItem,
-              has_liked: postItem.has_liked?.some((l: any) => l.user_id === currentUserId)
+              has_liked: postItem.likes?.some((l: any) => l.user_id === currentUserId),
+              likes_count: postItem.likes?.length || 0,
+              comments_count: postItem.comments?.length || 0
             });
           } else if (!cached) {
             setActivePost(null);
@@ -192,7 +195,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
           setSeenIds(new Set());
         }
       }
-    }, 0);
+    }, 400);
   };
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {
@@ -238,7 +241,8 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         .select(`
           *,
           profiles(*),
-          has_liked:likes!left(user_id)
+          likes(user_id),
+          comments(id)
         `)
         .eq('id', activePost.id)
         .maybeSingle();
@@ -246,7 +250,9 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       if (data) {
         const updatedPost = {
           ...data,
-          has_liked: data.has_liked?.some((l: any) => l.user_id === currentUserId)
+          has_liked: data.likes?.some((l: any) => l.user_id === currentUserId),
+          likes_count: data.likes?.length || 0,
+          comments_count: data.comments?.length || 0
         };
         setActivePost(updatedPost);
         
