@@ -80,6 +80,9 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
       if (isLiked) {
         const { error } = await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', currentUserId);
         if (error) throw error;
+        
+        // Also remove from feed_activity table
+        await supabase.from('feed_activity').delete().eq('post_id', postId).eq('initiator_id', currentUserId).eq('activity_type', 'like');
       } else {
         const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: currentUserId });
         if (error) throw error;

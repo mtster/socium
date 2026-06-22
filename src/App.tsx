@@ -933,6 +933,8 @@ export default function App() {
     try {
       if (isLiked) {
         await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', session.user.id);
+        // Also remove from feed_activity table
+        await supabase.from('feed_activity').delete().eq('post_id', postId).eq('initiator_id', session.user.id).eq('activity_type', 'like');
       } else {
         await supabase.from('likes').insert({ post_id: postId, user_id: session.user.id });
         await logFeedActivity({
