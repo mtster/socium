@@ -180,25 +180,25 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       case 'post':
         return (
           <span>
-            <strong className="text-white hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); onUserClick(act.initiator_id); }}>{name}</strong> created a new post
+            <strong className="text-white hover:underline">{name}</strong> created a new post
           </span>
         );
       case 'like':
         return (
           <span>
-            <strong className="text-white hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); onUserClick(act.initiator_id); }}>{name}</strong> liked your post
+            <strong className="text-white hover:underline">{name}</strong> liked your post
           </span>
         );
       case 'comment':
         return (
           <span>
-            <strong className="text-white hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); onUserClick(act.initiator_id); }}>{name}</strong> commented on your post
+            <strong className="text-white hover:underline">{name}</strong> commented on your post
           </span>
         );
       case 'connection_request':
         return (
           <span>
-            <strong className="text-white hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); onUserClick(act.initiator_id); }}>{name}</strong> sent you a connection request
+            <strong className="text-white hover:underline">{name}</strong> sent you a connection request
           </span>
         );
       default:
@@ -255,7 +255,6 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                     <div className="relative shrink-0">
                       <div 
                         className="w-11 h-11 rounded-full border border-white/10 overflow-hidden bg-zinc-850 hover:opacity-80 transition-opacity"
-                        onClick={(e) => { e.stopPropagation(); onUserClick(act.initiator_id); }}
                       >
                         {act.initiator?.avatar_url ? (
                           <img 

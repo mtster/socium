@@ -1,6 +1,5 @@
 // CLOUDFLARE FEED WORKER (socium-feed-notifications)
 // Designed for serverless trigger on inserts in public.feed_activity
-// This file is compiled to standard JavaScript (ES6 modules) for direct Cloudflare UI compatibility.
 
 export default {
   async fetch(request, env) {
@@ -8,16 +7,18 @@ export default {
       return new Response('Only POST allowed', { status: 405 });
     }
 
+    const authHeader = request.headers.get('Authorization');
+    const expectedToken = env.WEBHOOK_SECRET_TOKEN || 'secure-feed-webhook-token-override';
+    
+    if (!authHeader || authHeader !== `Bearer ${expectedToken}`) {
+      return new Response('Unauthorized', { status: 401 });
+    }
+
     try {
       const activity = await request.json();
-      const { activity_type, initiator_id, post_id, comment_id, connection_request_id, target_user_id } = activity;
+      const { activity_type, initiator_id, post_id, comment_id, initiator_name, target_user_id } = activity;
 
-      // 1. Fetch initiator's full profile info
-      const initiatorProfile = await fetchSupabase(env, `/rest/v1/profiles?id=eq.${initiator_id}&select=*`);
-      const initiator = initiatorProfile[0] || { full_name: 'Someone', username: 'someone' };
-      const initiatorName = initiator.full_name || initiator.username || 'Someone';
-
-      // 2. Identify target recipients, check muting, and notify
+      // 1. Identify target recipients
       let recipients = [];
 
       if (activity_type === 'post') {
@@ -42,10 +43,13 @@ export default {
         });
       }
 
+      const initiatorName = initiator_name || 'Someone';
+      const firebaseToken = await getFirebaseAccessToken(env);
+
       // Process each recipient
       for (const userId of recipients) {
-        const presence = await fetchFirebase(env, `/global_presence/${userId}.json`);
-        const location = await fetchFirebase(env, `/location/${userId}.json`);
+        const presence = await fetchFirebase(env, `/global_presence/${userId}.json`, firebaseToken);
+        const location = await fetchFirebase(env, `/location/${userId}.json`, firebaseToken);
 
         const isOnline = presence === true;
         const inFeedOrInbox = location === 'feed' || location === 'feed_inbox';
@@ -55,22 +59,21 @@ export default {
           continue;
         }
 
-        // Under all other circumstances, update the 'feed' node to the initiator's UID
-        await updateFirebase(env, `/feed/${userId}.json`, JSON.stringify(initiator_id));
+        // Update the 'feed' node to the initiator's UID
+        await updateFirebase(env, `/feed/${userId}.json`, JSON.stringify(initiator_id), firebaseToken);
 
-        if (isOnline) {
-          // Case B: User is online but on another page -> Update node but don't increment.
-        } else {
-          // Case A: User is offline -> Update feed node, increment atomic unseen_chat_count, send FCM!
-          await transactionIncrementFirebase(env, userId);
+        if (!isOnline) {
+          // Increment unseen_chat_count
+          await transactionIncrementFirebase(env, userId, firebaseToken);
 
           const subscriptions = await fetchSupabase(
             env, 
-            `/rest/v1/push_subscriptions?user_id=eq.${userId}&select=endpoint,auth_key,p256dh_key`
+            `/rest/v1/push_subscriptions?user_id=eq.${userId}&select=endpoint`
           );
 
           if (subscriptions && subscriptions.length > 0) {
-            const currentUnseenBadge = await fetchFirebase(env, `/unseen_chat_count/${userId}.json`) || 1;
+            const currentBadgeObj = await fetchFirebase(env, `/unseen_chat_count/${userId}.json`, firebaseToken);
+            const currentUnseenBadge = currentBadgeObj || 1;
 
             let title = 'New Action in Feed';
             let body = `${initiatorName} did something new!`;
@@ -86,6 +89,7 @@ export default {
             } else if (activity_type === 'like') {
               title = 'New Like';
               body = `${initiatorName} liked your post!`;
+              clickActionUrl = `https://sociumx.vercel.app/feed/post/${post_id}`;
             } else if (activity_type === 'comment') {
               const commentDetails = await fetchSupabase(env, `/rest/v1/comments?id=eq.${comment_id}&select=content`);
               const commentContent = commentDetails[0]?.content || '';
@@ -100,7 +104,7 @@ export default {
             }
 
             const tokens = subscriptions.map((s) => s.endpoint);
-            await sendFCMMessages(env, tokens, title, body, clickActionUrl, currentUnseenBadge);
+            await sendFCMMessages(env, tokens, title, body, clickActionUrl, currentUnseenBadge, firebaseToken);
           }
         }
       }
@@ -114,24 +118,18 @@ export default {
   }
 };
 
-// --- Dynamic OAuth2 JWT Exchange Manager for Google Service Account Json ---
-
-async function getAccessToken(env) {
-  const token = env.FIREBASE_ACCESS_TOKEN?.trim();
-  if (!token) return '';
-  if (!token.startsWith('{')) {
-    // Already acts as a direct authentication token
-    return token;
-  }
-  
+// --- Modern Google Service Account JWT Exchange ---
+async function getFirebaseAccessToken(env) {
   try {
-    const sa = JSON.parse(token);
+    const clientEmail = env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
+    
     const now = Math.floor(Date.now() / 1000);
     const jwtHeader = { alg: 'RS256', typ: 'JWT' };
     const jwtClaim = {
-      iss: sa.client_email,
+      iss: clientEmail,
       scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/cloud-platform',
-      aud: sa.token_uri || 'https://oauth2.googleapis.com/token',
+      aud: 'https://oauth2.googleapis.com/token',
       exp: now + 3000,
       iat: now
     };
@@ -147,22 +145,17 @@ async function getAccessToken(env) {
     const claimEncoded = base64UrlEncode(JSON.stringify(jwtClaim));
     const signingInput = `${headerEncoded}.${claimEncoded}`;
 
-    const pem = sa.private_key;
-    const pemContents = pem
+    const pemContents = privateKey
       .replace('-----BEGIN PRIVATE KEY-----', '')
       .replace('-----END PRIVATE KEY-----', '')
       .replace(/\s/g, '');
     
-    // Decode base64 PEM back to array buffer
     const binaryKey = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
 
     const cryptoKey = await crypto.subtle.importKey(
       'pkcs8',
       binaryKey.buffer,
-      {
-        name: 'RSASSA-PKCS1-v1_5',
-        hash: { name: 'SHA-256' }
-      },
+      { name: 'RSASSA-PKCS1-v1_5', hash: { name: 'SHA-256' } },
       false,
       ['sign']
     );
@@ -180,17 +173,13 @@ async function getAccessToken(env) {
 
     const jwt = `${signingInput}.${signatureEncoded}`;
 
-    // Exchanging signed JWT assert for modern OAuth2 token
-    const tokenRes = await fetch(sa.token_uri || 'https://oauth2.googleapis.com/token', {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
     });
 
-    if (!tokenRes.ok) {
-      throw new Error(`Failed to exchange token: ${await tokenRes.text()}`);
-    }
-
+    if (!tokenRes.ok) throw new Error(`Failed to exchange token: ${await tokenRes.text()}`);
     const tokenData = await tokenRes.json();
     return tokenData.access_token;
   } catch (err) {
@@ -199,35 +188,30 @@ async function getAccessToken(env) {
   }
 }
 
-async function getFirebaseUrl(env, path) {
-  const token = await getAccessToken(env);
+// --- Firebase Helper Functions ---
+function getFirebaseUrl(env, path, token) {
   const base = env.FIREBASE_DATABASE_URL.endsWith('/') 
     ? env.FIREBASE_DATABASE_URL.slice(0, -1) 
     : env.FIREBASE_DATABASE_URL;
   return `${base}${path}?access_token=${token}`;
 }
 
-// --- Firebase Helper Functions ---
-
-async function fetchFirebase(env, path) {
-  const url = await getFirebaseUrl(env, path);
-  const res = await fetch(url);
+async function fetchFirebase(env, path, token) {
+  const res = await fetch(getFirebaseUrl(env, path, token));
   if (!res.ok) return null;
   return res.json();
 }
 
-async function updateFirebase(env, path, bodyJson) {
-  const url = await getFirebaseUrl(env, path);
-  await fetch(url, {
+async function updateFirebase(env, path, bodyJson, token) {
+  await fetch(getFirebaseUrl(env, path, token), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: bodyJson
   });
 }
 
-async function transactionIncrementFirebase(env, userId) {
-  const url = await getFirebaseUrl(env, `/unseen_chat_count.json`);
-  await fetch(url, {
+async function transactionIncrementFirebase(env, userId, token) {
+  await fetch(getFirebaseUrl(env, `/unseen_chat_count.json`, token), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ [userId]: { ".sv": { "increment": 1 } } })
@@ -235,7 +219,6 @@ async function transactionIncrementFirebase(env, userId) {
 }
 
 // --- Supabase REST Helper Functions ---
-
 async function fetchSupabase(env, path) {
   const url = `${env.SUPABASE_URL}${path}`;
   const res = await fetch(url, {
@@ -250,34 +233,17 @@ async function fetchSupabase(env, path) {
 }
 
 // --- FCM Multi-Cast Sender Helper ---
-
-async function sendFCMMessages(
-  env, 
-  tokens, 
-  title, 
-  body, 
-  url,
-  badge
-) {
-  const fcmUrl = `https://fcm.googleapis.com/v1/projects/${env.FCM_PROJECT_ID}/messages:send`;
-  const token = await getAccessToken(env);
+async function sendFCMMessages(env, tokens, title, body, url, badge, accessToken) {
+  const fcmUrl = `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`;
   
   for (const tokenTarget of tokens) {
     const payload = {
       message: {
         token: tokenTarget,
-        notification: {
-          title,
-          body
-        },
-        data: {
-          url,
-          badge: String(badge)
-        },
+        notification: { title, body },
+        data: { url, badge: String(badge) },
         webpush: {
-          headers: {
-            Urgency: 'high'
-          },
+          headers: { Urgency: 'high' },
           notification: {
             badge: '/logo.png',
             icon: '/logo.png',
@@ -290,7 +256,7 @@ async function sendFCMMessages(
     await fetch(fcmUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
