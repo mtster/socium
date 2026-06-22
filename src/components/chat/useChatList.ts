@@ -182,10 +182,12 @@ export function useChatList(currentUserId: string) {
   useEffect(() => {
     if (!currentUserId) return;
     let unsubscribe: (() => void) | undefined;
+    let isMounted = true;
     
     import('@/src/lib/firebase').then(({ rtdb }) => {
       if (!rtdb) return;
       import('firebase/database').then(({ ref, onValue }) => {
+        if (!isMounted) return; // Prevent listener creation if already unmounted
         const inboxRef = ref(rtdb, `inboxes/${currentUserId}`);
         unsubscribe = onValue(inboxRef, (snapshot) => {
           if (snapshot.exists()) {
@@ -198,6 +200,7 @@ export function useChatList(currentUserId: string) {
     });
     
     return () => {
+      isMounted = false;
       if (unsubscribe) unsubscribe();
     };
   }, [currentUserId, setInboxStates]);

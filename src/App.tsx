@@ -256,7 +256,7 @@ export default function App() {
               >
                 <Inbox size={24} />
                 {feedUnseenCount > 0 && (
-                  <div className="absolute top-0 right-[-2px] w-2.5 h-2.5 bg-sky-500 rounded-full border border-black shadow" />
+                  <div className="absolute top-0 right-[-2px] w-2.5 h-2.5 bg-blue-600 rounded-full border border-black shadow" />
                 )}
               </button>
             )}
@@ -397,6 +397,9 @@ export default function App() {
                 onSuccess={() => {
                   setActiveTab('feed');
                   fetchUserPosts(session.user.id, session.user.id);
+                  useStore.getState().fetchFeedPosts(session.user.id).then(() => {
+                    (window as any).lastFeedFetchTime = Date.now();
+                  });
                 }}
                 onCancel={() => setActiveTab('feed')}
              />

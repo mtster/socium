@@ -53,7 +53,7 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
               <div className="relative flex flex-col items-center">
                 <Icon size={isActive ? 26 : 24} strokeWidth={isActive ? 2.5 : 2} />
                 {tab.id === 'feed' && feedUnseenCount > 0 && !activeVibeInitiatorProfile && (
-                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-sky-500 rounded-full border border-black shadow animate-pulse" />
+                  <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-blue-600 rounded-full border border-black shadow" />
                 )}
                 {tab.id === 'chat' && ((unreadCount > 0 && !floatingAvatar) || showFirstTimeChatDot) && (
                   <div className="absolute top-0 right-[-4px] w-2.5 h-2.5 bg-red-500 rounded-full border border-black shadow" />

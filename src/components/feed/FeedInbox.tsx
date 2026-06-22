@@ -73,22 +73,9 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         .order('created_at', { ascending: false })
         .limit(30);
 
-      const { data: feats2, error: err2 } = await supabase
-        .from('feed_activity')
-        .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
-        .eq('target_user_id', currentUserId)
-        .order('created_at', { ascending: false })
-        .limit(30);
-
       if (err1 && !feats1) throw err1;
-      if (err2 && !feats2) throw err2;
       
-      const combined = [...(feats1 || []), ...(feats2 || [])];
-      // remove duplicates
-      const unique = new Map();
-      combined.forEach(act => unique.set(act.id, act));
-      
-      let feats = Array.from(unique.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 30);
+      let feats = feats1 || [];
 
       // Filter out own activities, and ensure the initiator is part of our connections
       const filtered = (feats || []).filter((act: any) => {

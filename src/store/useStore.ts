@@ -317,20 +317,9 @@ export const useStore = create<AppState>((set, get) => ({
         .order('created_at', { ascending: false })
         .limit(15);
         
-      const { data: featsToMe, error: err2 } = await supabase
-        .from('feed_activity')
-        .select('*')
-        .eq('target_user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(15);
-        
       let feats: any[] = [];
-      if (featsFromConnections || featsToMe) {
-        const combined = [...(featsFromConnections || []), ...(featsToMe || [])];
-        // remove duplicates by id
-        const unique = new Map();
-        combined.forEach(f => unique.set(f.id, f));
-        feats = Array.from(unique.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 15);
+      if (featsFromConnections) {
+        feats = featsFromConnections;
       }
 
       if (feats.length > 0) {

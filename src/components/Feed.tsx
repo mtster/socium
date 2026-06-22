@@ -23,11 +23,19 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
 
   useEffect(() => {
     if (feedPosts.length === 0) {
-      fetchFeedPosts(currentUserId).then(() => setLoading(false));
+      fetchFeedPosts(currentUserId).then(() => {
+        setLoading(false);
+        (window as any).lastFeedFetchTime = Date.now();
+      });
     } else {
       setLoading(false);
-      // Background refresh
-      fetchFeedPosts(currentUserId);
+      // Background refresh only if older than 1 minute to avoid CPU spikes and crashes
+      const lastFetch = (window as any).lastFeedFetchTime || 0;
+      if (Date.now() - lastFetch > 60000) {
+        fetchFeedPosts(currentUserId).then(() => {
+          (window as any).lastFeedFetchTime = Date.now();
+        });
+      }
     }
     
     // Restore scroll position
