@@ -110,69 +110,157 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
   const handleActivityClick = async (activity: any) => {
     const isUnseen = activity.created_at > baseTimestamp && !seenIds.has(activity.id);
 
-    if (isUnseen) {
-      // 1. Mark as seen in UI state
-      const newSeen = new Set(seenIds);
-      newSeen.add(activity.id);
-      setSeenIds(newSeen);
-
-      // 2. Insert into database seen_activities
-      await supabase.from('seen_activities').insert({
-        user_id: currentUserId,
-        activity_id: activity.id
-      });
-
-      // 3. Decrement unseen count in state
-      const nextCount = Math.max(0, feedUnseenCount - 1);
-      setFeedUnseenCount(nextCount);
-
-      // 4. Garbage Collection Optimization:
-      // Check if there are no more unseen activities in the current batch
-      const remainingUnseen = activities.filter((act: any) => {
-        if (act.id === activity.id) return false;
-        const actUnseen = act.created_at > baseTimestamp && !newSeen.has(act.id);
-        return actUnseen;
-      });
-
-      if (remainingUnseen.length === 0) {
-        // Update profile high watermark 'base_timestamp'
-        const nowStr = new Date().toISOString();
-        await supabase
-          .from('profiles')
-          .update({ base_timestamp: nowStr })
-          .eq('id', currentUserId);
-        
-        // Clear all rows from seen_activities to save database space
-        await supabase
-          .from('seen_activities')
-          .delete()
-          .eq('user_id', currentUserId);
-
-        setBaseTimestamp(nowStr);
-        setSeenIds(new Set());
-      }
-    }
-
-    // 5. Action routing
     if (activity.activity_type === 'connection_request') {
       onUserClick(activity.initiator_id);
     } else if (activity.post_id) {
-      // Fetch post details to display
-      try {
-        const { data: postItem } = await supabase
-          .from('posts')
-          .select('*, profiles(*)')
-          .eq('id', activity.post_id)
-          .maybeSingle();
-        
-        if (postItem) {
-          setActivePost(postItem);
-        } else {
-          alert('This post is no longer available.');
-        }
-      } catch (err) {
-        console.error('Failed to load post details:', err);
+      // Optimistically use a cached post if available to trigger instant animation
+      const cached = useStore.getState().feedPosts.find(p => p.id === activity.post_id);
+      if (cached) {
+        setActivePost(cached);
+      } else {
+        // Fallback: set a temporary loading object to trigger the slide-in
+        setActivePost({ id: activity.post_id, _isLoading: true });
       }
+
+      // Fetch fresh post details to display
+      (async () => {
+        try {
+          const { data: postItem } = await supabase
+            .from('posts')
+            .select(`
+              *,
+              profiles(*),
+              has_liked:likes!left(user_id)
+            `)
+            .eq('id', activity.post_id)
+            .maybeSingle();
+          
+          if (postItem) {
+            setActivePost({
+              ...postItem,
+              has_liked: postItem.has_liked?.some((l: any) => l.user_id === currentUserId)
+            });
+          } else if (!cached) {
+            setActivePost(null);
+            alert('This post is no longer available.');
+          }
+        } catch (err) {
+          console.error('Failed to load post details:', err);
+          if (!cached) setActivePost(null);
+        }
+      })();
+    }
+    
+    // Defer the database writes and unseen set updates so the navigation happens instantly
+    setTimeout(async () => {
+      if (isUnseen) {
+        // 1. Mark as seen in UI state
+        const newSeen = new Set(seenIds);
+        newSeen.add(activity.id);
+        setSeenIds(newSeen);
+
+        // 2. Insert into database seen_activities
+        await supabase.from('seen_activities').insert({
+          user_id: currentUserId,
+          activity_id: activity.id
+        });
+
+        // 3. Decrement unseen count in state
+        const nextCount = Math.max(0, feedUnseenCount - 1);
+        setFeedUnseenCount(nextCount);
+
+        // 4. Garbage Collection Optimization:
+        const remainingUnseen = activities.filter((act: any) => {
+          if (act.id === activity.id) return false;
+          const actUnseen = act.created_at > baseTimestamp && !newSeen.has(act.id);
+          return actUnseen;
+        });
+
+        if (remainingUnseen.length === 0) {
+          const nowStr = new Date().toISOString();
+          await supabase
+            .from('profiles')
+            .update({ base_timestamp: nowStr })
+            .eq('id', currentUserId);
+          
+          await supabase
+            .from('seen_activities')
+            .delete()
+            .eq('user_id', currentUserId);
+
+          setBaseTimestamp(nowStr);
+          setSeenIds(new Set());
+        }
+      }
+    }, 0);
+  };
+
+  const handleLikePost = async (postId: string, isLiked: boolean) => {
+    if (!activePost) return;
+    
+    // Optimistic UI update
+    setActivePost({
+      ...activePost,
+      has_liked: !isLiked,
+      likes_count: (activePost.likes_count || 0) + (isLiked ? -1 : 1)
+    });
+
+    const { setFeedPosts, feedPosts } = useStore.getState();
+    setFeedPosts(feedPosts.map(p => {
+      if (p.id === postId) {
+        return {
+          ...p,
+          has_liked: !isLiked,
+          likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)
+        };
+      }
+      return p;
+    }));
+    
+    try {
+      if (isLiked) {
+        const { error } = await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', currentUserId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: currentUserId });
+        if (error) throw error;
+      }
+    } catch (err) {
+      console.error('Error toggling like:', err);
+    }
+  };
+
+  const handleRefetch = async () => {
+    if (!activePost) return;
+    try {
+      const { data } = await supabase
+        .from('posts')
+        .select(`
+          *,
+          profiles(*),
+          has_liked:likes!left(user_id)
+        `)
+        .eq('id', activePost.id)
+        .maybeSingle();
+
+      if (data) {
+        const updatedPost = {
+          ...data,
+          has_liked: data.has_liked?.some((l: any) => l.user_id === currentUserId)
+        };
+        setActivePost(updatedPost);
+        
+        // Update global feed so when going back, it's synced
+        const { setFeedPosts, feedPosts } = useStore.getState();
+        setFeedPosts(feedPosts.map(p => {
+          if (p.id === activePost.id) {
+            return updatedPost;
+          }
+          return p;
+        }));
+      }
+    } catch (err) {
+      console.error('Error refetching post:', err);
     }
   };
 
@@ -336,14 +424,23 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             </header>
 
             <div className="flex-1 overflow-y-auto p-4 pb-safe space-y-4">
-              <PostCard
-                post={activePost}
-                currentUserId={currentUserId}
-                onUserClick={(uid) => {
-                  setActivePost(null);
-                  onUserClick(uid);
-                }}
-              />
+              {activePost._isLoading ? (
+                <div className="flex flex-col items-center justify-center py-20 space-y-4">
+                  <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                  <p className="text-xs text-white/40 uppercase tracking-widest font-medium">Fetching post...</p>
+                </div>
+              ) : (
+                <PostCard
+                  post={activePost}
+                  currentUserId={currentUserId}
+                  onLike={handleLikePost}
+                  onRefetch={handleRefetch}
+                  onUserClick={(uid) => {
+                    setActivePost(null);
+                    onUserClick(uid);
+                  }}
+                />
+              )}
             </div>
           </motion.div>
         )}

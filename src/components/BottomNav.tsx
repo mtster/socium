@@ -68,7 +68,7 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                       initial={{ opacity: 0, y: 10, scale: 0.5 }}
                       animate={{ opacity: 1, y: -45, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.5, y: -20 }}
-                      className="absolute z-50 rounded-full border-2 border-sky-400 overflow-hidden bg-black/80 shadow-2xl w-10 h-10 flex items-center justify-center cursor-pointer"
+                      className="absolute z-50 rounded-full border-2 border-black overflow-hidden bg-black/50 shadow-2xl w-10 h-10 flex items-center justify-center cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
                         if (onClearVibeBubble) onClearVibeBubble();
@@ -77,9 +77,8 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                       {activeVibeInitiatorProfile.avatar_url ? (
                         <img src={activeVibeInitiatorProfile.avatar_url} alt="" className="w-full h-full object-cover" />
                       ) : (
-                        <span className="text-white text-xs font-bold">{(activeVibeInitiatorProfile.full_name?.charAt(0) || activeVibeInitiatorProfile.username?.charAt(0) || '?').toUpperCase()}</span>
+                        <span className="text-white text-sm font-bold">{(activeVibeInitiatorProfile.full_name?.charAt(0) || activeVibeInitiatorProfile.username?.charAt(0) || '?').toUpperCase()}</span>
                       )}
-                      <span className="absolute inset-0 border border-sky-400 rounded-full animate-ping opacity-75" />
                     </motion.div>
                   )}
 

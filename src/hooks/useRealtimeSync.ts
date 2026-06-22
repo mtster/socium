@@ -69,6 +69,12 @@ export function useRealtimeSync({
         if (data) {
           setVibeInitiatorProfile(data);
           playVibeSound();
+          // Auto-clear after 4s to match chat bubble behavior
+          setTimeout(() => {
+            if (rtdb && userId) {
+              set(ref(rtdb, `feed/${userId}`), null).catch(() => {});
+            }
+          }, 4000);
         }
 
         fetchFeedUnseenCount(userId);
