@@ -352,7 +352,7 @@ export default function App() {
                    mainRef.current.scrollTop = useStore.getState().feedScrollPos;
                  }
                }}
-               className="page-transition"
+               className="w-full"
              >
                <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
              </motion.div>
@@ -370,7 +370,7 @@ export default function App() {
                onAnimationComplete={() => {
                  if (mainRef.current) mainRef.current.scrollTop = 0;
                }}
-               className="page-transition min-h-screen"
+               className="w-full min-h-screen"
              >
                {profile ? (
                  <ProfileView 

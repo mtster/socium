@@ -380,7 +380,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                           </div>
                         )}
                       </div>
-                      <div className="absolute -bottom-1 -right-1 flex items-center justify-center shadow">
+                      <div className="absolute bottom-0 right-0 flex items-center justify-center shadow">
                         {renderIcon(act.activity_type)}
                       </div>
                     </div>

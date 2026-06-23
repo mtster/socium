@@ -66,7 +66,7 @@ export function renderClickableAndMentionText(
               e.stopPropagation();
               if (onUserClick) onUserClick(mentionIdGroup);
             },
-            className: "bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded-md font-semibold cursor-pointer transition-colors select-none inline-block align-baseline mx-0.5"
+            className: "text-blue-400 font-semibold hover:underline cursor-pointer inline align-baseline select-text"
           },
           mentionNameGroup
         )

@@ -22,6 +22,7 @@ export default function MentionEditor({
   const [dropdownVisible, setDropdownVisible] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [triggerRange, setTriggerRange] = useState<Range | null>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<'above' | 'below'>('above');
 
   // Connections pagination & search
   const [connections, setConnections] = useState<Profile[]>([]);
@@ -95,6 +96,21 @@ export default function MentionEditor({
     }
   }, [dropdownVisible, mentionQuery]);
 
+  // Determine dynamic dropdown placement
+  useEffect(() => {
+    if (dropdownVisible && editorRef.current) {
+      const rect = editorRef.current.getBoundingClientRect();
+      const spaceAbove = rect.top;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // If there is less than 240px above, and more space below, display below
+      if (spaceAbove < 240 && spaceBelow > spaceAbove) {
+        setDropdownPosition('below');
+      } else {
+        setDropdownPosition('above');
+      }
+    }
+  }, [dropdownVisible]);
+
   // Handle manual search input in the dropdown
   const handleDropdownSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -152,6 +168,70 @@ export default function MentionEditor({
     }
   };
 
+  // Clear pending deletion highlights on edit/click
+  const clearAllHighlights = () => {
+    if (editorRef.current) {
+      const highlighted = editorRef.current.querySelectorAll('.bg-blue-500\\/20');
+      highlighted.forEach((el) => {
+        el.classList.remove('bg-blue-500/20', 'underline', 'px-1', 'rounded');
+      });
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Backspace') {
+      clearAllHighlights();
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    let nodeToDelete: HTMLElement | null = null;
+
+    const startContainer = range.startContainer;
+    const startOffset = range.startOffset;
+
+    // Detect if cursor is positioned immediately after a mention node
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+      if (startOffset === 0) {
+        const prevSibling = startContainer.previousSibling;
+        if (prevSibling && prevSibling.nodeType === Node.ELEMENT_NODE && (prevSibling as HTMLElement).getAttribute('data-id')) {
+          nodeToDelete = prevSibling as HTMLElement;
+        }
+      } else if (startOffset === 1 && startContainer.textContent?.startsWith('\u00A0')) {
+        const prevSibling = startContainer.previousSibling;
+        if (prevSibling && prevSibling.nodeType === Node.ELEMENT_NODE && (prevSibling as HTMLElement).getAttribute('data-id')) {
+          nodeToDelete = prevSibling as HTMLElement;
+        }
+      }
+    } else if (startContainer.nodeType === Node.ELEMENT_NODE) {
+      const childNode = startContainer.childNodes[startOffset - 1];
+      if (childNode && childNode.nodeType === Node.ELEMENT_NODE && (childNode as HTMLElement).getAttribute('data-id')) {
+        nodeToDelete = childNode as HTMLElement;
+      }
+    }
+
+    if (nodeToDelete) {
+      // Facebook-style delete flow
+      if (!nodeToDelete.classList.contains('bg-blue-500/20')) {
+        e.preventDefault();
+        // Highlight more to indicate impending delete
+        nodeToDelete.classList.add('bg-blue-500/20', 'underline', 'px-1', 'rounded');
+      } else {
+        e.preventDefault();
+        // Delete the trailing space if it exists
+        const nextSib = nodeToDelete.nextSibling;
+        if (nextSib && nextSib.nodeType === Node.TEXT_NODE && nextSib.textContent?.startsWith('\u00A0')) {
+          nextSib.textContent = nextSib.textContent.substring(1);
+        }
+        nodeToDelete.remove();
+        handleContentChange();
+      }
+    }
+  };
+
   const insertMention = (profile: Profile) => {
     if (!editorRef.current) return;
 
@@ -168,9 +248,9 @@ export default function MentionEditor({
       range.setEnd(textNode, range.startOffset);
       range.deleteContents();
 
-      // Create distinct highlight tag
+      // Create distinct highlight tag - inline clean blue styling as requested
       const span = document.createElement('span');
-      span.className = "bg-blue-500/15 border border-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded-lg inline-block select-none mx-0.5 align-baseline";
+      span.className = "text-blue-400 font-semibold cursor-pointer mx-0.5 inline align-baseline hover:underline";
       span.setAttribute('contenteditable', 'false');
       span.setAttribute('data-id', profile.id);
       span.setAttribute('data-name', profile.full_name || profile.username || 'Someone');
@@ -230,7 +310,7 @@ export default function MentionEditor({
     if (!text) return '';
     const regex = /@\[([^\]]+)\]\(mention:([a-f0-9\-]+)\)/g;
     return text.replace(regex, (match, name, id) => {
-      return `<span class="bg-blue-500/15 border border-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded-lg inline-block select-none mx-0.5 align-baseline" contenteditable="false" data-id="${id}" data-name="${name}">${name}</span>&nbsp;`;
+      return `<span class="text-blue-400 font-semibold cursor-pointer mx-0.5 inline align-baseline hover:underline" contenteditable="false" data-id="${id}" data-name="${name}">${name}</span>&nbsp;`;
     });
   }
 
@@ -240,8 +320,10 @@ export default function MentionEditor({
         ref={editorRef}
         contentEditable
         onInput={handleContentChange}
+        onKeyDown={handleKeyDown}
         onKeyUp={handleInputOrSelectionChange}
         onMouseUp={handleInputOrSelectionChange}
+        onClick={clearAllHighlights}
         placeholder={placeholder}
         className={`w-full bg-transparent p-2 text-base text-white focus:outline-none min-h-[80px] max-h-[250px] overflow-y-auto resize-none placeholder:text-white/20 select-text ${className} before:content-[attr(placeholder)] before:text-white/20 before:absolute before:pointer-events-none empty:before:block before:hidden`}
       />
@@ -250,7 +332,9 @@ export default function MentionEditor({
       {dropdownVisible && (
         <div
           ref={dropdownRef}
-          className="absolute left-0 bottom-full mb-2 w-72 bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl z-[120] flex flex-col overflow-hidden max-h-60"
+          className={`absolute left-0 w-72 bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl z-[120] flex flex-col overflow-hidden max-h-60 ${
+            dropdownPosition === 'above' ? 'bottom-full mb-2' : 'top-full mt-2'
+          }`}
         >
           {/* Compact Search Bar inside dropdown */}
           <div className="flex items-center px-3 py-2 border-b border-white/10 shrink-0 bg-black/40">
@@ -278,7 +362,10 @@ export default function MentionEditor({
               connections.map(profile => (
                 <button
                   key={profile.id}
-                  onClick={() => insertMention(profile)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    insertMention(profile);
+                  }}
                   className="w-full px-4 py-2 flex items-center space-x-3 hover:bg-white/5 active:bg-white/10 transition-colors text-left"
                 >
                   <div className="w-6 h-6 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
