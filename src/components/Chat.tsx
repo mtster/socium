@@ -75,7 +75,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
               return (
               <motion.button 
                 key={c.id} 
-                layout 
                 transition={{ type: "spring", stiffness: 380, damping: 36, mass: 1 }}
                 onClick={() => {
                   markChatAsSeenOptimistically(c.id);

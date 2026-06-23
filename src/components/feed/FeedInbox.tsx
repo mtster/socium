@@ -287,11 +287,13 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
 
   const renderActivityText = (act: any) => {
     const name = act.initiator?.full_name || act.initiator?.username || 'Someone';
+    const isMentioned = act.tagged_user_ids?.includes(currentUserId);
+    
     switch (act.activity_type) {
       case 'post':
         return (
           <span>
-            <strong className="text-white hover:underline">{name}</strong> created a new post
+            <strong className="text-white hover:underline">{name}</strong> {isMentioned ? 'mentioned you in a post' : 'created a new post'}
           </span>
         );
       case 'like':
@@ -303,7 +305,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       case 'comment':
         return (
           <span>
-            <strong className="text-white hover:underline">{name}</strong> commented on your post
+            <strong className="text-white hover:underline">{name}</strong> {isMentioned ? 'mentioned you in a comment' : 'commented on your post'}
           </span>
         );
       case 'connection_request':
@@ -380,7 +382,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                           </div>
                         )}
                       </div>
-                      <div className="absolute bottom-0 right-0 flex items-center justify-center shadow">
+                      <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 flex items-center justify-center shadow">
                         {renderIcon(act.activity_type)}
                       </div>
                     </div>

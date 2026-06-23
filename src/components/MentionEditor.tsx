@@ -171,9 +171,9 @@ export default function MentionEditor({
   // Clear pending deletion highlights on edit/click
   const clearAllHighlights = () => {
     if (editorRef.current) {
-      const highlighted = editorRef.current.querySelectorAll('.bg-blue-500\\/20');
+      const highlighted = editorRef.current.querySelectorAll('.bg-blue-500\\/30');
       highlighted.forEach((el) => {
-        el.classList.remove('bg-blue-500/20', 'underline', 'px-1', 'rounded');
+        el.classList.remove('bg-blue-500/30', 'rounded-sm');
       });
     }
   };
@@ -215,10 +215,10 @@ export default function MentionEditor({
 
     if (nodeToDelete) {
       // Facebook-style delete flow
-      if (!nodeToDelete.classList.contains('bg-blue-500/20')) {
+      if (!nodeToDelete.classList.contains('bg-blue-500/30')) {
         e.preventDefault();
         // Highlight more to indicate impending delete
-        nodeToDelete.classList.add('bg-blue-500/20', 'underline', 'px-1', 'rounded');
+        nodeToDelete.classList.add('bg-blue-500/30', 'rounded-sm');
       } else {
         e.preventDefault();
         // Delete the trailing space if it exists
@@ -245,7 +245,9 @@ export default function MentionEditor({
 
     if (atIdx !== -1) {
       range.setStart(textNode, atIdx);
-      range.setEnd(textNode, range.startOffset);
+      // Delete exactly the '@' plus the length of the query
+      const endPos = Math.min(textVal.length, atIdx + 1 + mentionQuery.length);
+      range.setEnd(textNode, endPos);
       range.deleteContents();
 
       // Create distinct highlight tag - inline clean blue styling as requested

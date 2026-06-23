@@ -340,13 +340,13 @@ export default function App() {
         ref={mainRef} 
         className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]"
       >
-        <AnimatePresence>
+        <AnimatePresence mode="popLayout">
            {activeTab === 'feed' && (
              <motion.div 
                key="feed" 
-               initial={{ opacity: 0, x: -20 }} 
-               animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.15, ease: "easeOut" }} onAnimationStart={() => { if (mainRef.current) { mainRef.current.scrollTop = useStore.getState().feedScrollPos; } }}
+               initial={{ opacity: 0, y: 50 }} 
+               animate={{ opacity: 1, y: 0 }} 
+               exit={{ opacity: 0, y: 50 }} transition={{ duration: 0.25, ease: "easeOut" }} onAnimationStart={() => { if (mainRef.current) { mainRef.current.scrollTop = useStore.getState().feedScrollPos; } }}
                onAnimationComplete={() => {
                  if (mainRef.current) {
                    mainRef.current.scrollTop = useStore.getState().feedScrollPos;
