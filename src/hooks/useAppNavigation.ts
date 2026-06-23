@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Profile, Post } from '../types';
 import { useStore } from '../store/useStore';
@@ -14,9 +14,6 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
   const mainRef = useRef<HTMLElement>(null);
   
   const setActiveTab = (tab: string) => {
-    if (activeTabRef.current === 'feed' && mainRef.current) {
-      useStore.getState().setFeedScrollPos(mainRef.current.scrollTop);
-    }
     (window as any).currentActiveTab = tab;
     previousTabRef.current = activeTabRef.current;
     activeTabRef.current = tab;
@@ -45,7 +42,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     if (userId === session.user.id && !forcePopup) {
       setViewingProfileId(null);
       setActiveTab('profile');
-      mainRef.current?.scrollTo(0, 0);
+      mainRef.current?.querySelector('.overflow-y-auto')?.scrollTo(0, 0);
       return;
     }
 
@@ -111,14 +108,17 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         setViewingProfileId(null);
         return; // Just close the popup, do not scroll
       }
+      
+      const scrollable = mainRef.current?.querySelector('.overflow-y-auto');
+      
       if (e.detail?.tabId === 'chat') {
         if (initialActiveChat) {
           setInitialActiveChat(null);
         } else {
-          mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+          scrollable?.scrollTo({ top: 0, behavior: 'smooth' });
         }
       } else {
-        mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+        scrollable?.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
     
@@ -378,14 +378,6 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
       localStorage.setItem('first_time_chat_notif', 'true');
     }
   }, [activeTab, session?.user, hasSeenPromo]);
-
-  useEffect(() => {
-    if (activeTab !== 'feed' && !sessionStorage.getItem('scroll_to_post_id')) {
-      if (mainRef.current) {
-        mainRef.current.scrollTop = 0;
-      }
-    }
-  }, [activeTab]);
 
   return {
     activeTab,

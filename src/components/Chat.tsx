@@ -33,10 +33,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     return () => window.removeEventListener('openCreateGroup', handleOpenCreateGroup);
   }, []);
 
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const handleResetTab = (e: any) => {
-      if (e.detail?.tabId === 'chat' && !activeChat) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (e.detail?.tabId === 'chat') {
+        if (activeChat) {
+          setActiveChat(null);
+        } else if (scrollRef.current) {
+          scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       }
     };
     window.addEventListener('resetTab', handleResetTab);
@@ -69,13 +75,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
              <input type="text" placeholder="Search chats..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl pl-12 pr-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
            </div>
         </div>
-        <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
           {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No chats found</div> : filteredConnections.map(c => {
               const isUnread = inboxStates?.[c.id] === false || (inboxStates?.[c.id] === undefined && c.unreadCount !== undefined && c.unreadCount > 0);
               return (
-              <motion.button 
+              <button 
                 key={c.id} 
-                transition={{ type: "spring", stiffness: 380, damping: 36, mass: 1 }}
                 onClick={() => {
                   markChatAsSeenOptimistically(c.id);
                   setActiveChat(c);
@@ -107,7 +112,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                    {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}
                    {isUnread ? <div className="w-2.5 h-2.5 bg-white rounded-full" /> : null}
                  </div>
-              </motion.button>
+              </button>
               );
           })}
         </div>

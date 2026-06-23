@@ -8,6 +8,7 @@ import MentionEditor from './MentionEditor';
 import { extractMentionedUserIds } from '@/src/lib/utils';
 
 interface CreatePostProps {
+  key?: string;
   onSuccess: () => void;
   onCancel: () => void;
   userId: string;

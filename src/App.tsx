@@ -338,21 +338,25 @@ export default function App() {
       {/* Main View Area */}
       <main 
         ref={mainRef} 
-        className="flex-1 overflow-y-auto overflow-x-hidden relative [-webkit-overflow-scrolling:touch]"
+        className="flex-1 overflow-hidden relative"
       >
         <AnimatePresence mode="popLayout">
            {activeTab === 'feed' && (
              <motion.div 
                key="feed" 
-               initial={{ opacity: 0, y: 50 }} 
+               initial={{ opacity: 1, y: '100%' }} 
                animate={{ opacity: 1, y: 0 }} 
-               exit={{ opacity: 0, y: 50 }} transition={{ duration: 0.25, ease: "easeOut" }} onAnimationStart={() => { if (mainRef.current) { mainRef.current.scrollTop = useStore.getState().feedScrollPos; } }}
-               onAnimationComplete={() => {
-                 if (mainRef.current) {
-                   mainRef.current.scrollTop = useStore.getState().feedScrollPos;
+               exit={{ opacity: 0, y: '20%' }} 
+               transition={{ type: 'spring', damping: 26, stiffness: 220 }} 
+               className="absolute inset-0 overflow-y-auto overflow-x-hidden [-webkit-overflow-scrolling:touch] bg-black"
+               ref={(node) => {
+                 if (node) {
+                   node.scrollTop = useStore.getState().feedScrollPos;
                  }
                }}
-               className="w-full"
+               onScroll={(e) => {
+                 useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
+               }}
              >
                <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
              </motion.div>
@@ -364,13 +368,7 @@ export default function App() {
                initial={{ opacity: 0, scale: 0.95 }} 
                animate={{ opacity: 1, scale: 1 }} 
                exit={{ opacity: 0, scale: 1.05 }}
-               onAnimationStart={() => {
-                 if (mainRef.current) mainRef.current.scrollTop = 0;
-               }}
-               onAnimationComplete={() => {
-                 if (mainRef.current) mainRef.current.scrollTop = 0;
-               }}
-               className="w-full min-h-screen"
+               className="absolute inset-0 overflow-y-auto overflow-x-hidden [-webkit-overflow-scrolling:touch] bg-black"
              >
                {profile ? (
                  <ProfileView 
@@ -394,6 +392,7 @@ export default function App() {
 
            {activeTab === 'create' && (
              <CreatePost 
+                key="create"
                 userId={session.user.id}
                 onSuccess={() => {
                   setActiveTab('feed');
