@@ -380,7 +380,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                           </div>
                         )}
                       </div>
-                      <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-zinc-900 border border-white/10 flex items-center justify-center shadow">
+                      <div className="absolute -bottom-1 -right-1 flex items-center justify-center shadow">
                         {renderIcon(act.activity_type)}
                       </div>
                     </div>
@@ -388,7 +388,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                     {/* Activity message */}
                     <div className="flex-1 min-w-0 text-xs text-white/70 leading-relaxed">
                       {renderActivityText(act)}
-                      <div className="text-[10px] text-white/45 mt-1 font-mono">
+                      <div className="text-[10px] text-white/50 mt-1">
                         {formatDate(act.created_at)}
                       </div>
                     </div>

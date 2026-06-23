@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Heart, MessageCircle, Send, MoreHorizontal, Trash, Edit2, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { Post } from '@/src/types';
-import { formatDate, cn } from '@/src/lib/utils';
+import { formatDate, cn, renderClickableAndMentionText } from '@/src/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import CommentsModal from './CommentsModal';
 import EditPostModal from './EditPostModal';
@@ -32,28 +32,7 @@ interface PostCardProps {
   onRefetch?: () => void;
 }
 
-function renderClickableText(text: string): React.ReactNode {
-  if (!text) return '';
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const parts = text.split(urlRegex);
-  return parts.map((part, i) => {
-    if (part.match(urlRegex)) {
-      return (
-        <a 
-          key={i} 
-          href={part} 
-          target="_blank" 
-          rel="noopener noreferrer" 
-          className="text-white/90 underline decoration-white/40 hover:text-white hover:decoration-white transition-all duration-150 break-all select-text"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {part}
-        </a>
-      );
-    }
-    return part;
-  });
-}
+
 
 export default function PostCard({ post, currentUserId, onLike, onDelete, onUserClick, onRefetch }: PostCardProps) {
   const { setSharePost } = useStore();
@@ -273,7 +252,7 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       {post.caption && (
         <div className="px-4 pb-3">
           <p className="text-sm leading-relaxed text-white/90 whitespace-pre-line">
-            {renderClickableText(post.caption)}
+            {renderClickableAndMentionText(post.caption, onUserClick)}
           </p>
         </div>
       )}

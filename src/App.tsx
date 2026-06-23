@@ -346,7 +346,7 @@ export default function App() {
                key="feed" 
                initial={{ opacity: 0, x: -20 }} 
                animate={{ opacity: 1, x: 0 }} 
-               exit={{ opacity: 0, x: 20 }}
+               exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.15, ease: "easeOut" }} onAnimationStart={() => { if (mainRef.current) { mainRef.current.scrollTop = useStore.getState().feedScrollPos; } }}
                onAnimationComplete={() => {
                  if (mainRef.current) {
                    mainRef.current.scrollTop = useStore.getState().feedScrollPos;

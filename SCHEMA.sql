@@ -562,8 +562,12 @@ CREATE TABLE IF NOT EXISTS public.feed_activity (
   post_id UUID REFERENCES public.posts(id) ON DELETE CASCADE,
   comment_id UUID REFERENCES public.comments(id) ON DELETE CASCADE,
   connection_request_id UUID REFERENCES public.connection_requests(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  tagged_user_ids UUID[] DEFAULT ARRAY[]::UUID[]
 );
+
+-- Safely add tagged_user_ids to feed_activity in case table already exists
+ALTER TABLE public.feed_activity ADD COLUMN IF NOT EXISTS tagged_user_ids UUID[] DEFAULT ARRAY[]::UUID[];
 
 CREATE TABLE IF NOT EXISTS public.seen_activities (
   user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
@@ -649,7 +653,8 @@ BEGIN
     'comment_id', NEW.comment_id,
     'connection_request_id', NEW.connection_request_id,
     'created_at', NEW.created_at,
-    'target_user_id', target_user_id
+    'target_user_id', target_user_id,
+    'tagged_user_ids', NEW.tagged_user_ids
   );
 
   PERFORM net.http_post(

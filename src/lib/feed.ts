@@ -9,6 +9,7 @@ export interface FeedActivityPayload {
   commentId?: string | null;
   connectionRequestId?: string | null;
   targetUserId?: string | null;
+  taggedUserIds?: string[] | null;
 }
 
 export async function logFeedActivity({
@@ -18,6 +19,7 @@ export async function logFeedActivity({
   commentId,
   connectionRequestId,
   targetUserId,
+  taggedUserIds,
 }: FeedActivityPayload) {
   try {
     // 1. Insert into Supabase feed_activity table
@@ -29,6 +31,7 @@ export async function logFeedActivity({
         post_id: postId || null,
         comment_id: commentId || null,
         connection_request_id: connectionRequestId || null,
+        tagged_user_ids: taggedUserIds || null,
       })
       .select()
       .maybeSingle();
@@ -47,15 +50,18 @@ export async function logFeedActivity({
           .eq('connection_id', initiatorId)
           .eq('is_activity_muted', false);
 
-        if (conns && conns.length > 0) {
+        const connectionIds = (conns || []).map(c => c.user_id).filter(Boolean) as string[];
+        
+        // Combine connections and tagged users for RTDB sync
+        const allTargets = Array.from(new Set([...connectionIds, ...(taggedUserIds || [])])).filter(uid => uid && uid !== initiatorId);
+
+        if (allTargets.length > 0) {
           await Promise.all(
-            conns.map(async (c) => {
-              if (c.user_id) {
-                try {
-                  await set(ref(rtdb, `feed/${c.user_id}`), initiatorId);
-                } catch (e) {
-                  console.warn(`[FeedActivity] RTDB sync error for user ${c.user_id}:`, e);
-                }
+            allTargets.map(async (uid) => {
+              try {
+                await set(ref(rtdb, `feed/${uid}`), initiatorId);
+              } catch (e) {
+                console.warn(`[FeedActivity] RTDB sync error for user ${uid}:`, e);
               }
             })
           );
@@ -82,23 +88,36 @@ export async function logFeedActivity({
           if (req) recipientId = req.receiver_id;
         }
 
-        // Write targeted indicator to recipient's feed node (if not self and not muted)
-        if (recipientId && recipientId !== initiatorId) {
-          const { data: isMuted } = await supabase
-            .from('connections')
-            .select('user_id')
-            .eq('user_id', recipientId)
-            .eq('connection_id', initiatorId)
-            .eq('is_activity_muted', true)
-            .maybeSingle();
+        // Build list of all targets for RTDB sync in comment / like
+        const allTargets = Array.from(new Set([
+          ...(recipientId ? [recipientId] : []),
+          ...(taggedUserIds || [])
+        ])).filter(uid => uid && uid !== initiatorId);
 
-          if (!isMuted) {
-            try {
-              await set(ref(rtdb, `feed/${recipientId}`), initiatorId);
-            } catch (e) {
-              console.warn(`[FeedActivity] RTDB target sync error for recipient ${recipientId}:`, e);
-            }
-          }
+        if (allTargets.length > 0) {
+          await Promise.all(
+            allTargets.map(async (uid) => {
+              // Check if user is muted (only apply mute check for regular recipient if they aren't tagged)
+              const isTagged = taggedUserIds?.includes(uid);
+              if (!isTagged && uid === recipientId) {
+                const { data: isMuted } = await supabase
+                  .from('connections')
+                  .select('user_id')
+                  .eq('user_id', recipientId)
+                  .eq('connection_id', initiatorId)
+                  .eq('is_activity_muted', true)
+                  .maybeSingle();
+
+                if (isMuted) return; // Skip if muted and not tagged
+              }
+
+              try {
+                await set(ref(rtdb, `feed/${uid}`), initiatorId);
+              } catch (e) {
+                console.warn(`[FeedActivity] RTDB target sync error for recipient ${uid}:`, e);
+              }
+            })
+          );
         }
       }
     }

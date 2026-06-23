@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { X, Send, User } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { motion } from 'motion/react';
-import { formatDate, cn } from '@/src/lib/utils';
+import { formatDate, cn, renderClickableAndMentionText, extractMentionedUserIds } from '@/src/lib/utils';
 import { Profile, Post } from '@/src/types';
 import { logFeedActivity } from '@/src/lib/feed';
+import MentionEditor from './MentionEditor';
 
 interface CommentsModalProps {
   post: Post;
@@ -70,11 +71,13 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
       if (error) throw error;
       
       if (data) {
+        const taggedUserIds = extractMentionedUserIds(text);
         await logFeedActivity({
           activityType: 'comment',
           initiatorId: currentUserId,
           postId: post.id,
-          commentId: data.id
+          commentId: data.id,
+          taggedUserIds: taggedUserIds.length > 0 ? taggedUserIds : null
         });
       }
       
@@ -143,7 +146,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
                 >
                   {post.profiles?.full_name || post.profiles?.username}
                 </p>
-                {post.caption && <p className="text-sm text-white/80 mt-1 leading-relaxed">{post.caption}</p>}
+                {post.caption && <p className="text-sm text-white/80 mt-1 leading-relaxed">{renderClickableAndMentionText(post.caption, onUserClick)}</p>}
                 {post.image_url && (() => {
                   const images = post.image_url.split(',').filter(Boolean);
                   if (images.length === 0) return null;
@@ -161,20 +164,18 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
              </div>
           </div>
 
-          <form onSubmit={handlePostComment} className="flex items-center ml-14 mr-4 mt-2 mb-2 relative">
-            <input
-              ref={inputRef}
-              autoFocus
-              type="text"
+          <form onSubmit={handlePostComment} className="flex items-end ml-14 mr-4 mt-2 mb-2 relative w-full pr-12">
+            <MentionEditor
               value={text}
-              onChange={e => setText(e.target.value)}
+              onChange={setText}
               placeholder="Type a comment..."
-              className="flex-1 bg-transparent border-0 h-10 pl-0 pr-12 text-sm focus:outline-none transition-all font-medium placeholder:text-white/30"
+              currentUserId={currentUserId}
+              className="flex-1 h-auto text-sm py-2"
             />
             <button 
               type="submit" 
               disabled={posting || !text.trim()}
-              className="absolute right-0 flex items-center justify-center text-white font-bold disabled:opacity-30 active:scale-95 transition-transform text-sm"
+              className="absolute right-0 bottom-2 flex items-center justify-center text-white font-bold disabled:opacity-30 active:scale-95 transition-transform text-sm"
             >
               Post
             </button>
@@ -214,7 +215,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
                   >
                     {comment.profiles?.full_name || comment.profiles?.username}
                   </p>
-                  <p className="text-sm text-white/90 leading-relaxed">{comment.content}</p>
+                  <p className="text-sm text-white/90 leading-relaxed">{renderClickableAndMentionText(comment.content, onUserClick)}</p>
                 </div>
                 <div className="flex items-center mt-2 space-x-4">
                   <span className="text-[10px] text-white/40">{formatDate(comment.created_at)}</span>

@@ -4,6 +4,8 @@ import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { Profile } from '@/src/types';
 import { logFeedActivity } from '@/src/lib/feed';
+import MentionEditor from './MentionEditor';
+import { extractMentionedUserIds } from '@/src/lib/utils';
 
 interface CreatePostProps {
   onSuccess: () => void;
@@ -128,10 +130,12 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
         }
 
         if (finalPost) {
+          const taggedUserIds = extractMentionedUserIds(caption);
           await logFeedActivity({
             activityType: 'post',
             initiatorId: userId,
             postId: finalPost.id,
+            taggedUserIds: taggedUserIds.length > 0 ? taggedUserIds : null,
           });
         }
       } catch (dbError: any) {
@@ -181,11 +185,12 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
       <div className="flex-1 overflow-y-auto px-4 py-8 flex flex-col">
         <div className="space-y-2 mb-6">
           <label className="text-[10px] uppercase tracking-widest font-bold text-white/30 px-1">Describe the vibe</label>
-          <textarea
+          <MentionEditor
             value={caption}
-            onChange={(e) => setCaption(e.target.value)}
+            onChange={setCaption}
             placeholder="Write a caption..."
-            className="w-full bg-transparent p-2 text-lg text-white focus:outline-none min-h-[80px] resize-none placeholder:text-white/20"
+            currentUserId={userId}
+            className="text-lg"
           />
         </div>
 

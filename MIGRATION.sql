@@ -73,8 +73,12 @@ CREATE TABLE IF NOT EXISTS public.feed_activity (
   post_id UUID REFERENCES public.posts(id) ON DELETE CASCADE,
   comment_id UUID REFERENCES public.comments(id) ON DELETE CASCADE,
   connection_request_id UUID REFERENCES public.connection_requests(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  tagged_user_ids UUID[] DEFAULT ARRAY[]::UUID[]
 );
+
+-- Safely add tagged_user_ids to feed_activity in case table already exists
+ALTER TABLE public.feed_activity ADD COLUMN IF NOT EXISTS tagged_user_ids UUID[] DEFAULT ARRAY[]::UUID[];
 
 -- 4. Create 'seen_activities' table for transient tracking
 CREATE TABLE IF NOT EXISTS public.seen_activities (
@@ -134,11 +138,11 @@ SECURITY DEFINER
 AS $$
 DECLARE
   cf_worker_url TEXT := 'https://socium-feed-notifications.brare-black.workers.dev/';
+  webhook_secret TEXT := 'secure-feed-webhook-token-override';
   payload JSONB;
   target_user_id UUID;
-  post_info RECORD;
+  initiator_name TEXT;
 BEGIN
-  -- Determine target receiver uid if it's single recipient (like, comment, connection request)
   IF NEW.activity_type = 'connection_request' THEN
     SELECT receiver_id INTO target_user_id FROM public.connection_requests WHERE id = NEW.connection_request_id;
   ELSIF NEW.activity_type = 'like' THEN
@@ -147,23 +151,37 @@ BEGIN
     SELECT user_id INTO target_user_id FROM public.posts WHERE id = NEW.post_id;
   END IF;
 
+  -- Don't send if it's the user's own action (e.g. liking own post)
+  IF target_user_id IS NOT NULL AND target_user_id = NEW.initiator_id THEN
+    RETURN NEW;
+  END IF;
+
+  -- Fetch initiator name
+  SELECT COALESCE(full_name, username, 'Someone') INTO initiator_name 
+  FROM public.profiles 
+  WHERE id = NEW.initiator_id;
+
   payload := jsonb_build_object(
     'id', NEW.id,
     'activity_type', NEW.activity_type,
     'initiator_id', NEW.initiator_id,
+    'initiator_name', initiator_name,
     'post_id', NEW.post_id,
     'comment_id', NEW.comment_id,
     'connection_request_id', NEW.connection_request_id,
     'created_at', NEW.created_at,
-    'target_user_id', target_user_id
+    'target_user_id', target_user_id,
+    'tagged_user_ids', NEW.tagged_user_ids
   );
 
-  -- Invoke the outward HTTP pipeline to Cloudflare in real-time
   PERFORM net.http_post(
       url := cf_worker_url,
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || webhook_secret
+      ),
       body := payload
   );
-
   RETURN NEW;
 END;
 $$;

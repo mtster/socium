@@ -16,28 +16,86 @@ export default {
 
     try {
       const activity = await request.json();
-      const { activity_type, initiator_id, post_id, comment_id, initiator_name, target_user_id } = activity;
+      const { activity_type, initiator_id, post_id, comment_id, initiator_name, target_user_id, tagged_user_ids } = activity;
 
-      // 1. Identify target recipients
-      let recipients = [];
+      // 1. Identify target recipients and their notification bodies
+      let recipientGroups = []; // array of { userId: string, body: string }
+
+      const taggedIds = (Array.isArray(tagged_user_ids) ? tagged_user_ids : []).filter(id => id && id !== initiator_id);
 
       if (activity_type === 'post') {
         const connections = await fetchSupabase(
           env, 
           `/rest/v1/connections?connection_id=eq.${initiator_id}&is_activity_muted=eq.false&select=user_id`
         );
-        recipients = connections.map((c) => c.user_id);
-      } else if (target_user_id) {
-        const mutedRecord = await fetchSupabase(
-          env,
-          `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
-        );
-        if (mutedRecord.length === 0) {
-          recipients = [target_user_id];
+        const connectionIds = connections.map((c) => c.user_id);
+
+        if (taggedIds.length === 0) {
+          // Standard post logic
+          for (const uid of connectionIds) {
+            recipientGroups.push({ userId: uid, body: `🌏Posted` });
+          }
+        } else {
+          // Send tagged notifications to tagged users
+          for (const uid of taggedIds) {
+            recipientGroups.push({ userId: uid, body: `@Mentioned you in a post🌏` });
+          }
+          // Send regular notifications to untagged connections
+          for (const uid of connectionIds) {
+            if (!taggedIds.includes(uid)) {
+              recipientGroups.push({ userId: uid, body: `🌏Posted` });
+            }
+          }
+        }
+      } else if (activity_type === 'comment') {
+        if (taggedIds.length === 0) {
+          // Standard comment logic
+          if (target_user_id && target_user_id !== initiator_id) {
+            const mutedRecord = await fetchSupabase(
+              env,
+              `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
+            );
+            if (mutedRecord.length === 0) {
+              recipientGroups.push({ userId: target_user_id, body: `🗨️Commented on your post` });
+            }
+          }
+        } else {
+          // Tagged comments logic
+          // 1. Tagged users get @Mentioned you in a comment🗨️
+          for (const uid of taggedIds) {
+            recipientGroups.push({ userId: uid, body: `@Mentioned you in a comment🗨️` });
+          }
+          // 2. Post author (target_user_id) gets normal comment notification ONLY IF they are NOT in taggedIds and not self
+          if (target_user_id && target_user_id !== initiator_id && !taggedIds.includes(target_user_id)) {
+            const mutedRecord = await fetchSupabase(
+              env,
+              `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
+            );
+            if (mutedRecord.length === 0) {
+              recipientGroups.push({ userId: target_user_id, body: `🗨️Commented on your post` });
+            }
+          }
+        }
+      } else {
+        // Other activity types (like, connection_request)
+        if (target_user_id && target_user_id !== initiator_id) {
+          const mutedRecord = await fetchSupabase(
+            env,
+            `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
+          );
+          if (mutedRecord.length === 0) {
+            let bodyText = 'did something new!';
+            if (activity_type === 'like') {
+              bodyText = `❤️‍🔥Liked your post`;
+            } else if (activity_type === 'connection_request') {
+              bodyText = `👥Sent you a connection request`;
+            }
+            recipientGroups.push({ userId: target_user_id, body: bodyText });
+          }
         }
       }
 
-      if (recipients.length === 0) {
+      if (recipientGroups.length === 0) {
         return new Response(JSON.stringify({ status: 'ignored', reason: 'No recipients or muted' }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -47,7 +105,8 @@ export default {
       const firebaseToken = await getFirebaseAccessToken(env);
 
       // Process each recipient
-      for (const userId of recipients) {
+      for (const group of recipientGroups) {
+        const { userId, body } = group;
         const presence = await fetchFirebase(env, `/global_presence/${userId}.json`, firebaseToken);
         const location = await fetchFirebase(env, `/location/${userId}.json`, firebaseToken);
 
@@ -81,18 +140,7 @@ export default {
             const currentUnseenBadge = currentBadgeObj || 1;
 
             let title = initiatorName;
-            let body = 'did something new!';
             let clickActionUrl = `/?activity_id=${activity.id}`;
-
-            if (activity_type === 'post') {
-              body = `🌏Posted`;
-            } else if (activity_type === 'like') {
-              body = `❤️🔥Liked your post`;
-            } else if (activity_type === 'comment') {
-              body = `🗨️Commented on your post`;
-            } else if (activity_type === 'connection_request') {
-              body = `👥Sent you a connection request`;
-            }
 
             const tokens = subscriptions.map((s) => s.endpoint);
             await sendFCMMessages(env, tokens, title, body, clickActionUrl, currentUnseenBadge, firebaseToken);
@@ -100,7 +148,7 @@ export default {
         }
       }
 
-      return new Response(JSON.stringify({ status: 'ok', processed: recipients.length }), {
+      return new Response(JSON.stringify({ status: 'ok', processed: recipientGroups.length }), {
         headers: { 'Content-Type': 'application/json' }
       });
     } catch (err) {
