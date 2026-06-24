@@ -62,6 +62,23 @@ export default function MentionEditor({
     checkEmptiness();
   }, []);
 
+  // Listen for outside clicks/taps to close the dropdown
+  useEffect(() => {
+    const handleOutsideInteraction = (e: MouseEvent | TouchEvent) => {
+      if (dropdownVisible && dropdownRef.current && editorRef.current) {
+        if (!dropdownRef.current.contains(e.target as Node) && !editorRef.current.contains(e.target as Node)) {
+          setDropdownVisible(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideInteraction);
+    document.addEventListener('touchstart', handleOutsideInteraction);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideInteraction);
+      document.removeEventListener('touchstart', handleOutsideInteraction);
+    };
+  }, [dropdownVisible]);
+
   // Fetch connections based on searchVal and offset
   const loadConnections = async (search: string, currentOffset: number, isNewSearch = false) => {
     if (!currentUserId) return;
@@ -200,13 +217,15 @@ export default function MentionEditor({
 
     if (lastAt !== -1) {
       const afterAt = preText.substring(lastAt + 1);
-      // Mention query should be empty (exactly just @ typed). Any additional character types will close the dropdown.
-      if (afterAt === '') {
-        setTriggerRange(range.cloneRange());
-        setMentionQuery('');
-        setDropdownVisible(true);
+      // Disappear if the user types a space or non-breakable space after the @ sign
+      if (afterAt.includes(' ') || afterAt.includes('\u00A0')) {
+        setDropdownVisible(false);
         return;
       }
+      setTriggerRange(range.cloneRange());
+      setMentionQuery(afterAt);
+      setDropdownVisible(true);
+      return;
     }
     setDropdownVisible(false);
   };
@@ -367,6 +386,12 @@ export default function MentionEditor({
     });
   }
 
+  const isDropdownReallyVisible = dropdownVisible && (
+    mentionQuery === '' || 
+    loading || 
+    connections.length > 0
+  );
+
   return (
     <div className="relative w-full">
       <div
@@ -387,7 +412,7 @@ export default function MentionEditor({
       )}
 
       {/* Connection Mentions Dropdown */}
-      {dropdownVisible && (
+      {isDropdownReallyVisible && (
         <div
           ref={dropdownRef}
           style={Object.keys(dropdownStyles).length > 0 ? dropdownStyles : {}}

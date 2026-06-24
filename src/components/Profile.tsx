@@ -350,8 +350,8 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           />
         )}
         {/* Full Name above picture */}
-        <div className="relative w-full max-w-sm flex items-center justify-center mb-6 select-none">
-          <div className="flex items-center gap-2 max-w-full justify-center px-4">
+        <div className="relative w-full max-w-sm flex justify-center mb-6 select-none">
+          <div className="relative inline-flex items-center px-8 max-w-full">
             <h1 
               className={`text-3xl font-bold tracking-tight text-center truncate ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
               onClick={() => {
@@ -379,7 +379,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     window.dispatchEvent(new CustomEvent('openCompleteProfile'));
                   }
                 }}
-                className="text-white/40 hover:text-white/80 transition-colors active:scale-90 p-1 shrink-0"
+                className="absolute -right-1 text-white/40 hover:text-white/80 transition-colors active:scale-90 p-1 shrink-0"
                 title="Edit Display Name"
               >
                 <Pencil size={18} className="stroke-current" />
