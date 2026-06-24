@@ -164,7 +164,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
              </div>
           </div>
 
-          <form onSubmit={handlePostComment} className="flex items-end ml-14 mr-4 mt-2 mb-2 relative pr-12">
+          <form onSubmit={handlePostComment} className="flex items-center ml-14 mr-4 mt-2 mb-2 relative pr-12">
             <MentionEditor
               value={text}
               onChange={setText}
@@ -175,7 +175,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
             <button 
               type="submit" 
               disabled={posting || !text.trim()}
-              className="absolute right-0 bottom-2 flex items-center justify-center text-white font-bold disabled:opacity-30 active:scale-95 transition-transform text-sm"
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center text-white font-bold disabled:opacity-30 active:scale-95 transition-transform text-sm"
             >
               Post
             </button>

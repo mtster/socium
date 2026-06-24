@@ -23,6 +23,7 @@ export default function MentionEditor({
   const [mentionQuery, setMentionQuery] = useState('');
   const [triggerRange, setTriggerRange] = useState<Range | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<'above' | 'below'>('above');
+  const [isEmpty, setIsEmpty] = useState(true);
 
   // Connections pagination & search
   const [connections, setConnections] = useState<Profile[]>([]);
@@ -32,11 +33,33 @@ export default function MentionEditor({
   const [hasMore, setHasMore] = useState(true);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const checkEmptiness = () => {
+    if (editorRef.current) {
+      const text = editorRef.current.textContent || '';
+      const hasMentions = editorRef.current.querySelector('span[data-id]') !== null;
+      setIsEmpty(text.trim() === '' && !hasMentions);
+    } else {
+      setIsEmpty(true);
+    }
+  };
+
+  // Sync external value changes
+  useEffect(() => {
+    if (editorRef.current) {
+      const serialized = serializeHtml(editorRef.current);
+      if (value !== serialized) {
+        editorRef.current.innerHTML = deserializeText(value);
+        checkEmptiness();
+      }
+    }
+  }, [value]);
+
   // Initialize editor content once on mount
   useEffect(() => {
     if (editorRef.current && !editorRef.current.innerHTML) {
       editorRef.current.innerHTML = deserializeText(value);
     }
+    checkEmptiness();
   }, []);
 
   // Fetch connections based on searchVal and offset
@@ -166,6 +189,7 @@ export default function MentionEditor({
       const serialized = serializeHtml(editorRef.current);
       onChange(serialized);
     }
+    checkEmptiness();
   };
 
   // Clear pending deletion highlights on edit/click
@@ -173,7 +197,7 @@ export default function MentionEditor({
     if (editorRef.current) {
       const highlighted = editorRef.current.querySelectorAll('[data-id]');
       highlighted.forEach((el) => {
-        el.classList.remove('bg-blue-500/20', 'px-1', 'py-0.5', 'rounded-sm', 'text-blue-300');
+        el.classList.remove('bg-blue-500/20', 'rounded-sm', 'text-blue-300');
       });
     }
   };
@@ -218,7 +242,7 @@ export default function MentionEditor({
       if (!nodeToDelete.classList.contains('bg-blue-500/20')) {
         e.preventDefault();
         // Highlight more to indicate impending delete
-        nodeToDelete.classList.add('bg-blue-500/20', 'px-1', 'py-0.5', 'rounded-sm', 'text-blue-300');
+        nodeToDelete.classList.add('bg-blue-500/20', 'rounded-sm', 'text-blue-300');
       } else {
         e.preventDefault();
         // Delete the trailing space if it exists
@@ -327,8 +351,13 @@ export default function MentionEditor({
         onMouseUp={handleInputOrSelectionChange}
         onClick={clearAllHighlights}
         placeholder={placeholder}
-        className={`w-full bg-transparent p-2 text-base text-white focus:outline-none min-h-[80px] max-h-[250px] overflow-y-auto resize-none placeholder:text-white/20 select-text ${className} before:content-[attr(placeholder)] before:text-white/20 before:absolute before:pointer-events-none empty:before:block before:hidden`}
+        className={`w-full bg-transparent p-2 text-base text-white focus:outline-none min-h-[80px] max-h-[250px] overflow-y-auto resize-none placeholder:text-white/20 select-text ${className}`}
       />
+      {isEmpty && (
+        <div className={`absolute left-0 top-0 pointer-events-none text-white/20 select-none p-2 ${className.replace('flex-1', '').replace('h-auto', '')}`}>
+          {placeholder}
+        </div>
+      )}
 
       {/* Connection Mentions Dropdown */}
       {dropdownVisible && (

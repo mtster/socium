@@ -120,6 +120,17 @@ export default function App() {
     setInitialActiveChat,
   });
 
+  const tabWeights: Record<string, number> = {
+    feed: 0,
+    create: 1,
+    chat: 2,
+    profile: 3,
+  };
+
+  const prevWeight = tabWeights[previousTabRef.current] ?? 0;
+  const currentWeight = tabWeights[activeTab] ?? 0;
+  const isMovingRight = currentWeight > prevWeight;
+
   // 4. Initial session bootstrap
   useEffect(() => {
     // If returning from OAuth provider, clean up the URL to prevent showing the callback path
@@ -344,9 +355,9 @@ export default function App() {
            {activeTab === 'feed' && (
              <motion.div 
                key="feed" 
-               initial={{ x: '-100%' }} 
+               initial={{ x: isMovingRight ? '100%' : '-100%' }} 
                animate={{ x: 0 }} 
-               exit={{ x: '-100%' }} 
+               exit={{ x: isMovingRight ? '-100%' : '100%' }} 
                transition={{ type: 'spring', damping: 26, stiffness: 220 }} 
                className="absolute inset-0 overflow-y-auto overflow-x-hidden [-webkit-overflow-scrolling:touch] bg-black"
                ref={(node) => {
@@ -355,7 +366,7 @@ export default function App() {
                  }
                }}
                onScroll={(e) => {
-                 if (activeTab === 'feed') {
+                 if ((window as any).currentActiveTab === 'feed') {
                    useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
                  }
                }}
@@ -367,9 +378,10 @@ export default function App() {
            {activeTab === 'profile' && (
              <motion.div 
                key="profile" 
-               initial={{ opacity: 0, scale: 0.95 }} 
-               animate={{ opacity: 1, scale: 1 }} 
-               exit={{ opacity: 0, scale: 1.05 }}
+               initial={{ x: isMovingRight ? '100%' : '-100%' }} 
+               animate={{ x: 0 }} 
+               exit={{ x: isMovingRight ? '-100%' : '100%' }} 
+               transition={{ type: 'spring', damping: 26, stiffness: 220 }} 
                className="absolute inset-0 overflow-y-auto overflow-x-hidden [-webkit-overflow-scrolling:touch] bg-black"
              >
                {profile ? (
@@ -410,10 +422,10 @@ export default function App() {
            {activeTab === 'chat' && (
              <motion.div 
                key="chat" 
-               initial={{ x: previousTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }} 
-               animate={{ x: 0, opacity: 1 }} 
-               exit={{ x: activeTabRef.current === 'profile' ? '-100%' : '100%', opacity: 1 }}
-               transition={{ type: 'tween', duration: 0.3 }}
+               initial={{ x: isMovingRight ? '100%' : '-100%' }} 
+               animate={{ x: 0 }} 
+               exit={{ x: isMovingRight ? '-100%' : '100%' }} 
+               transition={{ type: 'spring', damping: 26, stiffness: 220 }} 
                className="absolute inset-0 z-40 flex flex-col bg-black"
              >
                <Chat 

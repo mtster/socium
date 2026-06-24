@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Heart, MessageSquare, Plus, UserPlus, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Heart, MessageSquare, Plus, UserPlus, Image as ImageIcon, User } from 'lucide-react';
 import { useStore } from '@/src/store/useStore';
 import { formatDate, renderClickableAndMentionText } from '@/src/lib/utils';
 import PostCard from '@/src/components/PostCard';
@@ -477,13 +477,10 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                   />
 
                   {activeComment && (
-                    <div className="p-4 rounded-2xl bg-white/5 border border-white/10 mt-2 space-y-3">
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-sky-400">
-                        Comment on this post
-                      </div>
-                      <div className="flex space-x-3">
+                    <div className="mt-6 pt-4 border-t border-white/10">
+                      <div className="flex space-x-3 ml-6 mb-4 relative">
                         <div 
-                          className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 cursor-pointer"
+                          className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 z-10 cursor-pointer"
                           onClick={() => {
                             setActivePost(null);
                             setActiveComment(null);
@@ -493,31 +490,31 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                           {activeComment.profiles?.avatar_url ? (
                             <img src={activeComment.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
                           ) : (
-                            <div className="w-full h-full bg-zinc-800 flex items-center justify-center text-xs font-bold text-white/70">
-                              {(activeComment.profiles?.full_name?.charAt(0) || activeComment.profiles?.username?.charAt(0) || '?').toUpperCase()}
-                            </div>
+                            <User size={16} className="text-white/40 m-2" />
                           )}
                         </div>
                         <div className="flex-1">
-                          <p 
-                            className="text-[12px] font-bold text-white/60 cursor-pointer inline-block hover:underline"
-                            onClick={() => {
-                              setActivePost(null);
-                              setActiveComment(null);
-                              onUserClick(activeComment.user_id);
-                            }}
-                          >
-                            {activeComment.profiles?.full_name || activeComment.profiles?.username}
-                          </p>
-                          <p className="text-sm text-white/90 leading-relaxed mt-0.5">
-                            {renderClickableAndMentionText(activeComment.content, (uid) => {
-                              setActivePost(null);
-                              setActiveComment(null);
-                              onUserClick(uid);
-                            })}
-                          </p>
-                          <div className="text-[10px] text-white/40 mt-1.5">
-                            {formatDate(activeComment.created_at)}
+                          <div className="bg-transparent border-0 rounded-none p-0">
+                            <p 
+                              className="text-[12px] font-bold mb-1 text-white/60 cursor-pointer inline-block hover:underline"
+                              onClick={() => {
+                                setActivePost(null);
+                                setActiveComment(null);
+                                onUserClick(activeComment.user_id);
+                              }}
+                            >
+                              {activeComment.profiles?.full_name || activeComment.profiles?.username}
+                            </p>
+                            <p className="text-sm text-white/90 leading-relaxed">
+                              {renderClickableAndMentionText(activeComment.content, (uid) => {
+                                setActivePost(null);
+                                setActiveComment(null);
+                                onUserClick(uid);
+                              })}
+                            </p>
+                          </div>
+                          <div className="flex items-center mt-2 space-x-4">
+                            <span className="text-[10px] text-white/40">{formatDate(activeComment.created_at)}</span>
                           </div>
                         </div>
                       </div>
