@@ -350,24 +350,10 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           />
         )}
         {/* Full Name above picture */}
-        <div className="relative w-full max-w-sm flex items-center justify-center mb-6 px-10 select-none">
-          <h1 
-            className={`text-3xl font-bold tracking-tight text-center truncate w-full ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
-            onClick={() => {
-              if (isAdminViewingBot) {
-                setBotFullName(profile.full_name || '');
-                setBotUsername(profile.username || '');
-                setBotBio(profile.bio || '');
-                setShowEditBotModal(true);
-              } else if (isOwnProfile) {
-                window.dispatchEvent(new CustomEvent('openCompleteProfile'));
-              }
-            }}
-          >
-            {stripEmail(profile.full_name || profile.username)}
-          </h1>
-          {canEditProfile && (
-            <button 
+        <div className="relative w-full max-w-sm flex items-center justify-center mb-6 select-none">
+          <div className="flex items-center gap-2 max-w-full justify-center px-4">
+            <h1 
+              className={`text-3xl font-bold tracking-tight text-center truncate ${canEditProfile ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-all' : ''}`}
               onClick={() => {
                 if (isAdminViewingBot) {
                   setBotFullName(profile.full_name || '');
@@ -378,12 +364,28 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                   window.dispatchEvent(new CustomEvent('openCompleteProfile'));
                 }
               }}
-              className="absolute right-2 text-white/40 hover:text-white/80 transition-colors active:scale-90 p-2 shrink-0"
-              title="Edit Display Name"
             >
-              <Pencil size={18} className="stroke-current" />
-            </button>
-          )}
+              {stripEmail(profile.full_name || profile.username)}
+            </h1>
+            {canEditProfile && (
+              <button 
+                onClick={() => {
+                  if (isAdminViewingBot) {
+                    setBotFullName(profile.full_name || '');
+                    setBotUsername(profile.username || '');
+                    setBotBio(profile.bio || '');
+                    setShowEditBotModal(true);
+                  } else if (isOwnProfile) {
+                    window.dispatchEvent(new CustomEvent('openCompleteProfile'));
+                  }
+                }}
+                className="text-white/40 hover:text-white/80 transition-colors active:scale-90 p-1 shrink-0"
+                title="Edit Display Name"
+              >
+                <Pencil size={18} className="stroke-current" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Hidden inputs outside AnimatePresence so it doesn't get unmounted */}

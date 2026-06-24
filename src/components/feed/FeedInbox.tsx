@@ -477,7 +477,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                   />
 
                   {activeComment && (
-                    <div className="mt-6 pt-4 border-t border-white/10">
+                    <div className="mt-4">
                       <div className="flex space-x-3 ml-6 mb-4 relative">
                         <div 
                           className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 z-10 cursor-pointer"

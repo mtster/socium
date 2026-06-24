@@ -170,7 +170,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
               onChange={setText}
               placeholder="Type a comment..."
               currentUserId={currentUserId}
-              className="flex-1 h-auto text-sm py-2"
+              className="flex-1 min-h-[36px] h-auto text-sm py-2"
             />
             <button 
               type="submit" 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
-import { Search } from 'lucide-react';
 
 interface MentionEditorProps {
   value: string; // Serialized string format: Hello @[John Doe](mention:uuid)
@@ -23,6 +22,7 @@ export default function MentionEditor({
   const [mentionQuery, setMentionQuery] = useState('');
   const [triggerRange, setTriggerRange] = useState<Range | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<'above' | 'below'>('above');
+  const [dropdownStyles, setDropdownStyles] = useState<React.CSSProperties>({});
   const [isEmpty, setIsEmpty] = useState(true);
 
   // Connections pagination & search
@@ -119,20 +119,47 @@ export default function MentionEditor({
     }
   }, [dropdownVisible, mentionQuery]);
 
-  // Determine dynamic dropdown placement
+  // Determine dynamic dropdown placement relative to the @ sign cursor position
   useEffect(() => {
-    if (dropdownVisible && editorRef.current) {
+    if (dropdownVisible && triggerRange && editorRef.current) {
       const rect = editorRef.current.getBoundingClientRect();
-      const spaceAbove = rect.top;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      // If there is less than 240px above, and more space below, display below
-      if (spaceAbove < 240 && spaceBelow > spaceAbove) {
-        setDropdownPosition('below');
-      } else {
-        setDropdownPosition('above');
+      
+      const rangeRects = triggerRange.getClientRects();
+      let rangeRect = rangeRects[0];
+      if (!rangeRect) {
+        rangeRect = triggerRange.getBoundingClientRect();
       }
+      
+      if (rangeRect && rangeRect.left !== 0 && rangeRect.top !== 0) {
+        const relativeLeft = rangeRect.left - rect.left;
+        const relativeTop = rangeRect.top - rect.top;
+        const relativeBottom = rangeRect.bottom - rect.top;
+        
+        const spaceAbove = rangeRect.top;
+        const spaceBelow = window.innerHeight - rangeRect.bottom;
+        
+        if (spaceAbove < 240 && spaceBelow > spaceAbove) {
+          setDropdownStyles({
+            top: `${relativeBottom + 4}px`,
+            left: `${Math.max(0, Math.min(relativeLeft, rect.width - 288))}px`,
+            bottom: 'auto',
+          });
+          setDropdownPosition('below');
+        } else {
+          setDropdownStyles({
+            bottom: `${rect.height - relativeTop + 4}px`,
+            left: `${Math.max(0, Math.min(relativeLeft, rect.width - 288))}px`,
+            top: 'auto',
+          });
+          setDropdownPosition('above');
+        }
+      } else {
+        setDropdownStyles({});
+      }
+    } else {
+      setDropdownStyles({});
     }
-  }, [dropdownVisible]);
+  }, [dropdownVisible, triggerRange, mentionQuery]);
 
   // Handle manual search input in the dropdown
   const handleDropdownSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -173,10 +200,10 @@ export default function MentionEditor({
 
     if (lastAt !== -1) {
       const afterAt = preText.substring(lastAt + 1);
-      // Mention query should not contain spaces
-      if (!afterAt.includes(' ')) {
+      // Mention query should be empty (exactly just @ typed). Any additional character types will close the dropdown.
+      if (afterAt === '') {
         setTriggerRange(range.cloneRange());
-        setMentionQuery(afterAt);
+        setMentionQuery('');
         setDropdownVisible(true);
         return;
       }
@@ -351,7 +378,7 @@ export default function MentionEditor({
         onMouseUp={handleInputOrSelectionChange}
         onClick={clearAllHighlights}
         placeholder={placeholder}
-        className={`w-full bg-transparent p-2 text-base text-white focus:outline-none min-h-[80px] max-h-[250px] overflow-y-auto resize-none placeholder:text-white/20 select-text ${className}`}
+        className={`w-full bg-transparent p-2 text-base text-white focus:outline-none ${className.includes('min-h-') ? '' : 'min-h-[80px]'} max-h-[250px] overflow-y-auto resize-none placeholder:text-white/20 select-text ${className}`}
       />
       {isEmpty && (
         <div className={`absolute left-0 top-0 pointer-events-none text-white/20 select-none p-2 ${className.replace('flex-1', '').replace('h-auto', '')}`}>
@@ -363,23 +390,11 @@ export default function MentionEditor({
       {dropdownVisible && (
         <div
           ref={dropdownRef}
+          style={Object.keys(dropdownStyles).length > 0 ? dropdownStyles : {}}
           className={`absolute left-0 w-72 bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl z-[120] flex flex-col overflow-hidden max-h-60 ${
-            dropdownPosition === 'above' ? 'bottom-full mb-2' : 'top-full mt-2'
+            Object.keys(dropdownStyles).length > 0 ? '' : (dropdownPosition === 'above' ? 'bottom-full mb-2' : 'top-full mt-2')
           }`}
         >
-          {/* Compact Search Bar inside dropdown */}
-          <div className="flex items-center px-3 py-2 border-b border-white/10 shrink-0 bg-black/40">
-            <Search size={14} className="text-white/40 mr-2 shrink-0" />
-            <input
-              type="text"
-              placeholder="Search..."
-              value={searchVal}
-              onChange={handleDropdownSearchChange}
-              className="w-full bg-transparent border-0 text-xs text-white focus:outline-none placeholder:text-white/30"
-              autoFocus
-            />
-          </div>
-
           {/* Connections List */}
           <div
             className="flex-1 overflow-y-auto py-1"
@@ -411,9 +426,6 @@ export default function MentionEditor({
                   <div className="flex-1 truncate">
                     <p className="text-xs font-semibold text-white/95 truncate">
                       {profile.full_name || profile.username}
-                    </p>
-                    <p className="text-[10px] text-white/40 truncate">
-                      @{profile.username}
                     </p>
                   </div>
                 </button>
