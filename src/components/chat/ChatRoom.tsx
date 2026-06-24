@@ -122,7 +122,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto p-4 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
           onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
           onTouchMove={(e) => {
             if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -158,7 +158,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </AnimatePresence>
         </div>
 
-        <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-8 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0">
+        <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-12 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0">
            <div className="flex items-center gap-3">
              <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
              <div className="relative flex-1 flex items-center">
