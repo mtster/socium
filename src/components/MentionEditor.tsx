@@ -171,9 +171,9 @@ export default function MentionEditor({
   // Clear pending deletion highlights on edit/click
   const clearAllHighlights = () => {
     if (editorRef.current) {
-      const highlighted = editorRef.current.querySelectorAll('.bg-blue-500\\/30');
+      const highlighted = editorRef.current.querySelectorAll('[data-id]');
       highlighted.forEach((el) => {
-        el.classList.remove('bg-blue-500/30', 'rounded-sm');
+        el.classList.remove('bg-blue-500/20', 'px-1', 'py-0.5', 'rounded-sm', 'text-blue-300');
       });
     }
   };
@@ -215,10 +215,10 @@ export default function MentionEditor({
 
     if (nodeToDelete) {
       // Facebook-style delete flow
-      if (!nodeToDelete.classList.contains('bg-blue-500/30')) {
+      if (!nodeToDelete.classList.contains('bg-blue-500/20')) {
         e.preventDefault();
         // Highlight more to indicate impending delete
-        nodeToDelete.classList.add('bg-blue-500/30', 'rounded-sm');
+        nodeToDelete.classList.add('bg-blue-500/20', 'px-1', 'py-0.5', 'rounded-sm', 'text-blue-300');
       } else {
         e.preventDefault();
         // Delete the trailing space if it exists

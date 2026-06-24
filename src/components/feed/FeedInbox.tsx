@@ -3,7 +3,7 @@ import { supabase } from '@/src/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Heart, MessageSquare, Plus, UserPlus, Image as ImageIcon } from 'lucide-react';
 import { useStore } from '@/src/store/useStore';
-import { formatDate } from '@/src/lib/utils';
+import { formatDate, renderClickableAndMentionText } from '@/src/lib/utils';
 import PostCard from '@/src/components/PostCard';
 
 interface FeedInboxProps {
@@ -18,6 +18,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
   const [baseTimestamp, setBaseTimestamp] = useState<string>(new Date(0).toISOString());
   const [loading, setLoading] = useState(true);
   const [activePost, setActivePost] = useState<any | null>(null);
+  const [activeComment, setActiveComment] = useState<any | null>(null);
 
   const { feedUnseenCount, setFeedUnseenCount } = useStore();
 
@@ -113,6 +114,27 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
     if (activity.activity_type === 'connection_request') {
       onUserClick(activity.initiator_id);
     } else if (activity.post_id) {
+      // If it is a comment, fetch the comment details
+      if (activity.activity_type === 'comment' && activity.comment_id) {
+        try {
+          const { data: comm } = await supabase
+            .from('comments')
+            .select('*, profiles(*)')
+            .eq('id', activity.comment_id)
+            .maybeSingle();
+          if (comm) {
+            setActiveComment(comm);
+          } else {
+            setActiveComment(null);
+          }
+        } catch (err) {
+          console.error('Failed to fetch comment:', err);
+          setActiveComment(null);
+        }
+      } else {
+        setActiveComment(null);
+      }
+
       // Optimistically use a cached post if available to trigger instant animation
       const cached = useStore.getState().feedPosts.find(p => p.id === activity.post_id);
       if (cached) {
@@ -382,7 +404,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                           </div>
                         )}
                       </div>
-                      <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 flex items-center justify-center shadow">
+                      <div className="absolute top-[85%] left-[85%] -translate-x-1/2 -translate-y-1/2 flex items-center justify-center shadow">
                         {renderIcon(act.activity_type)}
                       </div>
                     </div>
@@ -423,7 +445,10 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             <header className="h-14 shrink-0 bg-black/80 border-b border-white/10 flex items-center px-4">
               <button 
                 id="inbox-post-back-btn"
-                onClick={() => setActivePost(null)} 
+                onClick={() => {
+                  setActivePost(null);
+                  setActiveComment(null);
+                }} 
                 className="p-1 text-white/70 hover:text-white transition-colors"
               >
                 <ArrowLeft size={24} />
@@ -438,16 +463,67 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                   <p className="text-xs text-white/40 uppercase tracking-widest font-medium">Fetching post...</p>
                 </div>
               ) : (
-                <PostCard
-                  post={activePost}
-                  currentUserId={currentUserId}
-                  onLike={handleLikePost}
-                  onRefetch={handleRefetch}
-                  onUserClick={(uid) => {
-                    setActivePost(null);
-                    onUserClick(uid);
-                  }}
-                />
+                <>
+                  <PostCard
+                    post={activePost}
+                    currentUserId={currentUserId}
+                    onLike={handleLikePost}
+                    onRefetch={handleRefetch}
+                    onUserClick={(uid) => {
+                      setActivePost(null);
+                      setActiveComment(null);
+                      onUserClick(uid);
+                    }}
+                  />
+
+                  {activeComment && (
+                    <div className="p-4 rounded-2xl bg-white/5 border border-white/10 mt-2 space-y-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-sky-400">
+                        Comment on this post
+                      </div>
+                      <div className="flex space-x-3">
+                        <div 
+                          className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0 cursor-pointer"
+                          onClick={() => {
+                            setActivePost(null);
+                            setActiveComment(null);
+                            onUserClick(activeComment.user_id);
+                          }}
+                        >
+                          {activeComment.profiles?.avatar_url ? (
+                            <img src={activeComment.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full bg-zinc-800 flex items-center justify-center text-xs font-bold text-white/70">
+                              {(activeComment.profiles?.full_name?.charAt(0) || activeComment.profiles?.username?.charAt(0) || '?').toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <p 
+                            className="text-[12px] font-bold text-white/60 cursor-pointer inline-block hover:underline"
+                            onClick={() => {
+                              setActivePost(null);
+                              setActiveComment(null);
+                              onUserClick(activeComment.user_id);
+                            }}
+                          >
+                            {activeComment.profiles?.full_name || activeComment.profiles?.username}
+                          </p>
+                          <p className="text-sm text-white/90 leading-relaxed mt-0.5">
+                            {renderClickableAndMentionText(activeComment.content, (uid) => {
+                              setActivePost(null);
+                              setActiveComment(null);
+                              onUserClick(uid);
+                            })}
+                          </p>
+                          <div className="text-[10px] text-white/40 mt-1.5">
+                            {formatDate(activeComment.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </motion.div>

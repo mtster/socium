@@ -164,7 +164,7 @@ export default function CommentsModal({ post, currentUserId, onClose, onCommentA
              </div>
           </div>
 
-          <form onSubmit={handlePostComment} className="flex items-end ml-14 mr-4 mt-2 mb-2 relative w-full pr-12">
+          <form onSubmit={handlePostComment} className="flex items-end ml-14 mr-4 mt-2 mb-2 relative pr-12">
             <MentionEditor
               value={text}
               onChange={setText}

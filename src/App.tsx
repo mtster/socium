@@ -344,9 +344,9 @@ export default function App() {
            {activeTab === 'feed' && (
              <motion.div 
                key="feed" 
-               initial={{ opacity: 1, y: '100%' }} 
-               animate={{ opacity: 1, y: 0 }} 
-               exit={{ opacity: 0, y: '20%' }} 
+               initial={{ x: '-100%' }} 
+               animate={{ x: 0 }} 
+               exit={{ x: '-100%' }} 
                transition={{ type: 'spring', damping: 26, stiffness: 220 }} 
                className="absolute inset-0 overflow-y-auto overflow-x-hidden [-webkit-overflow-scrolling:touch] bg-black"
                ref={(node) => {
@@ -355,7 +355,9 @@ export default function App() {
                  }
                }}
                onScroll={(e) => {
-                 useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
+                 if (activeTab === 'feed') {
+                   useStore.getState().setFeedScrollPos(e.currentTarget.scrollTop);
+                 }
                }}
              >
                <Feed currentUserId={session.user.id} onUserClick={handleUserClick} activeTab={activeTab} />
