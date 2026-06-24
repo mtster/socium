@@ -78,6 +78,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
       setInitialActiveChat(e.detail.profile);
       setViewingProfileId(null);
       setActiveTab('chat');
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: e.detail.profile.id } }));
+      }, 50);
     };
     
     const handleOpenProfile = (e: any) => {
@@ -170,6 +173,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         setInitialActiveChat(senderProfile);
         setViewingProfileId(null);
         setActiveTab('chat');
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
+        }, 50);
         return;
       }
     } catch (err) {
@@ -190,6 +196,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         } as any);
         setViewingProfileId(null);
         setActiveTab('chat');
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+        }, 50);
         return;
       }
     } catch (err) {
@@ -244,6 +253,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
             } as any);
             setViewingProfileId(null);
             setActiveTab('chat');
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+            }, 50);
             return;
           }
         } else if (senderId) {
@@ -253,6 +265,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
             setInitialActiveChat(senderProfile);
             setViewingProfileId(null);
             setActiveTab('chat');
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
+            }, 50);
             return;
           }
         }
@@ -333,6 +348,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
                } as any);
                setViewingProfileId(null);
                setActiveTab('chat');
+               setTimeout(() => {
+                 window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+               }, 50);
              }
           } else if (senderId) {
             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
@@ -341,6 +359,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
                setInitialActiveChat(senderProfile);
                setViewingProfileId(null);
                setActiveTab('chat');
+               setTimeout(() => {
+                 window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
+               }, 50);
             } else {
                const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', senderId).single();
                if (groupChat) {
@@ -354,6 +375,9 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
                  } as any);
                  setViewingProfileId(null);
                  setActiveTab('chat');
+                 setTimeout(() => {
+                   window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+                 }, 50);
                }
             }
           }

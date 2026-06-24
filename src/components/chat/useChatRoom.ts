@@ -176,8 +176,20 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     setChatLocation(currentUserId, activeChat.id);
     (window as any).currentChatUserId = activeChat.id;
     
-    const handleVisChange = () => { if (document.visibilityState === 'visible') setChatLocation(currentUserId, activeChat.id); };
+    const handleVisChange = () => { 
+      if (document.visibilityState === 'visible') {
+        setChatLocation(currentUserId, activeChat.id);
+        fetchMessages();
+      }
+    };
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisChange);
+
+    const handleRefreshActiveChat = (e: any) => {
+      if (e.detail?.chatId === activeChat.id) {
+        fetchMessages();
+      }
+    };
+    window.addEventListener('refreshActiveChat', handleRefreshActiveChat);
 
     fetchMessages();
     fetchVaultedMessageIds();
@@ -217,6 +229,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
     return () => { 
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVisChange);
+      window.removeEventListener('refreshActiveChat', handleRefreshActiveChat);
       supabase.removeChannel(channel); 
       supabase.removeChannel(vaultChannel);
       (window as any).currentChatUserId = null; 
