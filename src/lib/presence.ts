@@ -63,20 +63,17 @@ export const initPresence = (userId: string) => {
     }
   });
 
-  // Track inboxes in real-time to immediately clear unread state if user is inside that chat room,
-  // and maintain strict, correct self-healed unseen_chat_count even with concurrent messages.
+  // Track inboxes and feed in real-time to maintain strict, correct self-healed unseen_chat_count
   const inboxesRef = ref(rtdb, `inboxes/${userId}`);
-  const unsubscribeInboxes = onValue(inboxesRef, (snapshot) => {
-    if (!snapshot.exists()) {
-      const uCountRef = ref(rtdb, `unseen_chat_count/${userId}`);
-      set(uCountRef, 0).catch(console.error);
-      return;
-    }
-    const inboxes = snapshot.val();
+  const feedRef = ref(rtdb, `feed/${userId}`);
+
+  let lastInboxes: any = {};
+  let lastFeedValue: string = "";
+
+  const updateUnseenChatCount = () => {
     let actualFalseCount = 0;
-    
-    Object.keys(inboxes).forEach((chatId) => {
-      if (inboxes[chatId] === false) {
+    Object.keys(lastInboxes).forEach((chatId) => {
+      if (lastInboxes[chatId] === false) {
         const currentOpenChatId = (window as any).currentChatUserId;
         if (currentOpenChatId === chatId) {
           markChatAsSeen(userId, chatId);
@@ -86,10 +83,21 @@ export const initPresence = (userId: string) => {
       }
     });
 
-    // Auto-align unseen_chat_count dynamically to perfectly match the actual count of false (unseen) inboxes inside the database.
-    // Core constraint check: actualFalseCount can never be negative (starts at 0 and increments), ensuring unseen_chat_count never drops below 0.
+    const hasFeedValue = lastFeedValue && lastFeedValue !== "";
+    const totalCount = actualFalseCount + (hasFeedValue ? 1 : 0);
+
     const uCountRef = ref(rtdb, `unseen_chat_count/${userId}`);
-    set(uCountRef, actualFalseCount).catch(console.error);
+    set(uCountRef, totalCount).catch(console.error);
+  };
+
+  const unsubscribeInboxes = onValue(inboxesRef, (snapshot) => {
+    lastInboxes = snapshot.exists() ? snapshot.val() : {};
+    updateUnseenChatCount();
+  });
+
+  const unsubscribeFeed = onValue(feedRef, (snapshot) => {
+    lastFeedValue = snapshot.exists() ? (snapshot.val() || "") : "";
+    updateUnseenChatCount();
   });
 
   return () => {
@@ -97,6 +105,7 @@ export const initPresence = (userId: string) => {
     set(locationRef, 'none').catch(console.error);
     unsubscribeCount();
     unsubscribeInboxes();
+    unsubscribeFeed();
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);

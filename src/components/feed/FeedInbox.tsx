@@ -5,6 +5,8 @@ import { ArrowLeft, Heart, MessageSquare, Plus, UserPlus, Image as ImageIcon, Us
 import { useStore } from '@/src/store/useStore';
 import { formatDate, renderClickableAndMentionText } from '@/src/lib/utils';
 import PostCard from '@/src/components/PostCard';
+import { rtdb } from '@/src/lib/firebase';
+import { ref, set } from 'firebase/database';
 
 interface FeedInboxProps {
   currentUserId: string;
@@ -24,6 +26,11 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
 
   useEffect(() => {
     fetchInboxData();
+    if (rtdb && currentUserId) {
+      set(ref(rtdb, `feed/${currentUserId}`), "").catch((err) => {
+        console.warn("Failed to clear RTDB feed node on inbox open:", err);
+      });
+    }
   }, [currentUserId]);
 
   useEffect(() => {

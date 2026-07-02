@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { rtdb } from './firebase';
-import { ref, set } from 'firebase/database';
+import { ref, set, get, runTransaction } from 'firebase/database';
 
 export interface FeedActivityPayload {
   activityType: 'post' | 'like' | 'comment' | 'connection_request';
@@ -59,7 +59,22 @@ export async function logFeedActivity({
           await Promise.all(
             allTargets.map(async (uid) => {
               try {
-                await set(ref(rtdb, `feed/${uid}`), initiatorId);
+                const feedNodeRef = ref(rtdb, `feed/${uid}`);
+                const currentFeedValSnap = await get(feedNodeRef);
+                const currentFeedVal = currentFeedValSnap.val();
+
+                await set(feedNodeRef, initiatorId);
+
+                if (!currentFeedVal || currentFeedVal === "") {
+                  // Check if recipient is online
+                  const presenceSnap = await get(ref(rtdb, `global_presence/${uid}`));
+                  const isOnline = presenceSnap.val() === true;
+                  
+                  if (!isOnline) {
+                    const uCountRef = ref(rtdb, `unseen_chat_count/${uid}`);
+                    await runTransaction(uCountRef, (val) => (val || 0) + 1);
+                  }
+                }
               } catch (e) {
                 console.warn(`[FeedActivity] RTDB sync error for user ${uid}:`, e);
               }
@@ -112,7 +127,22 @@ export async function logFeedActivity({
               }
 
               try {
-                await set(ref(rtdb, `feed/${uid}`), initiatorId);
+                const feedNodeRef = ref(rtdb, `feed/${uid}`);
+                const currentFeedValSnap = await get(feedNodeRef);
+                const currentFeedVal = currentFeedValSnap.val();
+
+                await set(feedNodeRef, initiatorId);
+
+                if (!currentFeedVal || currentFeedVal === "") {
+                  // Check if recipient is online
+                  const presenceSnap = await get(ref(rtdb, `global_presence/${uid}`));
+                  const isOnline = presenceSnap.val() === true;
+                  
+                  if (!isOnline) {
+                    const uCountRef = ref(rtdb, `unseen_chat_count/${uid}`);
+                    await runTransaction(uCountRef, (val) => (val || 0) + 1);
+                  }
+                }
               } catch (e) {
                 console.warn(`[FeedActivity] RTDB target sync error for recipient ${uid}:`, e);
               }
