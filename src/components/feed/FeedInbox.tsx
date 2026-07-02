@@ -83,23 +83,99 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         });
       }
 
-      // 4. Query activities
-      const { data: feats1, error: err1 } = await supabase
-        .from('feed_activity')
-        .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
-        .in('initiator_id', connectionIds)
-        .order('created_at', { ascending: false })
-        .limit(30);
-
-      if (err1 && !feats1) throw err1;
+      // 4. Query activities using highly targeted parallel queries to ensure free-tier speed and accuracy:
       
-      let feats = feats1 || [];
+      // A. Get my post IDs to filter likes & comments on my posts
+      const { data: myPosts } = await supabase
+        .from('posts')
+        .select('id')
+        .eq('user_id', currentUserId);
+      const myPostIds = (myPosts || []).map(p => p.id);
 
-      // Filter out own activities, and ensure the initiator is part of our connections
-      const filtered = (feats || []).filter((act: any) => {
-        if (act.initiator_id === currentUserId) return false;
-        return connectionIds.includes(act.initiator_id);
+      // B. Get connection request IDs where I am the receiver
+      const { data: myRequests } = await supabase
+        .from('connection_requests')
+        .select('id')
+        .eq('receiver_id', currentUserId);
+      const myRequestIds = (myRequests || []).map(r => r.id);
+
+      // Run parallel queries to fetch only relevant notifications
+      const queries = [];
+
+      // Query likes/comments on my posts
+      if (myPostIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .in('activity_type', ['like', 'comment'])
+            .in('post_id', myPostIds)
+            .order('created_at', { ascending: false })
+            .limit(30)
+        );
+      }
+
+      // Query tagged/mentioned activities for currentUserId
+      queries.push(
+        supabase
+          .from('feed_activity')
+          .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+          .contains('tagged_user_ids', [currentUserId])
+          .order('created_at', { ascending: false })
+          .limit(30)
+      );
+
+      // Query connection requests meant for me
+      if (myRequestIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .eq('activity_type', 'connection_request')
+            .in('connection_request_id', myRequestIds)
+            .order('created_at', { ascending: false })
+            .limit(30)
+        );
+      }
+
+      // Query posts created by my connections (the feed updates)
+      if (connectionIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .eq('activity_type', 'post')
+            .in('initiator_id', connectionIds)
+            .order('created_at', { ascending: false })
+            .limit(30)
+        );
+      }
+
+      const results = await Promise.all(queries);
+      
+      // Combine all activities, filter duplicates, and sort by created_at descending
+      const allFetched: any[] = [];
+      const seenActivityIds = new Set<string>();
+
+      results.forEach(res => {
+        if (res.data) {
+          res.data.forEach((act: any) => {
+            if (!seenActivityIds.has(act.id)) {
+              seenActivityIds.add(act.id);
+              allFetched.push(act);
+            }
+          });
+        }
       });
+
+      // Sort by created_at desc
+      allFetched.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Limit final list to 50 activities for performance
+      const finalActivities = allFetched.slice(0, 50);
+
+      // Filter out own activities
+      const filtered = finalActivities.filter((act: any) => act.initiator_id !== currentUserId);
       setActivities(filtered);
     } catch (err) {
       console.error('Error loading inbox activities:', err);

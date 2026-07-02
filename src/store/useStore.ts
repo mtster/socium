@@ -310,26 +310,99 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       // Query latest activities - separate queries to avoid PostgREST parsing errors with long OR clauses
-      const { data: featsFromConnections, error: err1 } = await supabase
-        .from('feed_activity')
-        .select('*')
-        .in('initiator_id', connectionIds)
-        .order('created_at', { ascending: false })
-        .limit(15);
-        
-      let feats: any[] = [];
-      if (featsFromConnections) {
-        feats = featsFromConnections;
+      // A. Get my post IDs to filter likes & comments on my posts
+      const { data: myPosts } = await supabase
+        .from('posts')
+        .select('id')
+        .eq('user_id', userId);
+      const myPostIds = (myPosts || []).map(p => p.id);
+
+      // B. Get connection request IDs where I am the receiver
+      const { data: myRequests } = await supabase
+        .from('connection_requests')
+        .select('id')
+        .eq('receiver_id', userId);
+      const myRequestIds = (myRequests || []).map(r => r.id);
+
+      // Run parallel queries to fetch only relevant notifications
+      const queries = [];
+
+      // Query likes/comments on my posts
+      if (myPostIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*')
+            .in('activity_type', ['like', 'comment'])
+            .in('post_id', myPostIds)
+            .order('created_at', { ascending: false })
+            .limit(15)
+        );
       }
+
+      // Query tagged/mentioned activities for userId
+      queries.push(
+        supabase
+          .from('feed_activity')
+          .select('*')
+          .contains('tagged_user_ids', [userId])
+          .order('created_at', { ascending: false })
+          .limit(15)
+      );
+
+      // Query connection requests meant for me
+      if (myRequestIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*')
+            .eq('activity_type', 'connection_request')
+            .in('connection_request_id', myRequestIds)
+            .order('created_at', { ascending: false })
+            .limit(15)
+        );
+      }
+
+      // Query posts created by my connections (the feed updates)
+      if (connectionIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*')
+            .eq('activity_type', 'post')
+            .in('initiator_id', connectionIds)
+            .order('created_at', { ascending: false })
+            .limit(15)
+        );
+      }
+
+      const results = await Promise.all(queries);
+      
+      const allFetched: any[] = [];
+      const seenActivityIds = new Set<string>();
+
+      results.forEach(res => {
+        if (res.data) {
+          res.data.forEach((act: any) => {
+            if (!seenActivityIds.has(act.id)) {
+              seenActivityIds.add(act.id);
+              allFetched.push(act);
+            }
+          });
+        }
+      });
+
+      const feats = allFetched.filter((act: any) => act.initiator_id !== userId);
 
       if (feats.length > 0) {
         const unseen = feats.filter((act: any) => {
-          if (act.initiator_id === userId) return false;
           const isOlderThanBase = act.created_at <= baseTimestamp;
           const isSeen = seenIds.has(act.id);
           return !isOlderThanBase && !isSeen;
         });
         set({ feedUnseenCount: unseen.length });
+      } else {
+        set({ feedUnseenCount: 0 });
       }
     } catch (err) {
       console.warn("Error fetching feed unseen count:", err);
