@@ -167,6 +167,10 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       results.forEach(res => {
         if (res.data) {
           res.data.forEach((act: any) => {
+            // Ignore broken/ghost profile_picture activities without post_id
+            if (act.activity_type === 'profile_picture' && !act.post_id) {
+              return;
+            }
             if (!seenActivityIds.has(act.id)) {
               seenActivityIds.add(act.id);
               allFetched.push(act);

@@ -175,10 +175,10 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-0 pb-3">
         <div 
-          className={cn("flex items-center space-x-3 group", onUserClick ? "cursor-pointer" : "cursor-default")}
+          className={cn("flex items-center space-x-3 group flex-1 min-w-0 pr-2", onUserClick ? "cursor-pointer" : "cursor-default")}
           onClick={() => onUserClick?.(post.user_id)}
         >
-          <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 ring-1 ring-white/20 group-active:scale-95 transition-transform">
+          <div className="w-10 h-10 rounded-full overflow-hidden bg-white/10 ring-1 ring-white/20 group-active:scale-95 transition-transform shrink-0">
             {post.profiles.avatar_url ? (
               <img src={post.profiles.avatar_url} alt="" className="w-full h-full object-cover" />
             ) : (
@@ -187,18 +187,18 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
               </div>
             )}
           </div>
-          <div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <p className="text-sm font-bold tracking-tight text-white group-active:opacity-70 transition-opacity">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm leading-snug break-words">
+              <span className="font-bold tracking-tight text-white group-active:opacity-70 transition-opacity">
                 {post.profiles.full_name || post.profiles.username}
-              </p>
+              </span>
               {post.is_profile_picture_update && (
-                <span className="text-xs text-white/50 font-normal">
-                  updated profile picture
+                <span className="text-white/90 font-normal">
+                  {' '}updated profile picture
                 </span>
               )}
-            </div>
-            <p className="text-[10px] text-white/50">{formatDate(post.created_at)}</p>
+            </p>
+            <p className="text-[10px] text-white/50 mt-0.5">{formatDate(post.created_at)}</p>
           </div>
         </div>
         

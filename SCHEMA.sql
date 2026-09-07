@@ -631,6 +631,13 @@ CREATE POLICY "Users can insert own seen_activities" ON public.seen_activities F
 DROP POLICY IF EXISTS "Users can delete own seen_activities" ON public.seen_activities;
 CREATE POLICY "Users can delete own seen_activities" ON public.seen_activities FOR DELETE USING (auth.uid() = user_id);
 
+-- Ensure pg_net extension is enabled for asynchronous HTTP calls to Cloudflare Worker
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- Ensure connections default is_activity_muted to false and update existing NULL values
+ALTER TABLE public.connections ALTER COLUMN is_activity_muted SET DEFAULT false;
+UPDATE public.connections SET is_activity_muted = false WHERE is_activity_muted IS NULL;
+
 -- Hook Postgres trigger to Cloudflare Feed Worker
 CREATE OR REPLACE FUNCTION public.notify_feed_worker()
 RETURNS trigger

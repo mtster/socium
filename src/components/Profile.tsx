@@ -11,7 +11,7 @@ import UserSearchModal from './UserSearchModal';
 import ImageCropperModal from './ImageCropperModal';
 import { useConnections } from './profile/useConnections';
 import { ProfileImageViewer } from './profile/ProfileImageViewer';
-import { logFeedActivity } from '@/src/lib/feed';
+import { syncFeedRtdbOnly } from '@/src/lib/feed';
 
 function stripEmail(val: string | null | undefined): string {
   if (!val) return '';
@@ -237,6 +237,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       const formData = new FormData();
       formData.append('file', highResFile);
       formData.append('upload_preset', uploadPreset);
+      formData.append('format', 'webp');
 
       const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
         method: 'POST',
@@ -275,12 +276,9 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         avatar_hd_url: highResUrl
       });
 
-      // Synchronize client-side RTDB feed indicator for active connections
+      // Synchronize client-side RTDB feed indicator for active connections without creating a duplicate feed_activity row
       try {
-        logFeedActivity({
-          activityType: 'profile_picture',
-          initiatorId: profile.id
-        });
+        await syncFeedRtdbOnly(profile.id);
       } catch (err) {
         console.warn('RTDB feed indicator sync notice:', err);
       }

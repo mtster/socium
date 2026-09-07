@@ -26,9 +26,12 @@ export default {
       if (activity_type === 'post') {
         const connections = await fetchSupabase(
           env, 
-          `/rest/v1/connections?connection_id=eq.${initiator_id}&is_activity_muted=eq.false&select=user_id`
+          `/rest/v1/connections?connection_id=eq.${initiator_id}&select=user_id,is_activity_muted`
         );
-        const connectionIds = connections.map((c) => c.user_id);
+        const connectionIds = (Array.isArray(connections) ? connections : [])
+          .filter((c) => c && c.is_activity_muted !== true)
+          .map((c) => c.user_id)
+          .filter(Boolean);
 
         if (taggedIds.length === 0) {
           // Standard post logic
@@ -50,9 +53,13 @@ export default {
       } else if (activity_type === 'profile_picture') {
         const connections = await fetchSupabase(
           env, 
-          `/rest/v1/connections?connection_id=eq.${initiator_id}&is_activity_muted=eq.false&select=user_id`
+          `/rest/v1/connections?connection_id=eq.${initiator_id}&select=user_id,is_activity_muted`
         );
-        const connectionIds = connections.map((c) => c.user_id);
+        const connectionIds = (Array.isArray(connections) ? connections : [])
+          .filter((c) => c && c.is_activity_muted !== true)
+          .map((c) => c.user_id)
+          .filter(Boolean);
+
         for (const uid of connectionIds) {
           recipientGroups.push({ userId: uid, body: `👤Updated profile picture` });
         }
@@ -268,7 +275,9 @@ async function transactionIncrementFirebase(env, userId, token) {
 
 // --- Supabase REST Helper Functions ---
 async function fetchSupabase(env, path) {
-  const url = `${env.SUPABASE_URL}${path}`;
+  const base = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  const url = `${base}${cleanPath}`;
   const res = await fetch(url, {
     headers: {
       'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
@@ -276,7 +285,11 @@ async function fetchSupabase(env, path) {
       'Content-Type': 'application/json'
     }
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    console.error(`[fetchSupabase] HTTP ${res.status} on ${path}:`, errText);
+    return [];
+  }
   return res.json();
 }
 

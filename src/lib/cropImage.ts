@@ -46,6 +46,55 @@ export async function getCroppedImg(
   });
 }
 
+function checkWebpSupport(): boolean {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    return canvas.toDataURL('image/webp').startsWith('data:image/webp');
+  } catch {
+    return false;
+  }
+}
+
+async function exportCanvasToCompressedBlob(
+  canvas: HTMLCanvasElement,
+  quality: number,
+  defaultFilename: string
+): Promise<File> {
+  const supportsWebP = checkWebpSupport();
+  const primaryFormat = supportsWebP ? 'image/webp' : 'image/jpeg';
+  const cleanBase = defaultFilename.replace(/\.[^.]+$/, '');
+  const primaryExt = supportsWebP ? '.webp' : '.jpg';
+  const initialFilename = `${cleanBase}${primaryExt}`;
+
+  return new Promise<File>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return reject(new Error('Canvas export failed'));
+
+        // If the browser silently fell back to uncompressed image/png (common in some WebKit/Safari engines),
+        // re-encode immediately as image/jpeg so it never balloons to a 1.6MB PNG
+        if (blob.type === 'image/png') {
+          canvas.toBlob(
+            (jpegBlob) => {
+              if (!jpegBlob) return resolve(new File([blob], `${cleanBase}.png`, { type: 'image/png' }));
+              resolve(new File([jpegBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' }));
+            },
+            'image/jpeg',
+            quality
+          );
+          return;
+        }
+
+        resolve(new File([blob], initialFilename, { type: blob.type }));
+      },
+      primaryFormat,
+      quality
+    );
+  });
+}
+
 export interface CroppedProfileImages {
   lowResFile: File;
   highResFile: File;
@@ -110,29 +159,11 @@ export async function getCroppedProfileImages(
     lowResSize
   );
 
-  // Export Low-Res WebP
-  const lowResFile = await new Promise<File>((resolve, reject) => {
-    lowResCanvas.toBlob(
-      (blob) => {
-        if (!blob) return reject(new Error('Failed to generate low-res image'));
-        resolve(new File([blob], 'avatar.webp', { type: 'image/webp' }));
-      },
-      'image/webp',
-      0.75
-    );
-  });
+  // Export Low-Res WebP (with JPEG fallback)
+  const lowResFile = await exportCanvasToCompressedBlob(lowResCanvas, 0.75, 'avatar.webp');
 
-  // Export High-Res WebP
-  const highResFile = await new Promise<File>((resolve, reject) => {
-    highResCanvas.toBlob(
-      (blob) => {
-        if (!blob) return reject(new Error('Failed to generate high-res image'));
-        resolve(new File([blob], 'avatar_hd.webp', { type: 'image/webp' }));
-      },
-      'image/webp',
-      0.82
-    );
-  });
+  // Export High-Res WebP (with JPEG fallback)
+  const highResFile = await exportCanvasToCompressedBlob(highResCanvas, 0.80, 'avatar_hd.webp');
 
   return { lowResFile, highResFile };
 }

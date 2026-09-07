@@ -12,6 +12,51 @@ export interface FeedActivityPayload {
   taggedUserIds?: string[] | null;
 }
 
+export async function syncFeedRtdbOnly(initiatorId: string, taggedUserIds?: string[] | null) {
+  if (!rtdb) return;
+  try {
+    const { data: conns } = await supabase
+      .from('connections')
+      .select('user_id, is_activity_muted')
+      .eq('connection_id', initiatorId);
+
+    const connectionIds = (conns || [])
+      .filter(c => c.is_activity_muted !== true)
+      .map(c => c.user_id)
+      .filter(Boolean) as string[];
+
+    const allTargets = Array.from(new Set([...connectionIds, ...(taggedUserIds || [])])).filter(uid => uid && uid !== initiatorId);
+
+    if (allTargets.length > 0) {
+      await Promise.all(
+        allTargets.map(async (uid) => {
+          try {
+            const feedNodeRef = ref(rtdb, `feed/${uid}`);
+            const currentFeedValSnap = await get(feedNodeRef);
+            const currentFeedVal = currentFeedValSnap.val();
+
+            await set(feedNodeRef, initiatorId);
+
+            if (!currentFeedVal || currentFeedVal === "") {
+              const presenceSnap = await get(ref(rtdb, `global_presence/${uid}`));
+              const isOnline = presenceSnap.val() === true;
+              
+              if (!isOnline) {
+                const uCountRef = ref(rtdb, `unseen_chat_count/${uid}`);
+                await runTransaction(uCountRef, (val) => (val || 0) + 1);
+              }
+            }
+          } catch (e) {
+            console.warn(`[FeedActivity] RTDB sync error for user ${uid}:`, e);
+          }
+        })
+      );
+    }
+  } catch (err) {
+    console.warn('[FeedActivity] Error querying connections for RTDB sync:', err);
+  }
+}
+
 export async function logFeedActivity({
   activityType,
   initiatorId,
@@ -22,65 +67,29 @@ export async function logFeedActivity({
   taggedUserIds,
 }: FeedActivityPayload) {
   try {
-    // 1. Insert into Supabase feed_activity table (unless already inserted via trigger)
-    const { data: insertedActivity, error } = await supabase
-      .from('feed_activity')
-      .insert({
-        activity_type: activityType,
-        initiator_id: initiatorId,
-        post_id: postId || null,
-        comment_id: commentId || null,
-        connection_request_id: connectionRequestId || null,
-        tagged_user_ids: taggedUserIds || null,
-      })
-      .select()
-      .maybeSingle();
+    // 1. Insert into Supabase feed_activity table
+    // For profile_picture without postId, skip SQL insert because DB trigger creates the post and feed_activity row with postId
+    if (activityType !== 'profile_picture' || postId) {
+      const { error } = await supabase
+        .from('feed_activity')
+        .insert({
+          activity_type: activityType,
+          initiator_id: initiatorId,
+          post_id: postId || null,
+          comment_id: commentId || null,
+          connection_request_id: connectionRequestId || null,
+          tagged_user_ids: taggedUserIds || null,
+        });
 
-    if (error) {
-      console.error('[FeedActivity] SQL insertion failed:', error);
+      if (error) {
+        console.error('[FeedActivity] SQL insertion failed:', error);
+      }
     }
 
     // 2. Client-side Realtime Database 'feed' synchronization
     if (rtdb) {
       if (activityType === 'post' || activityType === 'profile_picture') {
-        // Query initiator's active, non-muted connections to trigger feed ring and vibe overrides
-        const { data: conns } = await supabase
-          .from('connections')
-          .select('user_id')
-          .eq('connection_id', initiatorId)
-          .eq('is_activity_muted', false);
-
-        const connectionIds = (conns || []).map(c => c.user_id).filter(Boolean) as string[];
-        
-        // Combine connections and tagged users for RTDB sync
-        const allTargets = Array.from(new Set([...connectionIds, ...(taggedUserIds || [])])).filter(uid => uid && uid !== initiatorId);
-
-        if (allTargets.length > 0) {
-          await Promise.all(
-            allTargets.map(async (uid) => {
-              try {
-                const feedNodeRef = ref(rtdb, `feed/${uid}`);
-                const currentFeedValSnap = await get(feedNodeRef);
-                const currentFeedVal = currentFeedValSnap.val();
-
-                await set(feedNodeRef, initiatorId);
-
-                if (!currentFeedVal || currentFeedVal === "") {
-                  // Check if recipient is online
-                  const presenceSnap = await get(ref(rtdb, `global_presence/${uid}`));
-                  const isOnline = presenceSnap.val() === true;
-                  
-                  if (!isOnline) {
-                    const uCountRef = ref(rtdb, `unseen_chat_count/${uid}`);
-                    await runTransaction(uCountRef, (val) => (val || 0) + 1);
-                  }
-                }
-              } catch (e) {
-                console.warn(`[FeedActivity] RTDB sync error for user ${uid}:`, e);
-              }
-            })
-          );
-        }
+        await syncFeedRtdbOnly(initiatorId, taggedUserIds);
       } else {
         // Resolve recipient user ID for targeted reactions
         let recipientId = targetUserId;
