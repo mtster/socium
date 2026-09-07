@@ -7,16 +7,66 @@ export default {
       return new Response('Only POST allowed', { status: 405 });
     }
 
-    const authHeader = request.headers.get('Authorization');
-    const expectedToken = env.WEBHOOK_SECRET_TOKEN || 'secure-feed-webhook-token-override';
+    const authHeader = (request.headers.get('Authorization') || '').trim();
+    const expectedToken = (env.WEBHOOK_SECRET_TOKEN || 'secure-feed-webhook-token-override').trim();
     
-    if (!authHeader || authHeader !== `Bearer ${expectedToken}`) {
-      return new Response('Unauthorized', { status: 401 });
+    // Accept either "Bearer <token>", raw "<token>", or token matching case-insensitively
+    const isAuthorized = 
+      authHeader === `Bearer ${expectedToken}` || 
+      authHeader === expectedToken ||
+      authHeader.replace(/^Bearer\s+/i, '') === expectedToken;
+
+    if (!isAuthorized) {
+      console.warn(`[AUTH] Unauthorized webhook call. Received: "${authHeader}". Expected token length: ${expectedToken.length}`);
+      return new Response(JSON.stringify({ error: 'Unauthorized', message: 'Webhook token mismatch' }), { 
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     try {
-      const activity = await request.json();
-      const { activity_type, initiator_id, post_id, comment_id, initiator_name, target_user_id, tagged_user_ids } = activity;
+      const rawPayload = await request.json();
+      console.log('[PAYLOAD] Received webhook body:', JSON.stringify(rawPayload));
+
+      // Support BOTH:
+      // 1. Native Supabase Dashboard Webhook: { type: "INSERT", table: "feed_activity", record: { ... } }
+      // 2. Custom SQL pg_net trigger: { id, activity_type, initiator_id, ... }
+      const record = (rawPayload && rawPayload.record) ? rawPayload.record : (rawPayload || {});
+
+      const activity_type = record.activity_type;
+      const initiator_id = record.initiator_id;
+      const post_id = record.post_id;
+      const comment_id = record.comment_id;
+      const connection_request_id = record.connection_request_id;
+      const tagged_user_ids = record.tagged_user_ids;
+      let initiator_name = record.initiator_name;
+      let target_user_id = record.target_user_id;
+
+      if (!activity_type || !initiator_id) {
+        console.warn('[PAYLOAD] Missing activity_type or initiator_id:', record);
+        return new Response(JSON.stringify({ error: 'Invalid payload', record }), { status: 400 });
+      }
+
+      // If initiator_name was not included (e.g. Supabase Dashboard Webhook sends raw table row), fetch it
+      if (!initiator_name) {
+        const profs = await fetchSupabase(env, `/rest/v1/profiles?id=eq.${initiator_id}&select=full_name,username`);
+        if (Array.isArray(profs) && profs.length > 0) {
+          initiator_name = profs[0].full_name || profs[0].username || 'Someone';
+        } else {
+          initiator_name = 'Someone';
+        }
+      }
+
+      // If target_user_id was not included (e.g. Supabase Dashboard Webhook), resolve it from related tables
+      if (!target_user_id) {
+        if (activity_type === 'connection_request' && connection_request_id) {
+          const crs = await fetchSupabase(env, `/rest/v1/connection_requests?id=eq.${connection_request_id}&select=receiver_id`);
+          if (Array.isArray(crs) && crs.length > 0) target_user_id = crs[0].receiver_id;
+        } else if ((activity_type === 'like' || activity_type === 'comment') && post_id) {
+          const posts = await fetchSupabase(env, `/rest/v1/posts?id=eq.${post_id}&select=user_id`);
+          if (Array.isArray(posts) && posts.length > 0) target_user_id = posts[0].user_id;
+        }
+      }
 
       // 1. Identify target recipients and their notification bodies
       let recipientGroups = []; // array of { userId: string, body: string }
@@ -71,23 +121,21 @@ export default {
               env,
               `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
             );
-            if (mutedRecord.length === 0) {
+            if (Array.isArray(mutedRecord) && mutedRecord.length === 0) {
               recipientGroups.push({ userId: target_user_id, body: `🗨️Commented on your post` });
             }
           }
         } else {
           // Tagged comments logic
-          // 1. Tagged users get @Mentioned you in a comment🗨️
           for (const uid of taggedIds) {
             recipientGroups.push({ userId: uid, body: `@Mentioned you in a comment🗨️` });
           }
-          // 2. Post author (target_user_id) gets normal comment notification ONLY IF they are NOT in taggedIds and not self
           if (target_user_id && target_user_id !== initiator_id && !taggedIds.includes(target_user_id)) {
             const mutedRecord = await fetchSupabase(
               env,
               `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
             );
-            if (mutedRecord.length === 0) {
+            if (Array.isArray(mutedRecord) && mutedRecord.length === 0) {
               recipientGroups.push({ userId: target_user_id, body: `🗨️Commented on your post` });
             }
           }
@@ -99,7 +147,7 @@ export default {
             env,
             `/rest/v1/connections?user_id=eq.${target_user_id}&connection_id=eq.${initiator_id}&is_activity_muted=eq.true&select=user_id`
           );
-          if (mutedRecord.length === 0) {
+          if (Array.isArray(mutedRecord) && mutedRecord.length === 0) {
             let bodyText = 'did something new!';
             if (activity_type === 'like') {
               bodyText = `❤️‍🔥Liked your post`;
@@ -110,6 +158,8 @@ export default {
           }
         }
       }
+
+      console.log(`[PROCESS] ${activity_type} from ${initiator_name} (${initiator_id}). Recipient count: ${recipientGroups.length}`);
 
       if (recipientGroups.length === 0) {
         return new Response(JSON.stringify({ status: 'ignored', reason: 'No recipients or muted' }), {
@@ -128,6 +178,8 @@ export default {
 
         const isOnline = presence === true;
         const inFeedOrInbox = location === 'feed' || location === 'feed_inbox';
+
+        console.log(`[USER ${userId}] presence: ${presence}, location: ${location}, isOnline: ${isOnline}, inFeedOrInbox: ${inFeedOrInbox}`);
 
         // Case C: User is in the active feed/inbox tab -> Do nothing
         if (inFeedOrInbox) {
@@ -156,10 +208,13 @@ export default {
             const currentUnseenBadge = currentBadgeObj || 1;
 
             let title = initiatorName;
-            let clickActionUrl = `/?activity_id=${activity.id}`;
+            let clickActionUrl = `/?activity_id=${record.id || ''}`;
 
             const tokens = subscriptions.map((s) => s.endpoint);
+            console.log(`[PUSH] Dispatching FCM push to ${tokens.length} token(s) for user ${userId}`);
             await sendFCMMessages(env, tokens, title, body, clickActionUrl, currentUnseenBadge, firebaseToken);
+          } else {
+            console.log(`[PUSH] User ${userId} has 0 push_subscriptions in Supabase.`);
           }
         }
       }
