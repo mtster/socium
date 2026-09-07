@@ -237,7 +237,6 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       const formData = new FormData();
       formData.append('file', highResFile);
       formData.append('upload_preset', uploadPreset);
-      formData.append('format', 'webp');
 
       const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
         method: 'POST',
