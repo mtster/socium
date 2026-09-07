@@ -26,9 +26,12 @@ export default {
       if (activity_type === 'post') {
         const connections = await fetchSupabase(
           env, 
-          `/rest/v1/connections?connection_id=eq.${initiator_id}&is_activity_muted=eq.false&select=user_id`
+          `/rest/v1/connections?connection_id=eq.${initiator_id}&select=user_id,is_activity_muted`
         );
-        const connectionIds = connections.map((c) => c.user_id);
+        const connectionIds = (Array.isArray(connections) ? connections : [])
+          .filter((c) => c && c.is_activity_muted !== true)
+          .map((c) => c.user_id)
+          .filter(Boolean);
 
         if (taggedIds.length === 0) {
           // Standard post logic
@@ -46,6 +49,19 @@ export default {
               recipientGroups.push({ userId: uid, body: `🌏Posted` });
             }
           }
+        }
+      } else if (activity_type === 'profile_picture') {
+        const connections = await fetchSupabase(
+          env, 
+          `/rest/v1/connections?connection_id=eq.${initiator_id}&select=user_id,is_activity_muted`
+        );
+        const connectionIds = (Array.isArray(connections) ? connections : [])
+          .filter((c) => c && c.is_activity_muted !== true)
+          .map((c) => c.user_id)
+          .filter(Boolean);
+
+        for (const uid of connectionIds) {
+          recipientGroups.push({ userId: uid, body: `👤Updated profile picture` });
         }
       } else if (activity_type === 'comment') {
         if (taggedIds.length === 0) {
@@ -167,7 +183,7 @@ async function getFirebaseAccessToken(env) {
     const jwtHeader = { alg: 'RS256', typ: 'JWT' };
     const jwtClaim = {
       iss: clientEmail,
-      scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/cloud-platform',
+      scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/cloud-platform',
       aud: 'https://oauth2.googleapis.com/token',
       exp: now + 3000,
       iat: now
@@ -185,9 +201,7 @@ async function getFirebaseAccessToken(env) {
     const signingInput = `${headerEncoded}.${claimEncoded}`;
 
     const pemContents = privateKey
-      .replace('-----BEGIN PRIVATE KEY-----', '')
-      .replace('-----END PRIVATE KEY-----', '')
-      .replace(/\s/g, '');
+      .replace(/(?:-----(?:BEGIN|END)(?: RSA)? PRIVATE KEY-----|\s)/g, '');
     
     const binaryKey = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
 
@@ -259,7 +273,8 @@ async function transactionIncrementFirebase(env, userId, token) {
 
 // --- Supabase REST Helper Functions ---
 async function fetchSupabase(env, path) {
-  const url = `${env.SUPABASE_URL}${path}`;
+  const base = (env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const url = `${base}${path}`;
   const res = await fetch(url, {
     headers: {
       'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
@@ -267,7 +282,10 @@ async function fetchSupabase(env, path) {
       'Content-Type': 'application/json'
     }
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.error(`Supabase REST error: HTTP ${res.status} for ${path}`);
+    return [];
+  }
   return res.json();
 }
 
@@ -292,13 +310,21 @@ async function sendFCMMessages(env, tokens, title, body, url, badge, accessToken
       }
     };
 
-    await fetch(fcmUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    }).catch(e => console.error('FCM Transmission error:', e));
+    try {
+      const res = await fetch(fcmUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error(`FCM send error HTTP ${res.status}:`, errorText);
+      }
+    } catch (e) {
+      console.error('FCM Transmission network error:', e);
+    }
   }
 }

@@ -46,53 +46,47 @@ export async function getCroppedImg(
   });
 }
 
-function checkWebpSupport(): boolean {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    return canvas.toDataURL('image/webp').startsWith('data:image/webp');
-  } catch {
-    return false;
-  }
-}
+import encodeWebp from '@jsquash/webp/encode';
 
-async function exportCanvasToCompressedBlob(
+async function exportCanvasToWebp(
   canvas: HTMLCanvasElement,
   quality: number,
-  defaultFilename: string
+  filename: string
 ): Promise<File> {
-  const supportsWebP = checkWebpSupport();
-  const primaryFormat = supportsWebP ? 'image/webp' : 'image/jpeg';
-  const cleanBase = defaultFilename.replace(/\.[^.]+$/, '');
-  const primaryExt = supportsWebP ? '.webp' : '.jpg';
-  const initialFilename = `${cleanBase}${primaryExt}`;
-
-  return new Promise<File>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return reject(new Error('Canvas export failed'));
-
-        // If the browser silently fell back to uncompressed image/png (common in some WebKit/Safari engines),
-        // re-encode immediately as image/jpeg so it never balloons to a 1.6MB PNG
-        if (blob.type === 'image/png') {
-          canvas.toBlob(
-            (jpegBlob) => {
-              if (!jpegBlob) return resolve(new File([blob], `${cleanBase}.png`, { type: 'image/png' }));
-              resolve(new File([jpegBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' }));
-            },
-            'image/jpeg',
-            quality
-          );
-          return;
-        }
-
-        resolve(new File([blob], initialFilename, { type: blob.type }));
-      },
-      primaryFormat,
-      quality
-    );
+  // 1. Try native canvas WebP export
+  const nativeBlob = await new Promise<Blob | null>((resolve) => {
+    try {
+      canvas.toBlob(
+        (b) => {
+          if (b && b.type === 'image/webp') {
+            resolve(b);
+          } else {
+            resolve(null);
+          }
+        },
+        'image/webp',
+        quality
+      );
+    } catch {
+      resolve(null);
+    }
   });
+
+  if (nativeBlob) {
+    return new File([nativeBlob], filename, { type: 'image/webp' });
+  }
+
+  // 2. Use @jsquash/webp (WebAssembly) to encode raw ImageData to WebP exclusively
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not get 2d context for WebP encoding');
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const webpBuffer = await encodeWebp(imageData, {
+    quality: Math.round(quality * 100),
+  });
+
+  const webpBlob = new Blob([webpBuffer], { type: 'image/webp' });
+  return new File([webpBlob], filename, { type: 'image/webp' });
 }
 
 export interface CroppedProfileImages {
@@ -107,7 +101,7 @@ export async function getCroppedProfileImages(
   const image = await createImage(imageSrc);
 
   // 1. High-Resolution Canvas (Optimized for full-screen / Cloudinary)
-  // 1080x1080 is ideal: sharp on 4K/retina displays, but drastic reduction vs multi-MB iPhone HEIF/HEIC
+  // 1080x1080 provides high fidelity on Retina screens while reducing multi-MB images down to ~60-120KB
   const maxHighResDim = 1080;
   const highResSize = Math.min(Math.max(pixelCrop.width, pixelCrop.height), maxHighResDim);
   
@@ -159,11 +153,11 @@ export async function getCroppedProfileImages(
     lowResSize
   );
 
-  // Export Low-Res WebP (with JPEG fallback)
-  const lowResFile = await exportCanvasToCompressedBlob(lowResCanvas, 0.75, 'avatar.webp');
+  // Export Low-Res WebP exclusively
+  const lowResFile = await exportCanvasToWebp(lowResCanvas, 0.75, 'avatar.webp');
 
-  // Export High-Res WebP (with JPEG fallback)
-  const highResFile = await exportCanvasToCompressedBlob(highResCanvas, 0.80, 'avatar_hd.webp');
+  // Export High-Res WebP exclusively
+  const highResFile = await exportCanvasToWebp(highResCanvas, 0.80, 'avatar_hd.webp');
 
   return { lowResFile, highResFile };
 }
