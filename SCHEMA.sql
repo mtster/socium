@@ -646,11 +646,17 @@ SECURITY DEFINER
 AS $$
 DECLARE
   cf_worker_url TEXT := 'https://socium-feed-notifications.brare-black.workers.dev/';
-  webhook_secret TEXT := 'secure-feed-webhook-token-override';
+  webhook_secret TEXT;
   payload JSONB;
   target_user_id UUID;
   initiator_name TEXT;
 BEGIN
+  -- Retrieve secret from Supabase Vault
+  SELECT decrypted_secret INTO webhook_secret
+  FROM vault.decrypted_secrets
+  WHERE name = 'WEBHOOK_SECRET_TOKEN'
+  LIMIT 1;
+
   IF NEW.activity_type = 'connection_request' THEN
     SELECT receiver_id INTO target_user_id FROM public.connection_requests WHERE id = NEW.connection_request_id;
   ELSIF NEW.activity_type = 'like' THEN
