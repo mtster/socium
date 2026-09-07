@@ -2,14 +2,13 @@ import React, { useState, useCallback } from 'react';
 import Cropper from 'react-easy-crop';
 import { motion } from 'motion/react';
 import { X } from 'lucide-react';
-import { getCroppedImg } from '@/src/lib/cropImage';
-import imageCompression from 'browser-image-compression';
+import { getCroppedProfileImages } from '@/src/lib/cropImage';
 import { createPortal } from 'react-dom';
 
 interface ImageCropperModalProps {
   imageSrc: string;
   onClose: () => void;
-  onComplete: (file: File) => void;
+  onComplete: (lowResFile: File, highResFile: File) => void;
 }
 
 export default function ImageCropperModal({ imageSrc, onClose, onComplete }: ImageCropperModalProps) {
@@ -33,22 +32,11 @@ export default function ImageCropperModal({ imageSrc, onClose, onComplete }: Ima
     if (!croppedAreaPixels) return;
     try {
       setIsProcessing(true);
-      const croppedFile = await getCroppedImg(imageSrc, croppedAreaPixels);
-      if (!croppedFile) throw new Error('Failed to crop');
-
-      // Compress image
-      const options = {
-        maxSizeMB: 0.5,
-        maxWidthOrHeight: 800,
-        useWebWorker: true,
-        fileType: 'image/jpeg' as const
-      };
-      
-      const compressedFile = await imageCompression(croppedFile, options);
-      onComplete(compressedFile);
+      const { lowResFile, highResFile } = await getCroppedProfileImages(imageSrc, croppedAreaPixels);
+      onComplete(lowResFile, highResFile);
     } catch (e) {
-      console.error(e);
-      alert('Error cropping image');
+      console.error('Error cropping image:', e);
+      alert('Error cropping image. Please try again.');
     } finally {
       setIsProcessing(false);
     }

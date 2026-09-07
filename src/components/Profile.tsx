@@ -11,6 +11,7 @@ import UserSearchModal from './UserSearchModal';
 import ImageCropperModal from './ImageCropperModal';
 import { useConnections } from './profile/useConnections';
 import { ProfileImageViewer } from './profile/ProfileImageViewer';
+import { logFeedActivity } from '@/src/lib/feed';
 
 function stripEmail(val: string | null | undefined): string {
   if (!val) return '';
@@ -123,10 +124,12 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
   // Local state for immediate avatar update
   const [localAvatar, setLocalAvatar] = useState(profile.avatar_url);
+  const [localAvatarHd, setLocalAvatarHd] = useState(profile.avatar_hd_url || profile.avatar_url);
 
   useEffect(() => {
     setLocalAvatar(profile.avatar_url);
-  }, [profile.avatar_url]);
+    setLocalAvatarHd(profile.avatar_hd_url || profile.avatar_url);
+  }, [profile.avatar_url, profile.avatar_hd_url]);
 
   useEffect(() => {
     const targetPostId = sessionStorage.getItem('scroll_to_post_id');
@@ -188,46 +191,109 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
     e.target.value = '';
   };
 
-  const handleCropComplete = async (croppedFile: File) => {
+  const handleCropComplete = async (lowResFile: File, highResFile: File) => {
     setCropperImageSrc(null);
     try {
       setIsUploading(true);
       
-      const fileExt = 'jpg';
-      const fileName = `${profile.id}-${Math.random()}.${fileExt}`;
-      const filePath = `${currentUserId}/${fileName}`;
+      // 1. Upload low-res WebP image to Supabase Storage with upsert/replace
+      // The path is constant (${currentUserId}/avatar.webp) so older files are replaced in-place
+      const filePath = `${currentUserId}/avatar.webp`;
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(filePath, croppedFile);
+        .upload(filePath, lowResFile, {
+          upsert: true,
+          contentType: 'image/webp',
+          cacheControl: '3600',
+        });
 
       if (uploadError) {
         if (uploadError.message.includes('bucket not found')) {
-          alert('STORAGE ERROR: The "avatars" bucket is missing.\n\nPlease go to Supabase -> Storage, and create a PUBLIC bucket named "avatars" as stated in the database setup rules.');
+          alert('STORAGE ERROR: The "avatars" bucket is missing.\n\nPlease go to Supabase -> Storage, and create a PUBLIC bucket named "avatars".');
           return;
         }
         throw uploadError;
       }
 
-      const { data } = supabase.storage
+      const { data: storageData } = supabase.storage
         .from('avatars')
         .getPublicUrl(filePath);
 
-      const imageUrl = data.publicUrl;
+      // Append timestamp query parameter to bust browser cache since filename is reused
+      const lowResUrl = `${storageData.publicUrl}?t=${Date.now()}`;
 
-      // Update Supabase profile
-      const { error } = await supabase
+      // 2. Upload high-res image to Cloudinary
+      // @ts-ignore
+      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET : '');
+      // @ts-ignore
+      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME : '');
+
+      if (!uploadPreset || !cloudName) {
+        alert('Cloudinary Error: Missing configuration.\nPlease ensure Cloudinary environment variables are set.');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', highResFile);
+      formData.append('upload_preset', uploadPreset);
+
+      const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!cloudRes.ok) {
+        const errData = await cloudRes.json();
+        throw new Error(errData.error?.message || 'Cloudinary upload failed');
+      }
+
+      const cloudData = await cloudRes.json();
+      const highResUrl = cloudData.secure_url;
+
+      // 3. Update Supabase profile with both URLs
+      // The database trigger will catch the avatar_hd_url update, create the post, and insert into feed_activity
+      const { error: updateError } = await supabase
         .from('profiles')
-        .update({ avatar_url: imageUrl })
+        .update({ 
+          avatar_url: lowResUrl,
+          avatar_hd_url: highResUrl,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', profile.id);
 
-      if (error) throw error;
+      if (updateError) throw updateError;
       
       // Update local state (optimistic)
-      setLocalAvatar(imageUrl);
-    } catch (error) {
+      setLocalAvatar(lowResUrl);
+      setLocalAvatarHd(highResUrl);
+
+      // Update store profile so other views have immediate access
+      useStore.getState().setProfile({
+        ...profile,
+        avatar_url: lowResUrl,
+        avatar_hd_url: highResUrl
+      });
+
+      // Synchronize client-side RTDB feed indicator for active connections
+      try {
+        logFeedActivity({
+          activityType: 'profile_picture',
+          initiatorId: profile.id
+        });
+      } catch (err) {
+        console.warn('RTDB feed indicator sync notice:', err);
+      }
+
+      // Refresh posts so the newly auto-generated post is displayed immediately
+      setTimeout(() => {
+        fetchUserPosts(profile.id, currentUserId);
+        onRefetch?.();
+      }, 500);
+
+    } catch (error: any) {
       console.error('Error updating PFP:', error);
-      alert('Failed to update profile picture.');
+      alert(`Failed to update profile picture: ${error.message || error}`);
     } finally {
       setIsUploading(false);
     }
@@ -243,7 +309,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         try {
           const parts = localAvatar.split('/avatars/');
           if (parts.length > 1) {
-            const pathInBucket = decodeURIComponent(parts[1]);
+            const pathInBucket = decodeURIComponent(parts[1]).split('?')[0];
             await supabase.storage.from('avatars').remove([pathInBucket]);
           }
         } catch (storageErr) {
@@ -253,11 +319,17 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       const { error } = await supabase
         .from('profiles')
-        .update({ avatar_url: null })
+        .update({ avatar_url: null, avatar_hd_url: null })
         .eq('id', profile.id);
 
       if (error) throw error;
       setLocalAvatar(null);
+      setLocalAvatarHd(null);
+      useStore.getState().setProfile({
+        ...profile,
+        avatar_url: null,
+        avatar_hd_url: null
+      });
       // Immediately notify parent component to refresh stats/cache
       onRefetch?.();
     } catch (e: any) {
@@ -401,14 +473,19 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
         <div className="relative mb-8 flex justify-center">
           <div 
             onClick={() => {
-              if (localAvatar) {
-                setViewingImage(localAvatar);
+              const fullImg = localAvatarHd || profile.avatar_hd_url || localAvatar || profile.avatar_url;
+              if (fullImg) {
+                setViewingImage(fullImg);
               }
             }}
-            className={cn("w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden", localAvatar ? "cursor-pointer active:scale-95 transition-transform" : "")}
+            className={cn("w-32 h-32 rounded-full bg-white/5 ring-4 ring-white/10 flex items-center justify-center overflow-hidden", (localAvatarHd || profile.avatar_hd_url || localAvatar || profile.avatar_url) ? "cursor-pointer active:scale-95 transition-transform" : "")}
           >
-            {localAvatar ? (
-              <img src={localAvatar} alt={profile.username} className="w-full h-full object-cover" />
+            {(localAvatarHd || profile.avatar_hd_url || localAvatar || profile.avatar_url) ? (
+              <img 
+                src={localAvatarHd || profile.avatar_hd_url || localAvatar || profile.avatar_url || ''} 
+                alt={profile.username} 
+                className="w-full h-full object-cover" 
+              />
             ) : (
               <UserIcon size={56} className="text-white/20" />
             )}
@@ -442,7 +519,8 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                     <button 
                       onClick={() => {
                         setShowPfpMenu(false);
-                        if (localAvatar) setViewingImage(localAvatar);
+                        const fullImg = localAvatarHd || profile.avatar_hd_url || localAvatar || profile.avatar_url;
+                        if (fullImg) setViewingImage(fullImg);
                       }}
                       className="w-full text-left px-4 py-3 rounded-xl hover:bg-white/10 flex items-center text-sm transition-colors"
                     >
@@ -461,7 +539,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
                       Change picture
                     </button>
 
-                    {localAvatar && (
+                    {(localAvatar || localAvatarHd) && (
                       <button 
                         onClick={() => {
                           setShowPfpMenu(false);

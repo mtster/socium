@@ -188,9 +188,16 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
             )}
           </div>
           <div>
-            <p className="text-sm font-bold tracking-tight text-white group-active:opacity-70 transition-opacity">
-              {post.profiles.full_name || post.profiles.username}
-            </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-sm font-bold tracking-tight text-white group-active:opacity-70 transition-opacity">
+                {post.profiles.full_name || post.profiles.username}
+              </p>
+              {post.is_profile_picture_update && (
+                <span className="text-xs text-white/50 font-normal">
+                  updated profile picture
+                </span>
+              )}
+            </div>
             <p className="text-[10px] text-white/50">{formatDate(post.created_at)}</p>
           </div>
         </div>

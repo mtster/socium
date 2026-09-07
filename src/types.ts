@@ -3,6 +3,7 @@ export interface Profile {
   username: string;
   full_name: string | null;
   avatar_url: string | null;
+  avatar_hd_url?: string | null;
   bio: string | null;
   updated_at: string;
 }
@@ -12,6 +13,7 @@ export interface Post {
   user_id: string;
   image_url: string | null;
   caption: string | null;
+  is_profile_picture_update?: boolean;
   created_at: string;
   profiles: Profile;
   likes_count?: number;

@@ -151,7 +151,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
           supabase
             .from('feed_activity')
             .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
-            .eq('activity_type', 'post')
+            .in('activity_type', ['post', 'profile_picture'])
             .in('initiator_id', connectionIds)
             .order('created_at', { ascending: false })
             .limit(30)
@@ -379,6 +379,8 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
     switch (type) {
       case 'post':
         return <Plus className="w-4 h-4 text-emerald-400" />;
+      case 'profile_picture':
+        return <User className="w-4 h-4 text-purple-400" />;
       case 'like':
         return <Heart className="w-4 h-4 text-rose-500 fill-rose-500" />;
       case 'comment':
@@ -399,6 +401,12 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         return (
           <span>
             <strong className="text-white hover:underline">{name}</strong> {isMentioned ? 'mentioned you in a post' : 'created a new post'}
+          </span>
+        );
+      case 'profile_picture':
+        return (
+          <span>
+            <strong className="text-white hover:underline">{name}</strong> updated profile picture
           </span>
         );
       case 'like':

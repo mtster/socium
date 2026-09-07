@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS full_name TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_hd_url TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS bio TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS posts (
   image_url TEXT, -- Made optional for text-only posts
   caption TEXT,
   visible_to UUID[], -- Restricted audience
+  is_profile_picture_update BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -34,6 +36,9 @@ DO $$
 BEGIN 
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='visible_to') THEN 
     ALTER TABLE posts ADD COLUMN visible_to UUID[];
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='is_profile_picture_update') THEN 
+    ALTER TABLE posts ADD COLUMN is_profile_picture_update BOOLEAN DEFAULT FALSE;
   END IF;
   ALTER TABLE posts ALTER COLUMN image_url DROP NOT NULL;
 END $$;
@@ -147,6 +152,9 @@ CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (
 
 DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (
+  auth.uid() = id OR 
+  (auth.uid() = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2' AND id = '00000000-0000-0000-0000-000000000001')
+) WITH CHECK (
   auth.uid() = id OR 
   (auth.uid() = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2' AND id = '00000000-0000-0000-0000-000000000001')
 );
@@ -557,7 +565,7 @@ end $$;
 
 CREATE TABLE IF NOT EXISTS public.feed_activity (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  activity_type TEXT CHECK (activity_type IN ('post', 'like', 'comment', 'connection_request')) NOT NULL,
+  activity_type TEXT CHECK (activity_type IN ('post', 'like', 'comment', 'connection_request', 'profile_picture')) NOT NULL,
   initiator_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
   post_id UUID REFERENCES public.posts(id) ON DELETE CASCADE,
   comment_id UUID REFERENCES public.comments(id) ON DELETE CASCADE,
@@ -565,6 +573,16 @@ CREATE TABLE IF NOT EXISTS public.feed_activity (
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   tagged_user_ids UUID[] DEFAULT ARRAY[]::UUID[]
 );
+
+-- Safely allow 'profile_picture' in feed_activity constraint if table already exists
+DO $$ 
+BEGIN 
+  ALTER TABLE public.feed_activity DROP CONSTRAINT IF EXISTS feed_activity_activity_type_check;
+  ALTER TABLE public.feed_activity ADD CONSTRAINT feed_activity_activity_type_check 
+    CHECK (activity_type IN ('post', 'like', 'comment', 'connection_request', 'profile_picture'));
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
 
 -- Safely add tagged_user_ids to feed_activity in case table already exists
 ALTER TABLE public.feed_activity ADD COLUMN IF NOT EXISTS tagged_user_ids UUID[] DEFAULT ARRAY[]::UUID[];
@@ -674,6 +692,66 @@ CREATE TRIGGER trigger_notify_feed_worker
 AFTER INSERT ON public.feed_activity
 FOR EACH ROW
 EXECUTE FUNCTION public.notify_feed_worker();
+
+-- ==========================================
+-- PROFILE PICTURE UPDATE TRIGGER
+-- Creates a post and notifies connections via feed_activity
+-- ==========================================
+
+CREATE OR REPLACE FUNCTION public.handle_profile_picture_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  new_post_id UUID;
+BEGIN
+  -- Trigger when avatar_hd_url is newly updated to a non-null value (Cloudinary high-res image)
+  IF NEW.avatar_hd_url IS NOT NULL 
+     AND (OLD.avatar_hd_url IS DISTINCT FROM NEW.avatar_hd_url) THEN
+
+    -- Create post marking it as a profile picture update
+    INSERT INTO public.posts (
+      user_id,
+      image_url,
+      caption,
+      is_profile_picture_update,
+      created_at,
+      updated_at
+    ) VALUES (
+      NEW.id,
+      NEW.avatar_hd_url,
+      NULL,
+      true,
+      NOW(),
+      NOW()
+    ) RETURNING id INTO new_post_id;
+
+    -- Insert into feed_activity so connection inboxes receive the activity
+    -- trigger_notify_feed_worker will fire and send push notifications to connections
+    INSERT INTO public.feed_activity (
+      activity_type,
+      initiator_id,
+      post_id,
+      created_at
+    ) VALUES (
+      'profile_picture',
+      NEW.id,
+      new_post_id,
+      NOW()
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_on_avatar_hd_updated ON public.profiles;
+CREATE TRIGGER trigger_on_avatar_hd_updated
+AFTER UPDATE OF avatar_hd_url ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_profile_picture_update();
+
 
 
 

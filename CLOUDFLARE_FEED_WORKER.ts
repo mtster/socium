@@ -47,6 +47,15 @@ export default {
             }
           }
         }
+      } else if (activity_type === 'profile_picture') {
+        const connections = await fetchSupabase(
+          env, 
+          `/rest/v1/connections?connection_id=eq.${initiator_id}&is_activity_muted=eq.false&select=user_id`
+        );
+        const connectionIds = connections.map((c) => c.user_id);
+        for (const uid of connectionIds) {
+          recipientGroups.push({ userId: uid, body: `👤Updated profile picture` });
+        }
       } else if (activity_type === 'comment') {
         if (taggedIds.length === 0) {
           // Standard comment logic

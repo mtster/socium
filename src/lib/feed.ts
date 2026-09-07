@@ -3,7 +3,7 @@ import { rtdb } from './firebase';
 import { ref, set, get, runTransaction } from 'firebase/database';
 
 export interface FeedActivityPayload {
-  activityType: 'post' | 'like' | 'comment' | 'connection_request';
+  activityType: 'post' | 'like' | 'comment' | 'connection_request' | 'profile_picture';
   initiatorId: string;
   postId?: string | null;
   commentId?: string | null;
@@ -22,7 +22,7 @@ export async function logFeedActivity({
   taggedUserIds,
 }: FeedActivityPayload) {
   try {
-    // 1. Insert into Supabase feed_activity table
+    // 1. Insert into Supabase feed_activity table (unless already inserted via trigger)
     const { data: insertedActivity, error } = await supabase
       .from('feed_activity')
       .insert({
@@ -42,7 +42,7 @@ export async function logFeedActivity({
 
     // 2. Client-side Realtime Database 'feed' synchronization
     if (rtdb) {
-      if (activityType === 'post') {
+      if (activityType === 'post' || activityType === 'profile_picture') {
         // Query initiator's active, non-muted connections to trigger feed ring and vibe overrides
         const { data: conns } = await supabase
           .from('connections')
