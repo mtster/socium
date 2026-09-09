@@ -12,6 +12,10 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
   const previousTabRef = useRef('feed');
   const activeTabRef = useRef('feed');
   const mainRef = useRef<HTMLElement>(null);
+
+  if (typeof window !== 'undefined' && !(window as any).currentActiveTab) {
+    (window as any).currentActiveTab = 'feed';
+  }
   
   const setActiveTab = (tab: string) => {
     (window as any).currentActiveTab = tab;

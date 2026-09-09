@@ -19,6 +19,17 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
   const [baseTimestamp, setBaseTimestamp] = useState<string>(new Date(0).toISOString());
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const oldestCursorRef = React.useRef<string | null>(null);
+  const contextIdsRef = React.useRef<{ connectionIds: string[], myPostIds: string[], myRequestIds: string[] }>({
+    connectionIds: [],
+    myPostIds: [],
+    myRequestIds: []
+  });
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
   const [activePost, setActivePost] = useState<any | null>(null);
   const [activeComment, setActiveComment] = useState<any | null>(null);
 
@@ -91,7 +102,6 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       }
 
       // 4. Query activities using highly targeted parallel queries to ensure free-tier speed and accuracy:
-      
       // A. Get my post IDs to filter likes & comments on my posts
       const { data: myPosts } = await supabase
         .from('posts')
@@ -106,7 +116,11 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         .eq('receiver_id', currentUserId);
       const myRequestIds = (myRequests || []).map(r => r.id);
 
-      // Run parallel queries to fetch only relevant notifications
+      // Save context IDs for subsequent paginated loads
+      contextIdsRef.current = { connectionIds, myPostIds, myRequestIds };
+
+      // Initial load: fetch up to 15 items per category, merge and take top 15
+      const INITIAL_LIMIT = 15;
       const queries = [];
 
       // Query likes/comments on my posts
@@ -118,7 +132,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             .in('activity_type', ['like', 'comment'])
             .in('post_id', myPostIds)
             .order('created_at', { ascending: false })
-            .limit(30)
+            .limit(INITIAL_LIMIT)
         );
       }
 
@@ -129,7 +143,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
           .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
           .contains('tagged_user_ids', [currentUserId])
           .order('created_at', { ascending: false })
-          .limit(30)
+          .limit(INITIAL_LIMIT)
       );
 
       // Query connection requests meant for me
@@ -141,7 +155,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             .eq('activity_type', 'connection_request')
             .in('connection_request_id', myRequestIds)
             .order('created_at', { ascending: false })
-            .limit(30)
+            .limit(INITIAL_LIMIT)
         );
       }
 
@@ -154,7 +168,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             .in('activity_type', ['post', 'profile_picture'])
             .in('initiator_id', connectionIds)
             .order('created_at', { ascending: false })
-            .limit(30)
+            .limit(INITIAL_LIMIT)
         );
       }
 
@@ -167,7 +181,6 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       results.forEach(res => {
         if (res.data) {
           res.data.forEach((act: any) => {
-            // Ignore broken/ghost profile_picture activities without post_id
             if (act.activity_type === 'profile_picture' && !act.post_id) {
               return;
             }
@@ -179,21 +192,159 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         }
       });
 
-      // Sort by created_at desc
-      allFetched.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      // Limit final list to 50 activities for performance
-      const finalActivities = allFetched.slice(0, 50);
-
       // Filter out own activities
-      const filtered = finalActivities.filter((act: any) => act.initiator_id !== currentUserId);
-      setActivities(filtered);
+      const filtered = allFetched.filter((act: any) => act.initiator_id !== currentUserId);
+
+      // Sort by created_at desc
+      filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Limit initial list to exactly 15 activities
+      const initial15 = filtered.slice(0, INITIAL_LIMIT);
+      setActivities(initial15);
+
+      if (initial15.length > 0) {
+        oldestCursorRef.current = initial15[initial15.length - 1].created_at;
+        setHasMore(filtered.length >= INITIAL_LIMIT);
+      } else {
+        oldestCursorRef.current = null;
+        setHasMore(false);
+      }
     } catch (err) {
       console.error('Error loading inbox activities:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  const fetchMoreActivities = async () => {
+    if (loadingMore || !hasMore || !oldestCursorRef.current) return;
+
+    try {
+      setLoadingMore(true);
+      const cursor = oldestCursorRef.current;
+      const { connectionIds, myPostIds, myRequestIds } = contextIdsRef.current;
+      const PAGE_SIZE = 5;
+
+      const queries = [];
+
+      // Query likes/comments on my posts
+      if (myPostIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .in('activity_type', ['like', 'comment'])
+            .in('post_id', myPostIds)
+            .lt('created_at', cursor)
+            .order('created_at', { ascending: false })
+            .limit(PAGE_SIZE)
+        );
+      }
+
+      // Query tagged/mentioned activities for currentUserId
+      queries.push(
+        supabase
+          .from('feed_activity')
+          .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+          .contains('tagged_user_ids', [currentUserId])
+          .lt('created_at', cursor)
+          .order('created_at', { ascending: false })
+          .limit(PAGE_SIZE)
+      );
+
+      // Query connection requests meant for me
+      if (myRequestIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .eq('activity_type', 'connection_request')
+            .in('connection_request_id', myRequestIds)
+            .lt('created_at', cursor)
+            .order('created_at', { ascending: false })
+            .limit(PAGE_SIZE)
+        );
+      }
+
+      // Query posts created by my connections
+      if (connectionIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .in('activity_type', ['post', 'profile_picture'])
+            .in('initiator_id', connectionIds)
+            .lt('created_at', cursor)
+            .order('created_at', { ascending: false })
+            .limit(PAGE_SIZE)
+        );
+      }
+
+      const results = await Promise.all(queries);
+
+      const existingIds = new Set(activities.map(a => a.id));
+      const newlyFetched: any[] = [];
+
+      results.forEach(res => {
+        if (res.data) {
+          res.data.forEach((act: any) => {
+            if (act.activity_type === 'profile_picture' && !act.post_id) return;
+            if (act.initiator_id === currentUserId) return;
+            if (!existingIds.has(act.id)) {
+              existingIds.add(act.id);
+              newlyFetched.push(act);
+            }
+          });
+        }
+      });
+
+      newlyFetched.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Take the next 5
+      const next5 = newlyFetched.slice(0, PAGE_SIZE);
+
+      if (next5.length > 0) {
+        setActivities(prev => [...prev, ...next5]);
+        oldestCursorRef.current = next5[next5.length - 1].created_at;
+        setHasMore(next5.length === PAGE_SIZE);
+      } else {
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.error('Error fetching more inbox activities:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // Infinite scroll listener for feed inbox container
+  const handleContainerScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    if (target.scrollHeight - target.scrollTop - target.clientHeight < 300) {
+      if (hasMore && !loadingMore && !loading) {
+        fetchMoreActivities();
+      }
+    }
+  };
+
+  // Sentinel intersection observer for seamless bottom trigger
+  useEffect(() => {
+    if (!sentinelRef.current || !hasMore || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          if (hasMore && !loadingMore) {
+            fetchMoreActivities();
+          }
+        }
+      },
+      { root: containerRef.current, rootMargin: '200px', threshold: 0 }
+    );
+
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, loading, activities.length]);
 
   const handleActivityClick = async (activity: any) => {
     const isUnseen = activity.created_at > baseTimestamp && !seenIds.has(activity.id);
@@ -451,7 +602,11 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       </header>
 
       {/* Main Container */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-safe">
+      <div 
+        ref={containerRef}
+        onScroll={handleContainerScroll}
+        className="flex-1 overflow-y-auto p-4 space-y-4 pb-safe"
+      >
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 space-y-3">
             <div className="w-8 h-8 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
@@ -522,6 +677,13 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
                 </div>
               );
             })}
+
+            {/* Bottom Sentinel for 5-at-a-time pagination */}
+            <div ref={sentinelRef} className="py-4 flex justify-center items-center">
+              {loadingMore && (
+                <div className="w-5 h-5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+              )}
+            </div>
           </div>
         )}
       </div>

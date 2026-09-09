@@ -776,6 +776,30 @@ CREATE INDEX IF NOT EXISTS idx_comments_post_id ON public.comments (post_id);
 CREATE INDEX IF NOT EXISTS idx_connections_user_id ON public.connections (user_id);
 CREATE INDEX IF NOT EXISTS idx_feed_activity_created_at_desc ON public.feed_activity (created_at DESC);
 
+-- ==============================================================================
+-- Feed Inbox Performance Indexes
+-- Optimized for instantaneous paginated queries across post likes, comments, tagged mentions & updates
+-- ==============================================================================
+CREATE INDEX IF NOT EXISTS idx_feed_activity_post_id_created_at ON public.feed_activity (post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_activity_initiator_id_created_at ON public.feed_activity (initiator_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_activity_conn_req_created_at ON public.feed_activity (connection_request_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_activity_tagged_users ON public.feed_activity USING GIN (tagged_user_ids);
+CREATE INDEX IF NOT EXISTS idx_seen_activities_user_id ON public.seen_activities (user_id);
+CREATE INDEX IF NOT EXISTS idx_connection_requests_receiver_id ON public.connection_requests (receiver_id);
+
+-- ==============================================================================
+-- Chat System Performance Indexes
+-- Optimized for instantaneous retrieval of 1-on-1 chats, group chats, unread counts & latest messages
+-- ==============================================================================
+CREATE INDEX IF NOT EXISTS idx_messages_direct_conversation ON public.messages (sender_id, receiver_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_receiver_created_at ON public.messages (receiver_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_unread_dms ON public.messages (receiver_id, sender_id) WHERE read_at IS NULL AND group_chat_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_group_chat_created_at ON public.messages (group_chat_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_group_chat_participants_user_id ON public.group_chat_participants (user_id);
+CREATE INDEX IF NOT EXISTS idx_group_chat_participants_chat_id ON public.group_chat_participants (chat_id);
+CREATE INDEX IF NOT EXISTS idx_connections_connection_id ON public.connections (connection_id);
+
+
 
 
 

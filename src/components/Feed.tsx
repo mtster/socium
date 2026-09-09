@@ -58,7 +58,8 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
 
     const handleScroll = (e: Event) => {
       const target = e.currentTarget as HTMLElement;
-      if (target && activeTabRef.current === 'feed' && (window as any).currentActiveTab === 'feed') {
+      const isFeedActive = activeTabRef.current === 'feed' || (window as any).currentActiveTab === 'feed' || !(window as any).currentActiveTab;
+      if (target && isFeedActive) {
         useStore.getState().setFeedScrollPos(target.scrollTop);
 
         // Infinite scroll pagination trigger
@@ -93,23 +94,23 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
 
   // IntersectionObserver for bottom sentinel to instantaneously trigger next page
   useEffect(() => {
-    if (!sentinelRef.current || !hasMoreFeedPosts) return;
+    if (!sentinelRef.current || !hasMoreFeedPosts || loading) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting) {
+        if (entries[0]?.isIntersecting) {
           const state = useStore.getState();
           if (state.hasMoreFeedPosts && !state.isFetchingMoreFeedPosts) {
             state.fetchMoreFeedPosts(currentUserId);
           }
         }
       },
-      { root: null, rootMargin: '600px', threshold: 0 }
+      { root: null, rootMargin: '800px', threshold: 0 }
     );
 
     observer.observe(sentinelRef.current);
     return () => observer.disconnect();
-  }, [hasMoreFeedPosts, currentUserId]);
+  }, [hasMoreFeedPosts, currentUserId, loading, feedPosts.length]);
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {
     const { setFeedPosts } = useStore.getState();
