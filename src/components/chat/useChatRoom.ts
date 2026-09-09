@@ -333,7 +333,10 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     }
 
     const formData = new FormData();
-    formData.append('file', fileToUpload);
+    const fileName = fileToUpload instanceof File && fileToUpload.name 
+      ? fileToUpload.name 
+      : (type === 'image' ? 'upload.webp' : (type === 'video' ? 'video.mp4' : 'upload.bin'));
+    formData.append('file', fileToUpload, fileName);
     formData.append('upload_preset', uploadPreset);
     if (type === 'image') formData.append('folder', 'chat_images');
     else if (type === 'video') formData.append('folder', 'chat_videos');
