@@ -151,10 +151,6 @@ export const MessageBubble = React.memo(
           if (parsed?.thumbnail) return parsed.thumbnail;
         } catch (e) {}
       }
-      // Dynamic fallback for Cloudinary video thumbnails
-      if (msg.media_url.includes("cloudinary.com/")) {
-        return msg.media_url.replace(/\/video\/upload\/(?:[^/]*\/)?(.*?)(?:\.[^.]+)?$/, "/video/upload/so_0,w_400,c_limit,f_webp/$1.webp");
-      }
       return null;
     }, [msg.media_type, msg.media_url, msg.metadata]);
 
@@ -436,7 +432,13 @@ export const MessageBubble = React.memo(
                     className="w-full h-auto max-h-[400px] object-cover block pointer-events-none"
                   />
                 ) : (
-                  <div className="w-full h-44 bg-neutral-900 flex items-center justify-center" />
+                  <video
+                    src={msg.media_url}
+                    preload="metadata"
+                    playsInline
+                    muted
+                    className="w-full h-auto max-h-[400px] object-cover block pointer-events-none"
+                  />
                 )}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/25 group-hover:bg-black/40 transition-colors">
                   <div className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-2xl group-hover:scale-110 active:scale-95 transition-all">

@@ -3,34 +3,35 @@
 
 export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
   return new Promise((resolve, reject) => {
+    let resolved = false;
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
     video.preload = 'auto';
+
     const sourceUrl = URL.createObjectURL(file);
     video.src = sourceUrl;
 
-    let cleanupDone = false;
+    let timeoutId: any = null;
+
     const cleanup = () => {
-      if (cleanupDone) return;
-      cleanupDone = true;
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
+      if (timeoutId) clearTimeout(timeoutId);
+      video.onloadedmetadata = null;
+      video.onloadeddata = null;
+      video.onseeked = null;
+      video.onerror = null;
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      } catch (e) {}
       URL.revokeObjectURL(sourceUrl);
     };
 
-    video.onerror = () => {
-      cleanup();
-      reject(new Error('Failed to load video for thumbnail extraction'));
-    };
-
-    video.onloadeddata = () => {
-      // Seek slightly into the video (0.05s) to guarantee first frame is available and avoid black frame
-      video.currentTime = Math.min(0.05, (video.duration || 1) / 2);
-    };
-
-    video.onseeked = () => {
+    const captureFrame = () => {
+      if (resolved) return;
       try {
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 480;
@@ -51,11 +52,11 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
         canvas.height = th;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          cleanup();
-          return reject(new Error('Canvas 2D context not available'));
+          throw new Error('Canvas 2D context not available');
         }
 
         ctx.drawImage(video, 0, 0, tw, th);
+        resolved = true;
         cleanup();
 
         canvas.toBlob(
@@ -70,9 +71,54 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
           0.82
         );
       } catch (err) {
-        cleanup();
-        reject(err);
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          reject(err);
+        }
       }
+    };
+
+    // Strict 3.5s timeout so it never hangs under any circumstance
+    timeoutId = setTimeout(() => {
+      if (!resolved) {
+        if (video.videoWidth > 0) {
+          captureFrame();
+        } else {
+          resolved = true;
+          cleanup();
+          reject(new Error('Video thumbnail extraction timed out'));
+        }
+      }
+    }, 3500);
+
+    video.onerror = () => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        reject(new Error('Failed to load video for thumbnail extraction'));
+      }
+    };
+
+    video.onloadedmetadata = () => {
+      try {
+        const targetTime = Math.min(0.05, (video.duration || 1) / 4);
+        video.currentTime = targetTime;
+      } catch (e) {
+        captureFrame();
+      }
+    };
+
+    video.onseeked = () => {
+      captureFrame();
+    };
+
+    video.onloadeddata = () => {
+      setTimeout(() => {
+        if (!resolved && video.videoWidth > 0) {
+          captureFrame();
+        }
+      }, 400);
     };
   });
 }
@@ -108,6 +154,8 @@ export async function compressVideoTo480p(
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
     video.preload = 'auto';
 
     const sourceUrl = URL.createObjectURL(file);
@@ -115,7 +163,7 @@ export async function compressVideoTo480p(
 
     let cleanupDone = false;
     let animFrameId: number | null = null;
-    let audioCtx: AudioContext | null = null;
+    let intervalId: any = null;
     let mediaRecorder: MediaRecorder | null = null;
     let stream: MediaStream | null = null;
     let timeoutId: any = null;
@@ -124,13 +172,11 @@ export async function compressVideoTo480p(
       if (cleanupDone) return;
       cleanupDone = true;
       if (timeoutId) clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
       if (animFrameId) cancelAnimationFrame(animFrameId);
       try {
         if (stream) {
           stream.getTracks().forEach(t => t.stop());
-        }
-        if (audioCtx && audioCtx.state !== 'closed') {
-          audioCtx.close().catch(() => {});
         }
         video.pause();
         video.removeAttribute('src');
@@ -145,6 +191,12 @@ export async function compressVideoTo480p(
       resolve(fallbackFile);
     };
 
+    // Overall failsafe timeout in case video loading stalls
+    timeoutId = setTimeout(() => {
+      console.warn('[videoCompression] Global compression timeout reached, using fallback.');
+      failSafe();
+    }, 45000);
+
     video.onerror = () => {
       console.warn('[videoCompression] Video load error, using original file.');
       failSafe();
@@ -156,8 +208,8 @@ export async function compressVideoTo480p(
         const originalHeight = video.videoHeight || 480;
         const duration = video.duration || 1;
 
-        // Skip compression if already tiny (< 1.5MB and small resolution)
-        if (file.size < 1.5 * 1024 * 1024 && Math.min(originalWidth, originalHeight) <= 480) {
+        // Skip compression if already tiny (< 2MB and small resolution)
+        if (file.size < 2 * 1024 * 1024 && Math.min(originalWidth, originalHeight) <= 480) {
           cleanup();
           const orig = file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
           return resolve(orig);
@@ -197,29 +249,15 @@ export async function compressVideoTo480p(
 
         stream = new MediaStream([vTrack]);
 
-        // Attempt to capture audio tracks
+        // Attempt to capture direct audio track if supported
         try {
-          // Check if direct video element captureStream is available for native audio
-          const directStream = (video as any).captureStream ? (video as any).captureStream() : null;
+          const directStream = (video as any).captureStream ? (video as any).captureStream() : (video as any).mozCaptureStream ? (video as any).mozCaptureStream() : null;
           const directAudio = directStream?.getAudioTracks()?.[0];
           if (directAudio) {
             stream.addTrack(directAudio);
-          } else {
-            const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-            if (AudioCtxClass) {
-              audioCtx = new AudioCtxClass();
-              video.muted = false;
-              video.volume = 1;
-              const source = audioCtx.createMediaElementSource(video);
-              const dest = audioCtx.createMediaStreamDestination();
-              source.connect(dest);
-              const aTrack = dest.stream.getAudioTracks()[0];
-              if (aTrack) stream.addTrack(aTrack);
-            }
           }
         } catch (audioErr) {
-          console.warn('[videoCompression] Audio extraction warning, encoding video track only:', audioErr);
-          video.muted = true;
+          console.warn('[videoCompression] Audio track capture not supported:', audioErr);
         }
 
         const mimeType = getSupportedVideoMimeType();
@@ -255,11 +293,14 @@ export async function compressVideoTo480p(
           }
         };
 
-        // Keep normal 1.0x playback rate so video decodes without dropped frames and audio remains synchronized
-        video.playbackRate = 1.0;
+        // Accelerate playback to 1.5x for quick client conversion
+        if (duration > 3) {
+          video.playbackRate = 1.5;
+        }
 
-        // Dynamic timeout allowing full duration to complete without arbitrary 45s cutoff
-        const maxTimeMs = Math.max(duration * 1200 + 10000, 15000);
+        // Dynamic timeout based on video duration
+        const maxTimeMs = Math.min(Math.max((duration / (video.playbackRate || 1)) * 1300 + 4000, 8000), 40000);
+        if (timeoutId) clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
           if (mediaRecorder && mediaRecorder.state === 'recording') {
             try {
@@ -275,11 +316,13 @@ export async function compressVideoTo480p(
         mediaRecorder.start(250);
 
         const renderFrame = () => {
-          if (video.paused || video.ended || cleanupDone) return;
-          ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
-          if (onProgress && duration > 0) {
-            const pct = Math.min(Math.round((video.currentTime / duration) * 100), 99);
-            onProgress(pct);
+          if (cleanupDone) return;
+          if (!video.paused && !video.ended) {
+            ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+            if (onProgress && duration > 0) {
+              const pct = Math.min(Math.round((video.currentTime / duration) * 100), 99);
+              onProgress(pct);
+            }
           }
           if ('requestVideoFrameCallback' in video) {
             (video as any).requestVideoFrameCallback(renderFrame);
@@ -287,6 +330,14 @@ export async function compressVideoTo480p(
             animFrameId = requestAnimationFrame(renderFrame);
           }
         };
+
+        // Backup interval ensuring frames are continually pushed even if rAF throttles
+        intervalId = setInterval(() => {
+          if (cleanupDone || video.ended) return;
+          if (!video.paused) {
+            ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+          }
+        }, 40);
 
         video.onended = () => {
           if (onProgress) onProgress(100);
@@ -306,8 +357,9 @@ export async function compressVideoTo480p(
         try {
           await video.play();
         } catch (playErr) {
-          video.muted = true;
-          await video.play().catch(failSafe);
+          console.warn('[videoCompression] Play error:', playErr);
+          failSafe();
+          return;
         }
         renderFrame();
       } catch (err) {

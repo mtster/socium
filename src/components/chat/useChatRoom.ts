@@ -313,17 +313,23 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     }
   };
 
-  const uploadToCloudinary = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'auto') => {
+  const uploadToCloudinary = async (
+    file: File | Blob, 
+    type: 'image' | 'video' | 'audio' | 'auto',
+    options?: { skipClientOptimization?: boolean; rawUrl?: boolean }
+  ) => {
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
     if (!cloudName || !uploadPreset) throw new Error('Cloudinary config missing');
 
     let fileToUpload = file;
-    if (type === 'image') {
-      fileToUpload = await optimizePostOrChatImage(file, 'chat_image.webp');
-    } else if (type === 'video') {
-      // Heavily compress and convert video to 480p on client frontend before uploading
-      fileToUpload = await compressVideoTo480p(file);
+    if (!options?.skipClientOptimization) {
+      if (type === 'image') {
+        fileToUpload = await optimizePostOrChatImage(file, 'chat_image.webp');
+      } else if (type === 'video') {
+        // Heavily compress and convert video to 480p on client frontend before uploading
+        fileToUpload = await compressVideoTo480p(file);
+      }
     }
 
     const formData = new FormData();
@@ -342,14 +348,17 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, { method: 'POST', body: formData });
     if (!res.ok) throw new Error('Upload failed');
     const data = await res.json();
+    
+    // For videos and pre-optimized thumbnails, return raw secure_url to avoid Cloudinary on-the-fly server transformations
+    if (type === 'video' || options?.rawUrl) {
+      return data.secure_url;
+    }
+
     let optimizedUrl = data.secure_url;
     if (type === 'image') {
        const urlParts = optimizedUrl.split('/upload/');
        // Force f_webp so Cloudinary strictly serves WebP and never falls back to JPEG
        optimizedUrl = `${urlParts[0]}/upload/q_auto,f_webp,w_1080/${urlParts[1]}`;
-    } else if (type === 'video') {
-       const urlParts = optimizedUrl.split('/upload/');
-       optimizedUrl = `${urlParts[0]}/upload/q_auto,vc_auto,w_854,h_480,c_limit/${urlParts[1]}`;
     }
     return optimizedUrl;
   };
@@ -364,7 +373,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         try {
           const thumbBlob = await extractVideoThumbnail(file);
           const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
-          thumbnailUrl = await uploadToCloudinary(thumbFile, 'image');
+          thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
         } catch (thumbErr) {
           console.warn('Video thumbnail extraction error:', thumbErr);
         }
