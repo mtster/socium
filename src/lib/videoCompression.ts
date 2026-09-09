@@ -96,9 +96,12 @@ async function canvasToWebpBlob(
 }
 
 /**
- * Extracts a representative frame (seeking past initial black frames to ~0.5s or frame 3+),
- * scales it so the longest edge is 400px, and encodes it to WebP format.
- * Uses WebCodecs for instant, offscreen, non-DOM background-safe extraction with fallback.
+ * Extracts a representative frame from a video file:
+ * - Uses modern HTMLVideoElement with requestVideoFrameCallback (guaranteeing GPU has rendered frame)
+ * - Uses createImageBitmap / VideoFrame for direct hardware texture capture
+ * - Resizes so longest edge is 400px
+ * - Encodes to high-quality WebP format
+ * - Never hangs: guarded by strict safety timeout
  */
 export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
   const startTime = performance.now();
@@ -108,43 +111,158 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
     type: file.type
   });
 
-  // Tier 1: Try WebCodecs + MP4Box for instant keyframe decoding
-  if (
-    typeof VideoDecoder !== 'undefined' &&
-    typeof OffscreenCanvas !== 'undefined' &&
-    (file.type.includes('mp4') || file.type.includes('quicktime') || (file instanceof File && (file.name.endsWith('.mp4') || file.name.endsWith('.mov'))))
-  ) {
-    try {
-      videoLog.info('📸 [Thumbnail] Attempting Tier-1 WebCodecs keyframe extraction');
-      const arrayBuffer = await file.arrayBuffer();
-      const thumbBlob = await extractThumbnailViaWebCodecs(arrayBuffer);
-      if (thumbBlob && thumbBlob.size > 200) {
-        const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-        videoLog.success(`📸 [Thumbnail] WebCodecs thumbnail extracted in ${elapsed}s`, {
-          sizeKb: (thumbBlob.size / 1024).toFixed(1),
-          mime: thumbBlob.type
-        });
-        return thumbBlob;
-      }
-    } catch (err) {
-      videoLog.warn('📸 [Thumbnail] Tier-1 WebCodecs thumbnail extraction fallback:', err);
-    }
-  }
+  return new Promise<Blob>((resolve) => {
+    let isFinished = false;
+    const sourceUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+    video.preload = 'auto';
+    video.crossOrigin = 'anonymous';
 
-  // Tier 2: Bulletproof Offscreen Video Element seeking with explicit seeked event awaiting
-  videoLog.info('📸 [Thumbnail] Using Tier-2 Offscreen Video Element extraction');
-  try {
-    const thumbBlob = await extractThumbnailViaVideoElement(file);
-    const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-    videoLog.success(`📸 [Thumbnail] Video Element thumbnail extracted in ${elapsed}s`, {
-      sizeKb: (thumbBlob.size / 1024).toFixed(1),
-      mime: thumbBlob.type
-    });
-    return thumbBlob;
-  } catch (err) {
-    videoLog.warn('📸 [Thumbnail] Tier-2 extraction failed, generating fallback thumbnail canvas', err);
-    return createEmergencyFallbackThumbnail();
-  }
+    // Safety timeout: 4s max
+    const timeoutId = setTimeout(() => {
+      if (!isFinished) {
+        videoLog.warn('📸 [Thumbnail] Extraction timed out, generating fallback');
+        finish(createEmergencyFallbackThumbnail());
+      }
+    }, 4000);
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      video.onloadedmetadata = null;
+      video.onloadeddata = null;
+      video.onseeked = null;
+      video.onerror = null;
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      } catch (e) {}
+      URL.revokeObjectURL(sourceUrl);
+    };
+
+    const finish = (blob: Blob) => {
+      if (isFinished) return;
+      isFinished = true;
+      cleanup();
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+      videoLog.success(`📸 [Thumbnail] Extracted in ${elapsed}s`, {
+        sizeKb: (blob.size / 1024).toFixed(1),
+        mime: blob.type
+      });
+      resolve(blob);
+    };
+
+    const captureFrame = async () => {
+      if (isFinished) return;
+
+      try {
+        const vw = video.videoWidth || 640;
+        const vh = video.videoHeight || 480;
+
+        // Scale so longest edge is 400px
+        let tw: number;
+        let th: number;
+        if (vw >= vh) {
+          tw = 400;
+          th = Math.max(2, Math.round((vh * 400) / vw));
+        } else {
+          th = 400;
+          tw = Math.max(2, Math.round((vw * 400) / vh));
+        }
+
+        const canvas = typeof OffscreenCanvas !== 'undefined'
+          ? new OffscreenCanvas(tw, th)
+          : document.createElement('canvas');
+        canvas.width = tw;
+        canvas.height = th;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true }) as any;
+        if (!ctx) throw new Error('Canvas 2D context unavailable');
+
+        // Method 1: Try createImageBitmap for direct GPU texture capture
+        let drawn = false;
+        if (typeof createImageBitmap === 'function') {
+          try {
+            const bitmap = await createImageBitmap(video);
+            ctx.drawImage(bitmap, 0, 0, tw, th);
+            bitmap.close();
+            drawn = true;
+          } catch (bmErr) {
+            // Fall back to direct drawImage
+          }
+        }
+
+        if (!drawn) {
+          ctx.drawImage(video, 0, 0, tw, th);
+        }
+
+        // Check if blank (black or transparent)
+        if (isCanvasBlank(ctx, tw, th)) {
+          videoLog.warn('📸 [Thumbnail] Canvas is blank, waiting for next frame presentation...');
+          // Give video one more presentation cycle
+          if ('requestVideoFrameCallback' in video && typeof (video as any).requestVideoFrameCallback === 'function') {
+            (video as any).requestVideoFrameCallback(async () => {
+              if (isFinished) return;
+              try {
+                ctx.drawImage(video, 0, 0, tw, th);
+                const blob = await canvasToWebpBlob(canvas, ctx, tw, th, 0.85);
+                finish(blob);
+              } catch (e) {
+                finish(createEmergencyFallbackThumbnail());
+              }
+            });
+            return;
+          }
+        }
+
+        const blob = await canvasToWebpBlob(canvas, ctx, tw, th, 0.85);
+        finish(blob);
+      } catch (err) {
+        videoLog.warn('📸 [Thumbnail] Frame capture exception:', err);
+        finish(createEmergencyFallbackThumbnail());
+      }
+    };
+
+    const onSeekReady = () => {
+      // Modern API: requestVideoFrameCallback ensures the GPU has rendered the frame surface
+      if ('requestVideoFrameCallback' in video && typeof (video as any).requestVideoFrameCallback === 'function') {
+        (video as any).requestVideoFrameCallback(() => {
+          captureFrame();
+        });
+      } else {
+        // Fallback: wait a tick for GPU frame buffer to be available
+        requestAnimationFrame(() => {
+          setTimeout(captureFrame, 80);
+        });
+      }
+    };
+
+    video.onerror = (e) => {
+      videoLog.warn('📸 [Thumbnail] Video element load error:', e);
+      finish(createEmergencyFallbackThumbnail());
+    };
+
+    video.onloadedmetadata = () => {
+      try {
+        const dur = video.duration || 1;
+        // Seek past intro black frames to ~0.3s - 0.5s or 5% into video
+        const seekTarget = Math.min(Math.max(0.3, dur * 0.05), Math.max(0.1, dur - 0.1));
+        video.onseeked = onSeekReady;
+        video.currentTime = seekTarget;
+      } catch (e) {
+        captureFrame();
+      }
+    };
+
+    video.src = sourceUrl;
+    video.load();
+  });
 }
 
 /**
@@ -165,256 +283,6 @@ function createEmergencyFallbackThumbnail(): Blob {
     ctx.fillText('Video', 200, 112);
   }
   return new Blob([new Uint8Array(100)], { type: 'image/webp' });
-}
-
-/**
- * Instant WebCodecs single-frame thumbnail extraction.
- */
-async function extractThumbnailViaWebCodecs(arrayBuffer: ArrayBuffer): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const mp4file: MP4File = MP4Box.createFile();
-    let isFinished = false;
-    let decoder: VideoDecoder | null = null;
-
-    const timeout = setTimeout(() => {
-      if (!isFinished) {
-        isFinished = true;
-        try { decoder?.close(); } catch (e) {}
-        reject(new Error('WebCodecs thumbnail extraction timeout (2.5s)'));
-      }
-    }, 2500);
-
-    const finish = (blob?: Blob, err?: Error) => {
-      if (isFinished) return;
-      isFinished = true;
-      clearTimeout(timeout);
-      try { decoder?.close(); } catch (e) {}
-      if (blob) resolve(blob);
-      else reject(err || new Error('Failed to extract thumbnail'));
-    };
-
-    mp4file.onReady = async (info: MP4Info) => {
-      const videoTrack = info.videoTracks[0];
-      if (!videoTrack) {
-        return finish(undefined, new Error('No video track found'));
-      }
-
-      const vw = videoTrack.track_width || videoTrack.video?.width || 640;
-      const vh = videoTrack.track_height || videoTrack.video?.height || 480;
-
-      // Longest edge = 400px
-      let tw: number;
-      let th: number;
-      if (vw >= vh) {
-        tw = 400;
-        th = Math.max(2, Math.round((vh * 400) / vw));
-      } else {
-        th = 400;
-        tw = Math.max(2, Math.round((vw * 400) / vh));
-      }
-
-      const offscreen = new OffscreenCanvas(tw, th);
-      const ctx = offscreen.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        return finish(undefined, new Error('OffscreenCanvas 2D context unavailable'));
-      }
-
-      const description = getTrackDescription(videoTrack.id, mp4file);
-
-      decoder = new VideoDecoder({
-        output: async (frame: VideoFrame) => {
-          try {
-            ctx.drawImage(frame, 0, 0, tw, th);
-            frame.close();
-
-            const blob = await canvasToWebpBlob(offscreen, ctx, tw, th, 0.85);
-            finish(blob);
-          } catch (e: any) {
-            finish(undefined, e);
-          }
-        },
-        error: (e) => {
-          finish(undefined, new Error(e.message));
-        }
-      });
-
-      try {
-        decoder.configure({
-          codec: videoTrack.codec,
-          description,
-          codedWidth: vw,
-          codedHeight: vh
-        });
-      } catch (e) {
-        decoder.configure({ codec: videoTrack.codec });
-      }
-
-      mp4file.setExtractionOptions(videoTrack.id, null, { nbSamples: 10 });
-      mp4file.onSamples = (id: number, user: any, samples: MP4Sample[]) => {
-        if (id === videoTrack.id && samples.length > 0 && decoder && decoder.state === 'configured') {
-          let targetSample = samples[0];
-          for (const s of samples) {
-            const timeSec = s.cts / s.timescale;
-            if (s.is_sync) targetSample = s;
-            if (timeSec >= 0.3 && s.is_sync) {
-              targetSample = s;
-              break;
-            }
-          }
-
-          try {
-            decoder.decode(
-              new EncodedVideoChunk({
-                type: targetSample.is_sync ? 'key' : 'delta',
-                timestamp: (targetSample.cts * 1_000_000) / targetSample.timescale,
-                duration: (targetSample.duration * 1_000_000) / targetSample.timescale,
-                data: targetSample.data
-              })
-            );
-            decoder.flush();
-          } catch (decodeErr: any) {
-            finish(undefined, decodeErr);
-          }
-        }
-      };
-
-      mp4file.start();
-    };
-
-    mp4file.onError = (e: string) => finish(undefined, new Error(e));
-
-    const fileBuf = arrayBuffer as ArrayBuffer & { fileStart?: number };
-    fileBuf.fileStart = 0;
-    mp4file.appendBuffer(fileBuf);
-    mp4file.flush();
-  });
-}
-
-/**
- * Robust Offscreen Video Element Thumbnail Extractor.
- * Guarantees proper loadedmetadata and seeked event resolution before canvas drawing.
- */
-async function extractThumbnailViaVideoElement(file: File | Blob): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.muted = true;
-    video.defaultMuted = true;
-    video.playsInline = true;
-    video.setAttribute('playsinline', 'true');
-    video.setAttribute('muted', 'true');
-    video.setAttribute('webkit-playsinline', 'true');
-    video.preload = 'auto';
-
-    const sourceUrl = URL.createObjectURL(file);
-    video.src = sourceUrl;
-
-    let isFinished = false;
-    let timeoutId: any = null;
-    let retryAttempt = 0;
-
-    const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      video.onloadedmetadata = null;
-      video.onloadeddata = null;
-      video.onseeked = null;
-      video.onerror = null;
-      try {
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-      } catch (e) {}
-      URL.revokeObjectURL(sourceUrl);
-    };
-
-    const captureAndEncode = async () => {
-      if (isFinished) return;
-
-      try {
-        const vw = video.videoWidth || 640;
-        const vh = video.videoHeight || 480;
-
-        // Longest edge = 400px
-        let tw: number;
-        let th: number;
-        if (vw >= vh) {
-          tw = 400;
-          th = Math.max(2, Math.round((vh * 400) / vw));
-        } else {
-          th = 400;
-          tw = Math.max(2, Math.round((vw * 400) / vh));
-        }
-
-        const canvas = typeof OffscreenCanvas !== 'undefined'
-          ? new OffscreenCanvas(tw, th)
-          : document.createElement('canvas');
-        canvas.width = tw;
-        canvas.height = th;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true }) as any;
-        if (!ctx) throw new Error('Canvas 2D context unavailable');
-
-        ctx.drawImage(video, 0, 0, tw, th);
-
-        // Check if the frame captured is black/blank. If so and retryAttempt < 2, seek forward and retry
-        if (isCanvasBlank(ctx, tw, th) && retryAttempt < 2) {
-          retryAttempt++;
-          const duration = video.duration || 1;
-          const nextSeek = Math.min(duration * 0.25 + retryAttempt * 0.8, Math.max(0.2, duration - 0.2));
-          videoLog.info(`📸 [Thumbnail] Frame at seek point was blank, retrying seek to ${nextSeek.toFixed(2)}s`);
-          video.currentTime = nextSeek;
-          return;
-        }
-
-        isFinished = true;
-        cleanup();
-
-        const blob = await canvasToWebpBlob(canvas, ctx, tw, th, 0.85);
-        resolve(blob);
-      } catch (err) {
-        if (!isFinished) {
-          isFinished = true;
-          cleanup();
-          reject(err);
-        }
-      }
-    };
-
-    timeoutId = setTimeout(() => {
-      if (!isFinished) {
-        if (video.videoWidth > 0) {
-          captureAndEncode();
-        } else {
-          isFinished = true;
-          cleanup();
-          reject(new Error('Video thumbnail extraction timed out (4s)'));
-        }
-      }
-    }, 4000);
-
-    video.onerror = () => {
-      if (!isFinished) {
-        isFinished = true;
-        cleanup();
-        reject(new Error('Failed to load video element'));
-      }
-    };
-
-    video.onloadedmetadata = () => {
-      try {
-        const dur = video.duration || 1;
-        // Seek past intro black frames to ~0.5s - 1.0s or the 3rd frame
-        const seekTarget = Math.min(Math.max(0.5, dur * 0.08), Math.max(0.1, dur - 0.1));
-        video.currentTime = seekTarget;
-      } catch (e) {
-        captureAndEncode();
-      }
-    };
-
-    video.onseeked = () => {
-      setTimeout(() => {
-        captureAndEncode();
-      }, 50);
-    };
-  });
 }
 
 /**
