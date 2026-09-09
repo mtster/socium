@@ -74,7 +74,7 @@ async function canvasToWebpBlob(
   if ('convertToBlob' in canvas && typeof (canvas as OffscreenCanvas).convertToBlob === 'function') {
     try {
       const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/webp', quality });
-      if (blob && blob.size > 200) return blob;
+      if (blob && blob.size > 200 && blob.type === 'image/webp') return blob;
     } catch (e) {}
   } else if ('toBlob' in canvas && typeof (canvas as HTMLCanvasElement).toBlob === 'function') {
     try {
@@ -421,6 +421,36 @@ async function compressVideoViaWebCodecs(
         }
 
         const audioTrack = info.audioTracks?.[0];
+        const isAacAudio = audioTrack && audioTrack.codec && audioTrack.codec.startsWith('mp4a');
+
+        // ==== SYNCHRONOUS EXTRACTION SETUP ====
+        // MP4Box requires setExtractionOptions and start() to be called synchronously
+        // inside onReady, otherwise the buffered media data is discarded.
+        const videoSamplesToProcess: MP4Sample[] = [];
+        const audioSamplesToProcess: MP4Sample[] = [];
+
+        if (isAacAudio && audioTrack) {
+          mp4file.setExtractionOptions(audioTrack.id, null, { nbSamples: 1000 });
+        }
+        mp4file.setExtractionOptions(videoTrack.id, null, { nbSamples: 1000 });
+
+        mp4file.onSamples = (id: number, user: any, samples: MP4Sample[]) => {
+          if (isAacAudio && audioTrack && id === audioTrack.id) {
+            for (let i = 0; i < samples.length; i++) audioSamplesToProcess.push(samples[i]);
+          } else if (id === videoTrack.id) {
+            for (let i = 0; i < samples.length; i++) videoSamplesToProcess.push(samples[i]);
+          }
+        };
+
+        mp4file.start();
+
+        videoLog.info(`🎞️ [WebCodecs] Extracted ${videoSamplesToProcess.length} video samples & ${audioSamplesToProcess.length} audio chunks synchronously`);
+
+        if (videoSamplesToProcess.length === 0) {
+          return abortWithFallback('No video samples extracted');
+        }
+        // ======================================
+
         const origW = videoTrack.track_width || videoTrack.video?.width || 640;
         const origH = videoTrack.track_height || videoTrack.video?.height || 480;
         const totalDurationUs = (info.duration * 1_000_000) / info.timescale;
@@ -447,8 +477,6 @@ async function compressVideoViaWebCodecs(
         targetH = Math.max(2, targetH);
 
         videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} @ 800kbps`);
-
-        const isAacAudio = audioTrack && audioTrack.codec && audioTrack.codec.startsWith('mp4a');
 
         const target = new ArrayBufferTarget();
         const muxer = new Muxer({
@@ -561,39 +589,19 @@ async function compressVideoViaWebCodecs(
           videoDecoder.configure({ codec: videoTrack.codec });
         }
 
-        // Extract audio samples and feed directly to muxer (pass-through lossless AAC)
-        if (isAacAudio && audioTrack) {
-          mp4file.setExtractionOptions(audioTrack.id, null, { nbSamples: 1000 });
-        }
-        mp4file.setExtractionOptions(videoTrack.id, null, { nbSamples: 1000 });
-
-        const videoSamplesToProcess: MP4Sample[] = [];
-        let audioChunkCount = 0;
-
-        mp4file.onSamples = (id: number, user: any, samples: MP4Sample[]) => {
-          if (isAacAudio && audioTrack && id === audioTrack.id) {
-            for (const sample of samples) {
-              const timestampUs = (sample.cts * 1_000_000) / sample.timescale;
-              const durationUs = (sample.duration * 1_000_000) / sample.timescale;
-              muxer.addAudioChunkRaw(
-                sample.data,
-                sample.is_sync ? 'key' : 'delta',
-                timestampUs,
-                durationUs
-              );
-              audioChunkCount++;
-            }
-          } else if (id === videoTrack.id) {
-            videoSamplesToProcess.push(...samples);
+        // Feed extracted audio samples directly to muxer (pass-through lossless AAC)
+        if (isAacAudio && audioTrack && audioSamplesToProcess.length > 0) {
+          for (const sample of audioSamplesToProcess) {
+            const timestampUs = (sample.cts * 1_000_000) / sample.timescale;
+            const durationUs = (sample.duration * 1_000_000) / sample.timescale;
+            muxer.addAudioChunkRaw(
+              sample.data,
+              sample.is_sync ? 'key' : 'delta',
+              timestampUs,
+              durationUs
+            );
           }
-        };
-
-        mp4file.start();
-
-        videoLog.info(`🎞️ [WebCodecs] Extracted ${videoSamplesToProcess.length} video samples & ${audioChunkCount} audio chunks`);
-
-        if (videoSamplesToProcess.length === 0) {
-          return abortWithFallback('No video samples extracted');
+          videoLog.info(`🎵 [WebCodecs Audio] Muxed ${audioSamplesToProcess.length} raw audio chunks`);
         }
 
         // Process all collected video samples through hardware decoder
