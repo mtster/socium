@@ -1,13 +1,38 @@
 import encodeWebp from '@jsquash/webp/encode';
 
 /**
- * Extracts the first non-blank frame of a video, scales it so the longest edge is 400px,
- * and encodes it to WebP format.
+ * Checks if a canvas context is purely blank / black (all alpha 0 or black pixels).
+ */
+function isCanvasBlank(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
+  try {
+    const imgData = ctx.getImageData(0, 0, width, height).data;
+    let nonBlackCount = 0;
+    // Step through sampled pixels
+    for (let i = 0; i < imgData.length; i += 16) {
+      const r = imgData[i];
+      const g = imgData[i + 1];
+      const b = imgData[i + 2];
+      const a = imgData[i + 3];
+      if (a > 10 && (r > 15 || g > 15 || b > 15)) {
+        nonBlackCount++;
+        if (nonBlackCount > 8) return false;
+      }
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Extracts a representative frame (seeking past the initial blank frames to ~0.5s-1.0s or 3rd frame),
+ * scales it so the longest edge is 400px, and encodes it to WebP format.
  */
 export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
     video.setAttribute('playsinline', 'true');
     video.setAttribute('muted', 'true');
@@ -19,6 +44,7 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
 
     let isFinished = false;
     let timeoutId: any = null;
+    let retryAttempt = 0;
 
     const cleanup = () => {
       if (timeoutId) clearTimeout(timeoutId);
@@ -36,7 +62,6 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
 
     const captureAndEncode = async () => {
       if (isFinished) return;
-      isFinished = true;
 
       try {
         const vw = video.videoWidth || 640;
@@ -60,6 +85,17 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
         if (!ctx) throw new Error('Canvas 2D context unavailable');
 
         ctx.drawImage(video, 0, 0, tw, th);
+
+        // Check if the frame captured is black/blank. If so and retryAttempt < 2, seek forward and retry
+        if (isCanvasBlank(ctx, tw, th) && retryAttempt < 2) {
+          retryAttempt++;
+          const duration = video.duration || 1;
+          const nextSeek = Math.min(duration * 0.25 + retryAttempt * 0.8, Math.max(0.2, duration - 0.2));
+          video.currentTime = nextSeek;
+          return;
+        }
+
+        isFinished = true;
         cleanup();
 
         // 1. Try native WebP blob export
@@ -71,7 +107,7 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
               } else {
                 res(null);
               }
-            }, 'image/webp', 0.82);
+            }, 'image/webp', 0.85);
           } catch {
             res(null);
           }
@@ -83,12 +119,15 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
 
         // 2. Fallback to @jsquash/webp WebAssembly encoder for guaranteed WebP output
         const imgData = ctx.getImageData(0, 0, tw, th);
-        const webpBuffer = await encodeWebp(imgData, { quality: 82 });
+        const webpBuffer = await encodeWebp(imgData, { quality: 85 });
         const webpBlob = new Blob([webpBuffer], { type: 'image/webp' });
         resolve(webpBlob);
       } catch (err) {
-        cleanup();
-        reject(err);
+        if (!isFinished) {
+          isFinished = true;
+          cleanup();
+          reject(err);
+        }
       }
     };
 
@@ -102,9 +141,9 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
           reject(new Error('Video thumbnail extraction timed out'));
         }
       }
-    }, 6000);
+    }, 7000);
 
-    video.onerror = (e) => {
+    video.onerror = () => {
       if (!isFinished) {
         isFinished = true;
         cleanup();
@@ -114,7 +153,9 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
 
     video.onloadedmetadata = () => {
       try {
-        const seekTarget = Math.min(0.1, (video.duration || 1) / 5);
+        const dur = video.duration || 1;
+        // Seek past intro black frames to ~0.5s - 1.0s or the 3rd frame
+        const seekTarget = Math.min(Math.max(0.5, dur * 0.08), Math.max(0.1, dur - 0.1));
         video.currentTime = seekTarget;
       } catch (e) {
         captureAndEncode();
@@ -122,17 +163,10 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
     };
 
     video.onseeked = () => {
+      // Delay slightly to let the browser video pipeline finish hardware decode on the frame
       setTimeout(() => {
         captureAndEncode();
-      }, 50);
-    };
-
-    video.onloadeddata = () => {
-      if (!isFinished && video.readyState >= 2 && video.currentTime > 0) {
-        setTimeout(() => {
-          captureAndEncode();
-        }, 50);
-      }
+      }, 100);
     };
   });
 }
@@ -142,8 +176,8 @@ export function getSupportedVideoMimeType(): string {
   const candidates = [
     'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
     'video/mp4',
-    'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9,opus',
     'video/webm'
   ];
   for (const candidate of candidates) {
@@ -155,7 +189,7 @@ export function getSupportedVideoMimeType(): string {
 }
 
 /**
- * Compresses video to 480p resolution using Web Audio Context and Canvas capture stream,
+ * Compresses video to 480p resolution using Web Audio / MediaStream and Canvas capture stream,
  * maintaining full duration and preserving audio tracks cleanly.
  */
 export async function compressVideoTo480p(
@@ -174,10 +208,13 @@ export async function compressVideoTo480p(
     }
 
     const video = document.createElement('video');
-    video.muted = false; // Need audio routed through Web Audio graph
+    // Keeping muted = true prevents browser autoplay NotAllowedError
+    video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
     video.setAttribute('playsinline', 'true');
     video.setAttribute('webkit-playsinline', 'true');
+    video.setAttribute('muted', 'true');
     video.preload = 'auto';
 
     const sourceUrl = URL.createObjectURL(file);
@@ -228,8 +265,8 @@ export async function compressVideoTo480p(
         const origH = video.videoHeight || 480;
         const duration = video.duration || 1;
 
-        // Skip re-encoding if already tiny (< 1.5MB and <= 480p)
-        if (file.size < 1.5 * 1024 * 1024 && Math.min(origW, origH) <= 480) {
+        // Skip re-encoding if already tiny (< 1.2MB and <= 480p)
+        if (file.size < 1.2 * 1024 * 1024 && Math.min(origW, origH) <= 480) {
           cleanup();
           const orig = file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
           return resolve(orig);
@@ -260,27 +297,31 @@ export async function compressVideoTo480p(
 
         combinedStream = new MediaStream([videoTrack]);
 
-        // Capture audio via Web Audio API AudioContext + MediaStreamDestination
+        // Capture audio track natively or via Web Audio API
         try {
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            audioCtx = new AudioContextClass();
-            const sourceNode = audioCtx.createMediaElementSource(video);
-            const destinationNode = audioCtx.createMediaStreamDestination();
-            sourceNode.connect(destinationNode);
-            // Also keep audio muted locally so it doesn't blast user's speaker during compression
-            const audioTrack = destinationNode.stream.getAudioTracks()[0];
-            if (audioTrack) {
-              combinedStream.addTrack(audioTrack);
+          const directStream = (video as any).captureStream ? (video as any).captureStream() : ((video as any).mozCaptureStream ? (video as any).mozCaptureStream() : null);
+          const directAudio = directStream?.getAudioTracks()?.[0];
+          if (directAudio) {
+            combinedStream.addTrack(directAudio);
+          } else {
+            // Web Audio fallback
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass) {
+              audioCtx = new AudioContextClass();
+              if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+              }
+              const sourceNode = audioCtx.createMediaElementSource(video);
+              const destinationNode = audioCtx.createMediaStreamDestination();
+              sourceNode.connect(destinationNode);
+              const audioTrack = destinationNode.stream.getAudioTracks()[0];
+              if (audioTrack) {
+                combinedStream.addTrack(audioTrack);
+              }
             }
           }
         } catch (audioErr) {
-          // Fallback to direct stream capture if createMediaElementSource is blocked
-          try {
-            const directStream = (video as any).captureStream ? (video as any).captureStream() : null;
-            const directAudio = directStream?.getAudioTracks()?.[0];
-            if (directAudio) combinedStream.addTrack(directAudio);
-          } catch (e) {}
+          console.warn('[videoCompression] Audio track capture note:', audioErr);
         }
 
         const mimeType = getSupportedVideoMimeType();
@@ -305,8 +346,8 @@ export async function compressVideoTo480p(
         };
 
         mediaRecorder.onstop = () => {
-          const finalType = mediaRecorder?.mimeType || mimeType || 'video/mp4';
-          const ext = finalType.includes('webm') ? 'webm' : 'mp4';
+          const finalType = mediaRecorder?.mimeType || mimeType || 'video/webm';
+          const ext = finalType.includes('mp4') ? 'mp4' : 'webm';
           const compressedBlob = new Blob(chunks, { type: finalType });
           cleanup();
 
@@ -318,7 +359,6 @@ export async function compressVideoTo480p(
           }
         };
 
-        // Standard 1x playback ensures 100% audio sync and zero dropped frames
         video.playbackRate = 1.0;
 
         // Dynamic safety timeout based on video length + 10s buffer
@@ -374,9 +414,6 @@ export async function compressVideoTo480p(
         };
 
         try {
-          if (audioCtx && audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-          }
           await video.play();
         } catch (playErr) {
           console.warn('[videoCompression] Playback initiation failed, falling back to original:', playErr);

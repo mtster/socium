@@ -341,7 +341,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     
     // For iOS audio (m4a/mp4) or video, Cloudinary uses /video/upload endpoint
     let resourceType = type;
-    if (type === 'audio' || file.type.includes('mp4') || file.type.includes('m4a')) {
+    if (type === 'audio' || fileToUpload.type.includes('mp4') || fileToUpload.type.includes('m4a') || fileToUpload.type.includes('webm')) {
       resourceType = 'video';
     }
 
