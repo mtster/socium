@@ -765,6 +765,18 @@ AFTER UPDATE OF avatar_hd_url ON public.profiles
 FOR EACH ROW
 EXECUTE FUNCTION public.handle_profile_picture_update();
 
+-- ==============================================================================
+-- Feed Performance Indexes
+-- Optimized for instantaneous paginated cursor-based feed queries & relational joins
+-- ==============================================================================
+CREATE INDEX IF NOT EXISTS idx_posts_user_id_created_at_desc ON public.posts (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at_desc ON public.posts (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_likes_post_id ON public.likes (post_id);
+CREATE INDEX IF NOT EXISTS idx_comments_post_id ON public.comments (post_id);
+CREATE INDEX IF NOT EXISTS idx_connections_user_id ON public.connections (user_id);
+CREATE INDEX IF NOT EXISTS idx_feed_activity_created_at_desc ON public.feed_activity (created_at DESC);
+
+
 
 
 

@@ -8,6 +8,9 @@ interface AppState {
   userPosts: Post[];
   feedPosts: Post[];
   feedScrollPos: number;
+  hasMoreFeedPosts: boolean;
+  isFetchingFeedPosts: boolean;
+  isFetchingMoreFeedPosts: boolean;
   totalUnread: number;
   pendingRequestsCount: number;
   hasUnseenRequest: boolean;
@@ -21,6 +24,7 @@ interface AppState {
   setUserPosts: (posts: Post[]) => void;
   setFeedPosts: (posts: Post[]) => void;
   setFeedScrollPos: (pos: number) => void;
+  setHasMoreFeedPosts: (val: boolean) => void;
   setTotalUnread: (count: number) => void;
   setPendingRequestsCount: (count: number) => void;
   setHasUnseenRequest: (val: boolean) => void;
@@ -34,7 +38,8 @@ interface AppState {
   
   fetchProfile: (userId: string) => Promise<void>;
   fetchUserPosts: (userId: string, currentUserId: string) => Promise<void>;
-  fetchFeedPosts: (currentUserId: string) => Promise<void>;
+  fetchFeedPosts: (currentUserId: string, refresh?: boolean) => Promise<void>;
+  fetchMoreFeedPosts: (currentUserId: string) => Promise<void>;
   fetchUnreadCount: (userId: string) => Promise<void>;
   fetchPendingRequestsCount: (userId: string) => Promise<void>;
   markPendingRequestsAsSeen: (userId: string) => Promise<void>;
@@ -46,6 +51,9 @@ export const useStore = create<AppState>((set, get) => ({
   userPosts: [],
   feedPosts: [],
   feedScrollPos: 0,
+  hasMoreFeedPosts: true,
+  isFetchingFeedPosts: false,
+  isFetchingMoreFeedPosts: false,
   totalUnread: 0,
   pendingRequestsCount: 0,
   hasUnseenRequest: false,
@@ -59,6 +67,7 @@ export const useStore = create<AppState>((set, get) => ({
   setUserPosts: (userPosts) => set({ userPosts }),
   setFeedPosts: (feedPosts) => set({ feedPosts }),
   setFeedScrollPos: (feedScrollPos) => set({ feedScrollPos }),
+  setHasMoreFeedPosts: (hasMoreFeedPosts) => set({ hasMoreFeedPosts }),
   setTotalUnread: (totalUnread) => set({ totalUnread }),
   setPendingRequestsCount: (pendingRequestsCount) => set({ pendingRequestsCount }),
   setHasUnseenRequest: (hasUnseenRequest) => set({ hasUnseenRequest }),
@@ -156,56 +165,163 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  fetchFeedPosts: async (currentUserId) => {
-    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+  fetchFeedPosts: async (currentUserId, refresh = false) => {
+    const { isFetchingFeedPosts, feedPosts } = get();
+    // If not a forced refresh and posts are already in memory, retain them (preserves cache and scroll height)
+    if (!refresh && feedPosts.length > 0) return;
+    if (isFetchingFeedPosts) return;
 
-    const { data: connectionsData } = await supabase
-      .from('connections')
-      .select('connection_id')
-      .eq('user_id', currentUserId);
-      
-    // Always include currentUserId, Admin ID and Humor Bot ('00000000-0000-0000-0000-000000000001') in feed connections
-    const connectionIds = [
-      currentUserId, 
-      '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', 
-      '00000000-0000-0000-0000-000000000001'
-    ];
-    if (connectionsData) {
-      connectionsData.forEach(c => {
-        if (c.connection_id) connectionIds.push(c.connection_id);
-      });
+    set({ isFetchingFeedPosts: true });
+    try {
+      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+
+      const { data: connectionsData } = await supabase
+        .from('connections')
+        .select('connection_id')
+        .eq('user_id', currentUserId);
+        
+      // Always include currentUserId, Admin ID and Humor Bot ('00000000-0000-0000-0000-000000000001') in feed connections
+      const connectionIds = [
+        currentUserId, 
+        '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', 
+        '00000000-0000-0000-0000-000000000001'
+      ];
+      if (connectionsData) {
+        connectionsData.forEach(c => {
+          if (c.connection_id) connectionIds.push(c.connection_id);
+        });
+      }
+
+      const PAGE_SIZE = 7;
+      let query = supabase
+        .from('posts')
+        .select('*, profiles(*), likes(user_id), comments(id)')
+        .lte('created_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(PAGE_SIZE);
+
+      if (currentUserId !== ADMIN_ID) {
+        query = query.in('user_id', connectionIds);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Error fetching initial feed posts:', error);
+        set({ isFetchingFeedPosts: false });
+        return;
+      }
+
+      if (data) {
+        let processed = data.map((p: any) => ({
+          ...p,
+          likes_count: p.likes?.length || 0,
+          has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
+          comments_count: p.comments?.length || 0
+        }));
+
+        processed = processed.filter((post: any) => {
+          if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
+          if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
+            return post.visible_to.includes(currentUserId);
+          }
+          return true;
+        });
+
+        set({ 
+          feedPosts: processed as any,
+          hasMoreFeedPosts: data.length === PAGE_SIZE,
+          isFetchingFeedPosts: false
+        });
+      } else {
+        set({ feedPosts: [], hasMoreFeedPosts: false, isFetchingFeedPosts: false });
+      }
+    } catch (e) {
+      console.error('Error in fetchFeedPosts:', e);
+      set({ isFetchingFeedPosts: false });
     }
+  },
 
-    let query = supabase
-      .from('posts')
-      .select('*, profiles(*), likes(user_id), comments(id)')
-      .lte('created_at', new Date().toISOString())
-      .limit(50);
+  fetchMoreFeedPosts: async (currentUserId) => {
+    const { feedPosts, hasMoreFeedPosts, isFetchingMoreFeedPosts } = get();
+    if (!hasMoreFeedPosts || isFetchingMoreFeedPosts || feedPosts.length === 0) return;
 
-    if (currentUserId !== ADMIN_ID) {
-      query = query.in('user_id', connectionIds);
-    }
+    set({ isFetchingMoreFeedPosts: true });
+    try {
+      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+      const oldestPost = feedPosts[feedPosts.length - 1];
+      if (!oldestPost || !oldestPost.created_at) {
+        set({ isFetchingMoreFeedPosts: false, hasMoreFeedPosts: false });
+        return;
+      }
 
-    const { data } = await query
-      .order('created_at', { ascending: false });
+      const { data: connectionsData } = await supabase
+        .from('connections')
+        .select('connection_id')
+        .eq('user_id', currentUserId);
+        
+      const connectionIds = [
+        currentUserId, 
+        '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', 
+        '00000000-0000-0000-0000-000000000001'
+      ];
+      if (connectionsData) {
+        connectionsData.forEach(c => {
+          if (c.connection_id) connectionIds.push(c.connection_id);
+        });
+      }
 
-    if (data) {
-      let processed = data.map((p: any) => ({
-        ...p,
-        likes_count: p.likes?.length || 0,
-        has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
-        comments_count: p.comments?.length || 0
-      }));
+      const PAGE_SIZE = 7;
+      let query = supabase
+        .from('posts')
+        .select('*, profiles(*), likes(user_id), comments(id)')
+        .lt('created_at', oldestPost.created_at)
+        .order('created_at', { ascending: false })
+        .limit(PAGE_SIZE);
 
-      processed = processed.filter((post: any) => {
-        if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
-        if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-          return post.visible_to.includes(currentUserId);
-        }
-        return true;
-      });
+      if (currentUserId !== ADMIN_ID) {
+        query = query.in('user_id', connectionIds);
+      }
 
-      set({ feedPosts: processed as any });
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Error fetching more feed posts:', error);
+        set({ isFetchingMoreFeedPosts: false });
+        return;
+      }
+
+      if (data && data.length > 0) {
+        let processed = data.map((p: any) => ({
+          ...p,
+          likes_count: p.likes?.length || 0,
+          has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
+          comments_count: p.comments?.length || 0
+        }));
+
+        processed = processed.filter((post: any) => {
+          if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
+          if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
+            return post.visible_to.includes(currentUserId);
+          }
+          return true;
+        });
+
+        // Deduplicate against loaded posts
+        const currentIds = new Set(get().feedPosts.map(p => p.id));
+        const newUnique = processed.filter(p => !currentIds.has(p.id));
+
+        set({ 
+          feedPosts: [...get().feedPosts, ...newUnique],
+          hasMoreFeedPosts: data.length === PAGE_SIZE,
+          isFetchingMoreFeedPosts: false
+        });
+      } else {
+        set({ hasMoreFeedPosts: false, isFetchingMoreFeedPosts: false });
+      }
+    } catch (e) {
+      console.error('Error in fetchMoreFeedPosts:', e);
+      set({ isFetchingMoreFeedPosts: false });
     }
   },
 

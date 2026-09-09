@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Post, Profile } from '@/src/types';
 import MentionEditor from './MentionEditor';
 import { extractMentionedUserIds } from '@/src/lib/utils';
+import { optimizePostOrChatImage } from '@/src/lib/cropImage';
 
 interface EditPostModalProps {
   post: Post;
@@ -42,17 +43,28 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length > 0) {
-      setNewImages(prev => [...prev, ...files]);
-      files.forEach(file => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setNewPreviews(prev => [...prev, reader.result as string]);
-        };
-        reader.readAsDataURL(file);
-      });
+      for (const file of files) {
+        try {
+          const optimized = await optimizePostOrChatImage(file, `edit_post_${Date.now()}.webp`);
+          setNewImages(prev => [...prev, optimized]);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setNewPreviews(prev => [...prev, reader.result as string]);
+          };
+          reader.readAsDataURL(optimized);
+        } catch (err) {
+          console.error('Image optimization failed, falling back to original file:', err);
+          setNewImages(prev => [...prev, file]);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setNewPreviews(prev => [...prev, reader.result as string]);
+          };
+          reader.readAsDataURL(file);
+        }
+      }
     }
   };
 
@@ -86,10 +98,18 @@ export default function EditPostModal({ post, onClose, onSuccess }: EditPostModa
            throw new Error('Cloudinary configuration missing');
         }
 
-        uploadedUrls = await Promise.all(newImages.map(async (img) => {
+        // Guarantee all new images are converted to <= 1080p WebP
+        const optimizedFiles = await Promise.all(
+          newImages.map((img, idx) => 
+            img.type === 'image/webp' ? Promise.resolve(img) : optimizePostOrChatImage(img, `edit_post_${Date.now()}_${idx}.webp`)
+          )
+        );
+
+        uploadedUrls = await Promise.all(optimizedFiles.map(async (img) => {
           const formData = new FormData();
           formData.append('file', img);
           formData.append('upload_preset', uploadPreset);
+          formData.append('folder', 'feed_posts');
           const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
             method: 'POST',
             body: formData,

@@ -9,6 +9,7 @@ import { GroupMembersModal } from './GroupMembersModal';
 import { GroupAddMembersModal } from './GroupAddMembersModal';
 import { ProfileImageViewer } from '../profile/ProfileImageViewer';
 import { VaultModal } from './VaultModal';
+import { optimizePostOrChatImage } from '@/src/lib/cropImage';
 
 interface GroupChatSettingsProps {
   currentUserId: string;
@@ -97,10 +98,11 @@ export function GroupChatSettings({ currentUserId, activeChat, onClose, onUpdate
 
     setLoading(true);
     try {
+      const optimizedFile = await optimizePostOrChatImage(file, 'group_avatar.webp');
       const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
       const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', optimizedFile);
       formData.append('upload_preset', uploadPreset);
       formData.append('folder', 'group_avatars');
 

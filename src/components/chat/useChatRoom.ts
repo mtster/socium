@@ -3,6 +3,7 @@ import { supabase } from '@/src/lib/supabase';
 import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAndNotify } from '@/src/lib/presence';
 import { ChatListItemType } from '@/src/types/chat';
 import { invalidateVaultCache, vaultCache } from './VaultModal';
+import { optimizePostOrChatImage } from '@/src/lib/cropImage';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -301,8 +302,14 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
     if (!cloudName || !uploadPreset) throw new Error('Cloudinary config missing');
+
+    let fileToUpload = file;
+    if (type === 'image') {
+      fileToUpload = await optimizePostOrChatImage(file, 'chat_image.webp');
+    }
+
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', fileToUpload);
     formData.append('upload_preset', uploadPreset);
     if (type === 'image') formData.append('folder', 'chat_images');
     else if (type === 'video') formData.append('folder', 'chat_audio'); 
@@ -318,7 +325,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     let optimizedUrl = data.secure_url;
     if (type === 'image') {
        const urlParts = optimizedUrl.split('/upload/');
-       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_auto,w_800/${urlParts[1]}`;
+       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_auto,w_1080/${urlParts[1]}`;
     }
     return optimizedUrl;
   };

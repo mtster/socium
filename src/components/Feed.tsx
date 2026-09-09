@@ -13,8 +13,15 @@ interface FeedProps {
 }
 
 export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProps) {
-  const { feedPosts, fetchFeedPosts } = useStore();
+  const { 
+    feedPosts, 
+    fetchFeedPosts, 
+    fetchMoreFeedPosts, 
+    hasMoreFeedPosts, 
+    isFetchingMoreFeedPosts 
+  } = useStore();
   const [loading, setLoading] = useState(feedPosts.length === 0);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
 
   const activeTabRef = React.useRef(activeTab);
   useEffect(() => {
@@ -29,36 +36,50 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
       });
     } else {
       setLoading(false);
-      // Background refresh only if older than 1 minute to avoid CPU spikes and crashes
+      // Background refresh only if older than 2 minutes to avoid CPU spikes and preserve scroll
       const lastFetch = (window as any).lastFeedFetchTime || 0;
-      if (Date.now() - lastFetch > 60000) {
-        fetchFeedPosts(currentUserId).then(() => {
+      if (Date.now() - lastFetch > 120000) {
+        fetchFeedPosts(currentUserId, true).then(() => {
           (window as any).lastFeedFetchTime = Date.now();
         });
       }
     }
     
-    // Restore scroll position
+    // Restore scroll position with requestAnimationFrame to ensure layout is ready
     const mainEl = document.querySelector('main');
     if (mainEl) {
-      mainEl.scrollTop = useStore.getState().feedScrollPos;
+      const savedPos = useStore.getState().feedScrollPos;
+      if (savedPos > 0) {
+        requestAnimationFrame(() => {
+          if (mainEl) mainEl.scrollTop = savedPos;
+        });
+      }
     }
 
     const handleScroll = (e: Event) => {
       const target = e.currentTarget as HTMLElement;
       if (target && activeTabRef.current === 'feed' && (window as any).currentActiveTab === 'feed') {
         useStore.getState().setFeedScrollPos(target.scrollTop);
+
+        // Infinite scroll pagination trigger
+        if (target.scrollHeight - target.scrollTop - target.clientHeight < 800) {
+          const state = useStore.getState();
+          if (state.hasMoreFeedPosts && !state.isFetchingMoreFeedPosts) {
+            state.fetchMoreFeedPosts(currentUserId);
+          }
+        }
       }
     };
 
     if (mainEl) {
-      mainEl.addEventListener('scroll', handleScroll);
+      mainEl.addEventListener('scroll', handleScroll, { passive: true });
     }
 
     const handleResetTab = (e: any) => {
       if (e.detail?.tabId === 'feed') {
         const mainEl = document.querySelector('main');
         if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
+        useStore.getState().setFeedScrollPos(0);
       }
     };
     window.addEventListener('resetTab', handleResetTab);
@@ -69,6 +90,26 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
       window.removeEventListener('resetTab', handleResetTab);
     };
   }, []);
+
+  // IntersectionObserver for bottom sentinel to instantaneously trigger next page
+  useEffect(() => {
+    if (!sentinelRef.current || !hasMoreFeedPosts) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          const state = useStore.getState();
+          if (state.hasMoreFeedPosts && !state.isFetchingMoreFeedPosts) {
+            state.fetchMoreFeedPosts(currentUserId);
+          }
+        }
+      },
+      { root: null, rootMargin: '600px', threshold: 0 }
+    );
+
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMoreFeedPosts, currentUserId]);
 
   const handleLikePost = async (postId: string, isLiked: boolean) => {
     const { setFeedPosts } = useStore.getState();
@@ -132,18 +173,27 @@ export default function Feed({ currentUserId, onUserClick, activeTab }: FeedProp
   return (
     <div className="pb-6 pt-4">
       {feedPosts.length > 0 ? (
-        feedPosts.map((post: Post) => (
-          <div key={post.id}>
-            <PostCard 
-              post={post} 
-              currentUserId={currentUserId}
-              onUserClick={onUserClick}
-              onDelete={handleDeletePost}
-              onLike={handleLikePost}
-              onRefetch={() => fetchFeedPosts(currentUserId)}
-            />
+        <>
+          {feedPosts.map((post: Post) => (
+            <div key={post.id}>
+              <PostCard 
+                post={post} 
+                currentUserId={currentUserId}
+                onUserClick={onUserClick}
+                onDelete={handleDeletePost}
+                onLike={handleLikePost}
+                onRefetch={() => fetchFeedPosts(currentUserId, true)}
+              />
+            </div>
+          ))}
+
+          {/* Bottom Sentinel for instantaneous infinite scrolling */}
+          <div ref={sentinelRef} className="h-6 w-full flex items-center justify-center">
+            {isFetchingMoreFeedPosts && (
+              <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin my-4" />
+            )}
           </div>
-        ))
+        </>
       ) : (
         <div className="px-10 py-32 text-center">
           <p className="text-white/40 font-medium">The feed is silent.</p>

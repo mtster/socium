@@ -411,7 +411,7 @@ export default function App() {
                 onSuccess={() => {
                   setActiveTab('feed');
                   fetchUserPosts(session.user.id, session.user.id);
-                  useStore.getState().fetchFeedPosts(session.user.id).then(() => {
+                  useStore.getState().fetchFeedPosts(session.user.id, true).then(() => {
                     (window as any).lastFeedFetchTime = Date.now();
                   });
                 }}
