@@ -8,6 +8,7 @@ import { AudioPlayer } from './AudioPlayer';
 import { FullscreenVideoPlayer } from './FullscreenVideoPlayer';
 import { useChatRoom } from './useChatRoom';
 import { ChatListItemType } from '@/src/types/chat';
+import { videoLog } from '@/src/lib/videoLogger';
 
 import { parseLocation, openInAppleMaps, openInGoogleMaps } from './locationUtils';
 
@@ -207,8 +208,34 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              )}
            </AnimatePresence>
            {uploadingMedia && <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50 rounded-t-3xl"><div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /></div>}
-            <input type="file" ref={fileInputRef} accept="image/*,video/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const isVideo = file.type.startsWith('video/'); setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
-            <input type="file" ref={cameraInputRef} accept="image/*,video/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const isVideo = file.type.startsWith('video/'); setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
+            <input type="file" ref={fileInputRef} accept="image/*,video/*" className="hidden" onChange={(e) => { 
+              const file = e.target.files?.[0]; 
+              if (file) { 
+                const isVideo = file.type.startsWith('video/'); 
+                videoLog.info(`📂 [File Picker] Selected ${isVideo ? 'video' : 'image'}`, {
+                  name: file.name,
+                  sizeMb: (file.size / (1024 * 1024)).toFixed(2),
+                  type: file.type
+                });
+                setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); 
+                setShowFeatures(false); 
+              } 
+              e.target.value = ''; 
+            }} />
+            <input type="file" ref={cameraInputRef} accept="image/*,video/*" capture="environment" className="hidden" onChange={(e) => { 
+              const file = e.target.files?.[0]; 
+              if (file) { 
+                const isVideo = file.type.startsWith('video/'); 
+                videoLog.info(`📷 [Camera Picker] Captured ${isVideo ? 'video' : 'image'}`, {
+                  name: file.name,
+                  sizeMb: (file.size / (1024 * 1024)).toFixed(2),
+                  type: file.type
+                });
+                setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); 
+                setShowFeatures(false); 
+              } 
+              e.target.value = ''; 
+            }} />
          </form>
       </motion.div>
 
@@ -231,6 +258,13 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                     playsInline 
                     onLoadedMetadata={(e) => {
                       const dur = e.currentTarget.duration;
+                      const w = e.currentTarget.videoWidth;
+                      const h = e.currentTarget.videoHeight;
+                      videoLog.info('🎬 [Preview Loaded] Video metadata ready', {
+                        durationSec: dur ? dur.toFixed(2) : 'unknown',
+                        dimensions: `${w}x${h}`,
+                        isTooLong: dur && dur > 180
+                      });
                       if (dur && dur > 180) {
                         setIsVideoTooLong(true);
                       } else {
@@ -267,7 +301,13 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               ) : (
                 <button 
                   type="button"
-                  onClick={() => { if (pendingMedia.file) handleMediaMessage(pendingMedia.file, pendingMedia.type); setPendingMedia(null); }} 
+                  onClick={() => { 
+                    if (pendingMedia.file) {
+                      videoLog.info('🚀 [User Action] User confirmed and clicked Send button on preview modal');
+                      handleMediaMessage(pendingMedia.file, pendingMedia.type); 
+                    }
+                    setPendingMedia(null); 
+                  }} 
                   className="bg-white text-black font-extrabold px-8 py-3.5 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.25)] flex items-center gap-2.5 active:scale-95 hover:bg-neutral-100 transition-all text-xs uppercase tracking-widest"
                 >
                   Send <SendHorizonal size={18} />

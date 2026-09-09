@@ -5,6 +5,7 @@ import { ChatListItemType } from '@/src/types/chat';
 import { invalidateVaultCache, vaultCache } from './VaultModal';
 import { optimizePostOrChatImage } from '@/src/lib/cropImage';
 import { compressVideoTo480p, extractVideoThumbnail } from '@/src/lib/videoCompression';
+import { videoLog } from '@/src/lib/videoLogger';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -318,9 +319,13 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     type: 'image' | 'video' | 'audio' | 'auto',
     options?: { skipClientOptimization?: boolean; rawUrl?: boolean }
   ) => {
+    const uploadStart = performance.now();
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-    if (!cloudName || !uploadPreset) throw new Error('Cloudinary config missing');
+    if (!cloudName || !uploadPreset) {
+      videoLog.error('Cloudinary config missing: VITE_CLOUDINARY_CLOUD_NAME or VITE_CLOUDINARY_UPLOAD_PRESET is not defined');
+      throw new Error('Cloudinary config missing');
+    }
 
     let fileToUpload = file;
     if (!options?.skipClientOptimization) {
@@ -328,6 +333,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         fileToUpload = await optimizePostOrChatImage(file, 'chat_image.webp');
       } else if (type === 'video') {
         // Heavily compress and convert video to 480p on client frontend before uploading
+        videoLog.info('🎞️ [Step] Calling compressVideoTo480p...');
         fileToUpload = await compressVideoTo480p(file);
       }
     }
@@ -348,43 +354,96 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       resourceType = 'video';
     }
 
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, { method: 'POST', body: formData });
-    if (!res.ok) throw new Error('Upload failed');
-    const data = await res.json();
-    
-    // Return raw secure_url to avoid Cloudinary on-the-fly server transformations and keep uploaded WebP pristine
-    return data.secure_url;
+    const payloadKb = (fileToUpload.size / 1024).toFixed(1);
+    videoLog.info(`☁️ [Cloudinary Upload] Uploading ${type} (${payloadKb} KB) to folder: chat_${type === 'image' ? 'images' : 'videos'}...`, {
+      resourceType,
+      fileName,
+      mimeType: fileToUpload.type
+    });
+
+    // 45s safety timeout on network upload
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+
+    try {
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, { 
+        method: 'POST', 
+        body: formData,
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const errText = await res.text();
+        videoLog.error(`☁️ [Cloudinary Upload] Upload failed with status ${res.status}:`, errText);
+        throw new Error(`Upload failed (${res.status}): ${errText}`);
+      }
+      const data = await res.json();
+      const uploadElapsed = ((performance.now() - uploadStart) / 1000).toFixed(2);
+      videoLog.success(`☁️ [Cloudinary Upload] Finished in ${uploadElapsed}s!`, {
+        url: data.secure_url,
+        bytes: data.bytes,
+        format: data.format
+      });
+      
+      // Return raw secure_url to avoid Cloudinary on-the-fly server transformations and keep uploaded WebP pristine
+      return data.secure_url;
+    } catch (uploadErr: any) {
+      clearTimeout(timeout);
+      videoLog.error('☁️ [Cloudinary Upload] Upload failed or timed out:', uploadErr);
+      throw uploadErr;
+    }
   };
 
   const handleMediaMessage = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'location') => {
+    const pipelineStart = performance.now();
+    videoLog.info(`🚀 [PIPELINE START] User initiated ${type} message send`, {
+      name: file instanceof File ? file.name : 'blob',
+      sizeMb: (file.size / (1024 * 1024)).toFixed(2),
+      mime: file.type
+    });
+
     setUploadingMedia(true);
     setShowFeatures(false);
     try {
       if (type === 'video') {
         // 1. Take first frame of video, compress to 400px on longest edge, convert to webp
+        videoLog.info('📸 [PIPELINE STEP 1/4] Extracting video thumbnail...');
         let thumbnailUrl: string | null = null;
         try {
           const thumbBlob = await extractVideoThumbnail(file);
           const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
+          videoLog.info('📸 [PIPELINE STEP 2/4] Uploading thumbnail to Cloudinary...');
           thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
         } catch (thumbErr) {
-          console.warn('Video thumbnail extraction error:', thumbErr);
+          videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail extraction/upload skipped:', thumbErr);
         }
 
         // 2. Heavily compress and convert video to 480p on client frontend before uploading
+        videoLog.info('🎞️ [PIPELINE STEP 3/4] Compressing and uploading video to Cloudinary...');
         const videoUrl = await uploadToCloudinary(file, 'video');
 
         // 3. Store thumbnail url in metadata column
+        videoLog.info('💬 [PIPELINE STEP 4/4] Sending message record to chat...', {
+          videoUrl,
+          thumbnailUrl
+        });
         const metadata = thumbnailUrl ? { thumbnail_url: thumbnailUrl } : null;
         await sendSpecialMessage(videoUrl, 'video', '', metadata);
+
+        const totalElapsed = ((performance.now() - pipelineStart) / 1000).toFixed(2);
+        videoLog.success(`🎉 [PIPELINE COMPLETE] Video sent successfully in ${totalElapsed}s!`);
       } else {
         const uploadType = type === 'audio' ? 'video' : 'image';
         const url = await uploadToCloudinary(file, uploadType);
         await sendSpecialMessage(url, type);
       }
-    } catch (e) {
+    } catch (e: any) {
+      videoLog.error('❌ [PIPELINE FAILED] Error during media sending:', e);
       alert('Upload failed: ' + (e as Error).message);
-    } finally { setUploadingMedia(false); }
+    } finally { 
+      setUploadingMedia(false); 
+    }
   };
 
   const handleLocationShare = () => {
