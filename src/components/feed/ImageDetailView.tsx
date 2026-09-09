@@ -16,7 +16,7 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
   useEffect(() => {
     images.forEach(src => {
       const img = new Image();
-      img.src = src.includes('cloudinary') ? src.replace('/upload/', '/upload/q_auto,f_webp/') : src;
+      img.src = src;
     });
   }, [images]);
 
@@ -134,7 +134,7 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
                     </div>
                   )}
                   <img 
-                    src={images[currentIndex].includes('cloudinary') ? images[currentIndex].replace('/upload/', '/upload/q_auto,f_webp/') : images[currentIndex]} 
+                    src={images[currentIndex]} 
                     alt="" 
                     className="max-w-full max-h-full object-contain pointer-events-auto"
                     onLoad={() => setLoading(false)}

@@ -349,18 +349,8 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     if (!res.ok) throw new Error('Upload failed');
     const data = await res.json();
     
-    // For videos and pre-optimized thumbnails, return raw secure_url to avoid Cloudinary on-the-fly server transformations
-    if (type === 'video' || options?.rawUrl) {
-      return data.secure_url;
-    }
-
-    let optimizedUrl = data.secure_url;
-    if (type === 'image') {
-       const urlParts = optimizedUrl.split('/upload/');
-       // Force f_webp so Cloudinary strictly serves WebP and never falls back to JPEG
-       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_webp,w_1080/${urlParts[1]}`;
-    }
-    return optimizedUrl;
+    // Return raw secure_url to avoid Cloudinary on-the-fly server transformations and keep uploaded WebP pristine
+    return data.secure_url;
   };
 
   const handleMediaMessage = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'location') => {
@@ -440,11 +430,9 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const saveToDevice = async (url: string, filename: string, mediaType?: string) => {
     try {
       let fetchUrl = url;
-      // If it's a Cloudinary image URL, force f_webp so Cloudinary serves pure WebP instead of falling back to JPEG
-      if (fetchUrl.includes('cloudinary.com') && (mediaType === 'image' || !mediaType)) {
-        if (fetchUrl.includes('/upload/')) {
-          fetchUrl = fetchUrl.replace(/\/upload\/(q_auto,f_auto[^/]*\/)?/, '/upload/q_auto,f_webp/');
-        }
+      // Strip any transformation segments in Cloudinary URLs to always fetch the raw original asset
+      if (fetchUrl.includes('cloudinary.com') && fetchUrl.includes('/upload/')) {
+        fetchUrl = fetchUrl.replace(/\/upload\/(?:[a-zA-Z0-9_,:-]+\/)+/, '/upload/');
       }
 
       const res = await fetch(fetchUrl);
@@ -457,11 +445,10 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         fileExt = blob.type.includes('mp4') || blob.type.includes('m4a') ? 'm4a' : 'webm';
       } else if (blob.type === 'image/png') {
         fileExt = 'png';
-      } else if (blob.type === 'image/webp' || blob.type.includes('webp') || mediaType === 'image') {
-        fileExt = 'webp';
+      } else if (blob.type === 'image/jpeg' || blob.type === 'image/jpg') {
+        fileExt = 'jpg';
       } else {
-        const subtype = blob.type.split('/')[1];
-        fileExt = subtype && subtype !== 'jpeg' ? subtype : 'webp';
+        fileExt = 'webp';
       }
 
       const mimeType = fileExt === 'webp' ? 'image/webp' : fileExt === 'mp4' ? 'video/mp4' : blob.type || 'application/octet-stream';

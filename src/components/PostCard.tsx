@@ -147,12 +147,6 @@ export default function PostCard({ post, currentUserId, onLike, onDelete, onUser
   }, [post.image_url]);
 
   const getOptimizedUrl = (url: string) => {
-    if (!url) return url;
-    if (url.includes('cloudinary.com/') && url.includes('/upload/')) {
-      // Optmize for extreme performance
-      if (url.includes('/q_auto')) return url;
-      return url.replace('/upload/', '/upload/q_auto:eco,f_webp,w_600,c_limit/');
-    }
     return url;
   };
 
