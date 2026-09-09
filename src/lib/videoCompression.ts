@@ -476,7 +476,17 @@ async function compressVideoViaWebCodecs(
         targetW = Math.max(2, targetW);
         targetH = Math.max(2, targetH);
 
-        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} @ 800kbps`);
+        const durationSec = info.duration / info.timescale;
+        const sourceBitrate = (originalFile.size * 8) / durationSec;
+        
+        // Ensure compression, cap at 800kbps, but limit to 70% of original to force size reduction. Floor at 100kbps.
+        let targetBitrate = Math.min(800_000, sourceBitrate * 0.7);
+        targetBitrate = Math.max(100_000, Math.round(targetBitrate));
+
+        const actualFps = videoSamplesToProcess.length / durationSec;
+        const targetFps = (actualFps > 0 && actualFps < 120) ? actualFps : 30;
+
+        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} @ ${Math.round(targetBitrate/1000)}kbps (${targetFps.toFixed(1)}fps)`);
 
         const target = new ArrayBufferTarget();
         const muxer = new Muxer({
@@ -519,9 +529,9 @@ async function compressVideoViaWebCodecs(
           codec: encoderCodec,
           width: targetW,
           height: targetH,
-          bitrate: 800_000,
-          framerate: 30,
-          latencyMode: 'quality',
+          bitrate: targetBitrate,
+          framerate: Math.round(targetFps),
+          latencyMode: 'realtime', // Prevents B-frame reordering to guarantee monotonic DTS
           avc: { format: 'avc' }
         });
 
@@ -545,13 +555,13 @@ async function compressVideoViaWebCodecs(
 
             try {
               ctx.drawImage(frame, 0, 0, targetW, targetH);
+              const timestampUs = Math.round((frameIndex * 1_000_000) / targetFps);
               const scaledFrame = new VideoFrame(offscreen, {
-                timestamp: frame.timestamp,
-                duration: frame.duration ?? undefined
+                timestamp: timestampUs
               });
 
-              // Keyframe every 60 frames (~2 seconds at 30fps) for smooth seeking
-              const isKeyFrame = frameIndex % 60 === 0;
+              // Keyframe every 2 seconds for smooth seeking
+              const isKeyFrame = frameIndex % Math.round(targetFps * 2) === 0;
               videoEncoder?.encode(scaledFrame, { keyFrame: isKeyFrame });
 
               scaledFrame.close();
@@ -591,15 +601,16 @@ async function compressVideoViaWebCodecs(
 
         // Feed extracted audio samples directly to muxer (pass-through lossless AAC)
         if (isAacAudio && audioTrack && audioSamplesToProcess.length > 0) {
+          let currentAudioTimeUs = 0;
           for (const sample of audioSamplesToProcess) {
-            const timestampUs = (sample.cts * 1_000_000) / sample.timescale;
             const durationUs = (sample.duration * 1_000_000) / sample.timescale;
             muxer.addAudioChunkRaw(
               sample.data,
               sample.is_sync ? 'key' : 'delta',
-              timestampUs,
+              currentAudioTimeUs,
               durationUs
             );
+            currentAudioTimeUs += durationUs;
           }
           videoLog.info(`🎵 [WebCodecs Audio] Muxed ${audioSamplesToProcess.length} raw audio chunks`);
         }
