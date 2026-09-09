@@ -157,7 +157,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                  </div>
                  <div className="flex-1 text-left overflow-hidden">
                    <p className={cn("truncate text-sm", isUnread ? "font-extrabold text-white" : "font-bold text-white/90")}>{c.name}</p>
-                   {c.lastMessage && <p className={cn("text-xs truncate mt-1", isUnread ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
+                   {c.lastMessage && <p className={cn("text-xs truncate mt-1", isUnread ? "text-white font-semibold" : "text-white/40")}>{c.lastMessage.sender_id === currentUserId ? 'You: ' : ''}{c.lastMessage.content || (c.lastMessage.media_type === 'image' ? 'Sent a photo' : c.lastMessage.media_type === 'video' ? 'Sent a video' : c.lastMessage.media_type === 'audio' ? 'Sent a voice message' : 'Shared location')}</p>}
                  </div>
                  <div className="flex flex-col items-end gap-1">
                    {c.lastMessage && <div className="shrink-0 text-[10px] text-white/30">{new Date(c.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>}

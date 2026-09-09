@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { MapPin, Phone, Video, ShieldCheck } from "lucide-react";
+import { MapPin, Phone, Video, ShieldCheck, Play } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 import { parseLocation, openInNativeMaps } from "./locationUtils";
 import { AudioPlayer } from "./AudioPlayer";
@@ -42,6 +42,7 @@ export const MessageBubble = React.memo(
     prevMsg,
     activeChat,
     setViewingImage,
+    setViewingVideo,
     onTouchStart,
     onTouchMove,
     onTouchEnd,
@@ -195,7 +196,7 @@ export const MessageBubble = React.memo(
     const isMediaOnly =
       isSharedPost ||
       isCall ||
-      ((msg.media_type === "image" || isLoc || msg.media_type === "audio") &&
+      ((msg.media_type === "image" || msg.media_type === "video" || isLoc || msg.media_type === "audio") &&
         (!msg.content || (locMatch && msg.content === locMatch[0])));
 
     return (
@@ -304,7 +305,7 @@ export const MessageBubble = React.memo(
                   ? "bg-white text-black shadow-sm"
                   : "bg-[#262626] text-white shadow-sm"),
               !msg.media_type && !isLoc && "px-3.5 py-2",
-              (msg.media_type === "image" || isLoc || msg.media_type === "shared_post") &&
+              (msg.media_type === "image" || msg.media_type === "video" || isLoc || msg.media_type === "shared_post") &&
                 "p-0 rounded-[22px] overflow-hidden bg-transparent border-0 shadow-none",
             )}
           >
@@ -401,6 +402,25 @@ export const MessageBubble = React.memo(
                   loading="lazy"
                   alt=""
                 />
+              </div>
+            )}
+            {msg.media_type === "video" && msg.media_url && (
+              <div 
+                className="relative group cursor-pointer overflow-hidden bg-black select-none"
+                onClick={() => setViewingVideo ? setViewingVideo(msg.media_url) : setViewingImage?.(msg.media_url)}
+              >
+                <video
+                  src={msg.media_url}
+                  preload="metadata"
+                  playsInline
+                  muted
+                  className="w-full h-auto max-h-[400px] object-cover block pointer-events-none"
+                />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/25 group-hover:bg-black/40 transition-colors">
+                  <div className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-2xl group-hover:scale-110 active:scale-95 transition-all">
+                    <Play size={20} className="fill-white translate-x-0.5" />
+                  </div>
+                </div>
               </div>
             )}
             {msg.media_type === "audio" && msg.media_url && (

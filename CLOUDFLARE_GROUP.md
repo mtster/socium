@@ -94,6 +94,7 @@ export default {
         bodyText = 'Shared a post with you';
       } else if (!bodyText) {
          if (payload.media_type === 'image') bodyText = 'Sent an image';
+         else if (payload.media_type === 'video') bodyText = 'Sent a video';
          else if (payload.media_type === 'audio') bodyText = 'Sent a voice message';
          else if (payload.media_type === 'location') bodyText = 'Sent a location';
          else bodyText = 'Sent a media message';

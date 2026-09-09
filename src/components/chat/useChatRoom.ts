@@ -4,6 +4,7 @@ import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAnd
 import { ChatListItemType } from '@/src/types/chat';
 import { invalidateVaultCache, vaultCache } from './VaultModal';
 import { optimizePostOrChatImage } from '@/src/lib/cropImage';
+import { compressVideoTo480p } from '@/src/lib/videoCompression';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -19,8 +20,9 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [uploadingMedia, setUploadingMedia] = useState(false);
-  const [pendingMedia, setPendingMedia] = useState<{file: File | Blob | null, type: 'image' | 'audio' | 'location', dataUrl?: string, locationString?: string} | null>(null);
+  const [pendingMedia, setPendingMedia] = useState<{file: File | Blob | null, type: 'image' | 'video' | 'audio' | 'location', dataUrl?: string, locationString?: string} | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: any } | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<any>(null);
   const [vaultedMessageIds, setVaultedMessageIds] = useState<Set<string>>(new Set());
@@ -238,7 +240,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     };
   }, [activeChat.id, currentUserId]);
 
-  const sendSpecialMessage = async (mediaUrl: string | null, mediaType: 'image' | 'audio' | 'location', contentStr: string = '') => {
+  const sendSpecialMessage = async (mediaUrl: string | null, mediaType: 'image' | 'video' | 'audio' | 'location', contentStr: string = '') => {
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType, created_at: new Date().toISOString() };
     setMessages(prev => [...prev, temp]);
@@ -306,35 +308,45 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     let fileToUpload = file;
     if (type === 'image') {
       fileToUpload = await optimizePostOrChatImage(file, 'chat_image.webp');
+    } else if (type === 'video') {
+      // Heavily compress and convert video to 480p on client frontend before uploading
+      fileToUpload = await compressVideoTo480p(file);
     }
 
     const formData = new FormData();
     formData.append('file', fileToUpload);
     formData.append('upload_preset', uploadPreset);
     if (type === 'image') formData.append('folder', 'chat_images');
-    else if (type === 'video') formData.append('folder', 'chat_audio'); 
+    else if (type === 'video') formData.append('folder', 'chat_videos');
+    else if (type === 'audio') formData.append('folder', 'chat_audio');
     
-    // For iOS audio (m4a/mp4), force video upload
+    // For iOS audio (m4a/mp4) or video, Cloudinary uses /video/upload endpoint
+    let resourceType = type;
     if (type === 'audio' || file.type.includes('mp4') || file.type.includes('m4a')) {
-      type = 'video';
+      resourceType = 'video';
     }
 
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, { method: 'POST', body: formData });
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, { method: 'POST', body: formData });
     if (!res.ok) throw new Error('Upload failed');
     const data = await res.json();
     let optimizedUrl = data.secure_url;
     if (type === 'image') {
        const urlParts = optimizedUrl.split('/upload/');
-       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_auto,w_1080/${urlParts[1]}`;
+       // Force f_webp so Cloudinary strictly serves WebP and never falls back to JPEG
+       optimizedUrl = `${urlParts[0]}/upload/q_auto,f_webp,w_1080/${urlParts[1]}`;
+    } else if (type === 'video') {
+       const urlParts = optimizedUrl.split('/upload/');
+       optimizedUrl = `${urlParts[0]}/upload/q_auto,vc_auto,w_854,h_480,c_limit/${urlParts[1]}`;
     }
     return optimizedUrl;
   };
 
-  const handleMediaMessage = async (file: File | Blob, type: 'image' | 'audio' | 'location') => {
+  const handleMediaMessage = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'location') => {
     setUploadingMedia(true);
     setShowFeatures(false);
     try {
-      const url = await uploadToCloudinary(file, type === 'audio' ? 'video' : 'image');
+      const uploadType = type === 'audio' ? 'video' : type === 'video' ? 'video' : 'image';
+      const url = await uploadToCloudinary(file, uploadType);
       await sendSpecialMessage(url, type);
     } catch (e) {
       alert('Upload failed: ' + (e as Error).message);
@@ -386,10 +398,33 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
   const saveToDevice = async (url: string, filename: string, mediaType?: string) => {
     try {
-      const res = await fetch(url);
+      let fetchUrl = url;
+      // If it's a Cloudinary image URL, force f_webp so Cloudinary serves pure WebP instead of falling back to JPEG
+      if (fetchUrl.includes('cloudinary.com') && (mediaType === 'image' || !mediaType)) {
+        if (fetchUrl.includes('/upload/')) {
+          fetchUrl = fetchUrl.replace(/\/upload\/(q_auto,f_auto[^/]*\/)?/, '/upload/q_auto,f_webp/');
+        }
+      }
+
+      const res = await fetch(fetchUrl);
       const blob = await res.blob();
-      const fileExt = mediaType === 'audio' ? 'webm' : 'jpg';
-      const file = new File([blob], `${filename}.${fileExt}`, { type: blob.type });
+      
+      let fileExt = 'webp';
+      if (mediaType === 'video' || blob.type.startsWith('video/')) {
+        fileExt = blob.type.includes('webm') ? 'webm' : 'mp4';
+      } else if (mediaType === 'audio' || blob.type.startsWith('audio/')) {
+        fileExt = blob.type.includes('mp4') || blob.type.includes('m4a') ? 'm4a' : 'webm';
+      } else if (blob.type === 'image/png') {
+        fileExt = 'png';
+      } else if (blob.type === 'image/webp' || blob.type.includes('webp') || mediaType === 'image') {
+        fileExt = 'webp';
+      } else {
+        const subtype = blob.type.split('/')[1];
+        fileExt = subtype && subtype !== 'jpeg' ? subtype : 'webp';
+      }
+
+      const mimeType = fileExt === 'webp' ? 'image/webp' : fileExt === 'mp4' ? 'video/mp4' : blob.type || 'application/octet-stream';
+      const file = new File([blob], `${filename}.${fileExt}`, { type: mimeType });
       
       const blobUrl = window.URL.createObjectURL(blob);
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -463,7 +498,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     newMessage, setNewMessage, handleSendMessage, showFeatures, setShowFeatures,
     isRecording, recordingDuration, startRecording, stopRecording, handleLocationShare,
     cameraInputRef, fileInputRef, uploadingMedia, pendingMedia, setPendingMedia, handleMediaMessage,
-    messagesEndRef, scrollContainerRef, viewingImage, setViewingImage, contextMenu,
+    messagesEndRef, scrollContainerRef, viewingImage, setViewingImage, viewingVideo, setViewingVideo, contextMenu,
     handleLongPress, handleDeleteMessage, saveToDevice, onTouchStart, onTouchMove, onTouchEnd,
     activeDateMsgId, setActiveDateMsgId,
     vaultedMessageIds, handleAddToVault, handleRemoveFromVault, fetchVaultedMessageIds

@@ -5,6 +5,7 @@ import { cn } from '@/src/lib/utils';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { MessageBubble } from './MessageBubble';
 import { AudioPlayer } from './AudioPlayer';
+import { FullscreenVideoPlayer } from './FullscreenVideoPlayer';
 import { useChatRoom } from './useChatRoom';
 import { ChatListItemType } from '@/src/types/chat';
 
@@ -48,6 +49,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     scrollContainerRef,
     viewingImage,
     setViewingImage,
+    viewingVideo,
+    setViewingVideo,
     contextMenu,
     handleLongPress,
     handleDeleteMessage,
@@ -142,7 +145,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               <AnimatePresence initial={false}>
               {messages.slice().reverse().map((msg, idx, arr) => (
                  <motion.div key={msg.id} initial={{ opacity: 0, scale: 0.95, y: 15 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 400, damping: 30 }}>
-                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
+                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
                  </motion.div>
                ))}
               </AnimatePresence>
@@ -199,9 +202,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              )}
            </AnimatePresence>
            {uploadingMedia && <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50 rounded-t-3xl"><div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /></div>}
-           <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
-           <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setPendingMedia({ file, type: 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
-        </form>
+            <input type="file" ref={fileInputRef} accept="image/*,video/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const isVideo = file.type.startsWith('video/'); setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
+            <input type="file" ref={cameraInputRef} accept="image/*,video/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const isVideo = file.type.startsWith('video/'); setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); setShowFeatures(false); } e.target.value = ''; }} />
+         </form>
       </motion.div>
 
       <AnimatePresence>
@@ -215,6 +218,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
             
             <div className="flex-1 min-h-0 overflow-hidden flex items-center justify-center p-4 pb-24 relative">
               {pendingMedia.type === 'image' && <img src={pendingMedia.dataUrl} className="max-w-full max-h-full object-contain rounded-2xl shadow-xl" />}
+              {pendingMedia.type === 'video' && <video src={pendingMedia.dataUrl} controls playsInline className="max-w-full max-h-full object-contain rounded-2xl shadow-xl" />}
               {pendingMedia.type === 'audio' && <div className="w-full max-w-sm"><AudioPlayer src={pendingMedia.dataUrl!} isMine={true} /></div>}
             </div>
             
@@ -242,13 +246,24 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       </AnimatePresence>
 
       <AnimatePresence>
+        {viewingVideo && (
+          <FullscreenVideoPlayer
+            src={viewingVideo}
+            onClose={() => setViewingVideo(null)}
+            onSave={() => saveToDevice(viewingVideo, 'socium', 'video')}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {contextMenu && (<><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-transparent" onClick={() => handleLongPress(null as any, null)} /><motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed z-[160] w-auto min-w-[160px] bg-[#1c1c1c] border border-white/10 rounded-[18px] shadow-2xl overflow-hidden py-1" style={{ top: contextMenu.y, left: contextMenu.x }}>
             {contextMenu.message.content && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { navigator.clipboard.writeText(contextMenu.message.content!); handleLongPress(null as any, null); }}><Copy size={16} className="text-white/50" />Copy Text</button>}
             
-            {(contextMenu.message.media_type === 'image' || contextMenu.message.media_type === 'audio') && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url!, 'socium', contextMenu.message.media_type as string); handleLongPress(null as any, null); }}><Download size={16} className="text-white/50" />Save</button>}
+            {(contextMenu.message.media_type === 'image' || contextMenu.message.media_type === 'video' || contextMenu.message.media_type === 'audio') && <button className="w-full flex items-center px-4 py-2.5 text-[13px] font-medium text-white hover:bg-white/10 gap-3 transition-colors" onClick={() => { saveToDevice(contextMenu.message.media_url!, 'socium', contextMenu.message.media_type as string); handleLongPress(null as any, null); }}><Download size={16} className="text-white/50" />Save</button>}
 
             {contextMenu && (
               contextMenu.message.media_type === 'image' || 
+              contextMenu.message.media_type === 'video' || 
               contextMenu.message.media_type === 'audio' || 
               (!contextMenu.message.media_type && contextMenu.message.content)
             ) && (
