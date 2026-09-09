@@ -27,8 +27,8 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
   ];
 
   return (
-    <nav className="shrink-0 bg-black/90 border-t border-white/10 glass pb-safe relative z-40 [touch-action:none]">
-      <div className="h-[60px] flex items-center justify-around w-full relative">
+    <nav className="shrink-0 bg-black/90 border-t border-white/10 glass pb-safe relative z-40 [touch-action:none] select-none [-webkit-touch-callout:none] [-webkit-user-select:none]">
+      <div className="h-[60px] flex items-center justify-around w-full relative select-none [-webkit-touch-callout:none] [-webkit-user-select:none]">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -46,7 +46,7 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                 setActiveTab(tab.id);
               }}
               className={cn(
-                "flex flex-col items-center justify-center w-full h-full transition-all duration-300 relative",
+                "flex flex-col items-center justify-center w-full h-full transition-all duration-300 relative select-none [-webkit-touch-callout:none] [-webkit-user-select:none]",
                 isActive ? "text-white" : "text-white/40"
               )}
             >
@@ -111,7 +111,7 @@ const BottomNav = ({ activeTab, setActiveTab, unreadCount = 0, floatingAvatar, s
                   )}
                 </AnimatePresence>
               </div>
-              <span className="text-[10px] mt-1 font-medium">{tab.label}</span>
+              <span className="text-[10px] mt-1 font-medium select-none pointer-events-none">{tab.label}</span>
             </button>
           );
         })}

@@ -33,10 +33,23 @@ async function fetchChatsFallback(userId: string, limit: number, offset: number)
   try {
     const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
 
-    const [{ data: userConns }, { data: groupParticipants }, { data: adminProf }] = await Promise.all([
+    // 1. Fetch connections, group memberships, admin profile, and recent direct messages in parallel
+    const [
+      { data: userConns },
+      { data: groupParticipants },
+      { data: adminProf },
+      { data: recentDmMessages }
+    ] = await Promise.all([
       supabase.from('connections').select('*, profiles!connection_id(*)').eq('user_id', userId),
       supabase.from('group_chat_participants').select('chat_id, last_read_at').eq('user_id', userId),
-      supabase.from('profiles').select('*').eq('id', ADMIN_ID).maybeSingle()
+      supabase.from('profiles').select('*').eq('id', ADMIN_ID).maybeSingle(),
+      supabase
+        .from('messages')
+        .select('*')
+        .is('group_chat_id', null)
+        .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+        .order('created_at', { ascending: false })
+        .limit(500)
     ]);
 
     const combinedProfs = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
@@ -44,16 +57,29 @@ async function fetchChatsFallback(userId: string, limit: number, offset: number)
       combinedProfs.push(adminProf);
     }
     const deduplicatedProfs = Array.from(new Map(combinedProfs.map(item => [item.id, item])).values());
-    const groupChatIds = groupParticipants?.map(p => p.chat_id) || [];
+    const groupChatIds = (groupParticipants?.map(p => p.chat_id) || []).filter(Boolean);
 
-    // Group metadata if needed
+    // 2. Fetch group metadata and group messages in parallel if groupChatIds exist
     let groupChatsWithDetails: any[] = [];
+    let recentGroupMessages: any[] = [];
+
     if (groupChatIds.length > 0) {
-      const [{ data: groups }, { data: allParticipants }] = await Promise.all([
+      const [
+        { data: groups },
+        { data: allParticipants },
+        { data: grpMsgs }
+      ] = await Promise.all([
         supabase.from('group_chats').select('*').in('id', groupChatIds),
-        supabase.from('group_chat_participants').select('chat_id, user_id').in('chat_id', groupChatIds)
+        supabase.from('group_chat_participants').select('chat_id, user_id').in('chat_id', groupChatIds),
+        supabase
+          .from('messages')
+          .select('*')
+          .in('group_chat_id', groupChatIds)
+          .order('created_at', { ascending: false })
+          .limit(300)
       ]);
 
+      recentGroupMessages = grpMsgs || [];
       const participantUids = allParticipants?.map(p => p.user_id) || [];
       const { data: allProfilesData } = await supabase.from('profiles').select('*').in('id', participantUids);
 
@@ -71,76 +97,73 @@ async function fetchChatsFallback(userId: string, limit: number, offset: number)
       });
     }
 
-    // Combine targets and paginate before querying messages
-    const targets: Array<{ isGroup: boolean; data: any }> = [
-      ...deduplicatedProfs.map(p => ({ isGroup: false, data: p })),
-      ...groupChatsWithDetails.map(g => ({ isGroup: true, data: g }))
+    // 3. Map latest messages and unread counts for all chats
+    const latestMessageMap = new Map<string, any>();
+    const unreadCountMap = new Map<string, number>();
+
+    // Process direct messages
+    for (const msg of (recentDmMessages || [])) {
+      const peerId = msg.sender_id === userId ? msg.receiver_id : msg.sender_id;
+      if (peerId) {
+        if (!latestMessageMap.has(peerId)) {
+          latestMessageMap.set(peerId, msg);
+        }
+        if (msg.receiver_id === userId && msg.read_at === null) {
+          unreadCountMap.set(peerId, (unreadCountMap.get(peerId) || 0) + 1);
+        }
+      }
+    }
+
+    // Process group messages
+    const groupLastReadMap = new Map<string, string | null>();
+    groupChatsWithDetails.forEach(g => groupLastReadMap.set(g.id, g.my_last_read_at || null));
+
+    for (const msg of (recentGroupMessages || [])) {
+      const gid = msg.group_chat_id;
+      if (gid) {
+        if (!latestMessageMap.has(gid)) {
+          latestMessageMap.set(gid, msg);
+        }
+        const lastRead = groupLastReadMap.get(gid);
+        if (msg.sender_id !== userId && (!lastRead || new Date(msg.created_at) > new Date(lastRead))) {
+          unreadCountMap.set(gid, (unreadCountMap.get(gid) || 0) + 1);
+        }
+      }
+    }
+
+    // 4. Construct all items
+    const allItems: ChatListItemType[] = [
+      ...deduplicatedProfs.map(prof => ({
+        id: prof.id,
+        isGroup: false,
+        name: prof.full_name || prof.username || 'Unknown',
+        avatar_url: prof.avatar_url || null,
+        lastMessage: latestMessageMap.get(prof.id) || null,
+        unreadCount: unreadCountMap.get(prof.id) || 0,
+        profile: prof
+      })),
+      ...groupChatsWithDetails.map(group => ({
+        id: group.id,
+        isGroup: true,
+        name: group.name || group.participants.slice(0, 3).map((p: any) => p.full_name?.split(' ')[0] || p.username).join(', ') + (group.participants.length > 3 ? '...' : ''),
+        avatar_url: group.avatar_url,
+        lastMessage: latestMessageMap.get(group.id) || null,
+        unreadCount: unreadCountMap.get(group.id) || 0,
+        groupChat: group,
+        participants: group.participants
+      }))
     ];
 
-    const pageTargets = targets.slice(offset, offset + limit);
-    if (pageTargets.length === 0) return [];
+    // 5. SORT ALL CHATS BY LATEST MESSAGE DESCENDING (Newest chat ALWAYS at top)
+    allItems.sort((a, b) => {
+      const timeA = a.lastMessage?.created_at ? new Date(a.lastMessage.created_at).getTime() : 0;
+      const timeB = b.lastMessage?.created_at ? new Date(b.lastMessage.created_at).getTime() : 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return (a.name || '').localeCompare(b.name || '');
+    });
 
-    const items: ChatListItemType[] = await Promise.all(
-      pageTargets.map(async (target) => {
-        if (!target.isGroup) {
-          const prof = target.data as Profile;
-          const [{ data: msgs }, { count }] = await Promise.all([
-            supabase
-              .from('messages')
-              .select('*')
-              .is('group_chat_id', null)
-              .or(`and(sender_id.eq.${prof.id},receiver_id.eq.${userId}),and(sender_id.eq.${userId},receiver_id.eq.${prof.id})`)
-              .order('created_at', { ascending: false })
-              .limit(1),
-            supabase
-              .from('messages')
-              .select('*', { count: 'exact', head: true })
-              .is('group_chat_id', null)
-              .eq('sender_id', prof.id)
-              .eq('receiver_id', userId)
-              .is('read_at', null)
-          ]);
-
-          return {
-            id: prof.id,
-            isGroup: false,
-            name: prof.full_name || prof.username || 'Unknown',
-            avatar_url: prof.avatar_url || null,
-            lastMessage: msgs?.[0] || null,
-            unreadCount: count || 0,
-            profile: prof
-          };
-        } else {
-          const group = target.data;
-          const [{ data: msgs }, unreadCountPromise] = await Promise.all([
-            supabase.from('messages').select('*').eq('group_chat_id', group.id).order('created_at', { ascending: false }).limit(1),
-            group.my_last_read_at
-              ? supabase
-                  .from('messages')
-                  .select('*', { count: 'exact', head: true })
-                  .eq('group_chat_id', group.id)
-                  .neq('sender_id', userId)
-                  .gt('created_at', group.my_last_read_at)
-              : Promise.resolve({ count: 0 })
-          ]);
-
-          const countRes = await unreadCountPromise;
-
-          return {
-            id: group.id,
-            isGroup: true,
-            name: group.name || group.participants.slice(0, 3).map((p: any) => p.full_name?.split(' ')[0] || p.username).join(', ') + (group.participants.length > 3 ? '...' : ''),
-            avatar_url: group.avatar_url,
-            lastMessage: msgs?.[0] || null,
-            unreadCount: (countRes as any)?.count || 0,
-            groupChat: group,
-            participants: group.participants
-          };
-        }
-      })
-    );
-
-    return items;
+    // 6. Paginate sorted items
+    return allItems.slice(offset, offset + limit);
   } catch (err) {
     console.error('[useChatList] fallback error:', err);
     return [];
@@ -204,6 +227,13 @@ export function useChatList(currentUserId: string) {
       if (!chatItems) {
         chatItems = await fetchChatsFallback(currentUserId, INITIAL_LIMIT, 0);
       }
+
+      chatItems.sort((a, b) => {
+        const timeA = a.lastMessage?.created_at ? new Date(a.lastMessage.created_at).getTime() : 0;
+        const timeB = b.lastMessage?.created_at ? new Date(b.lastMessage.created_at).getTime() : 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return (a.name || '').localeCompare(b.name || '');
+      });
 
       setChats(chatItems);
       setHasMore(chatItems.length >= INITIAL_LIMIT);
@@ -314,6 +344,12 @@ export function useChatList(currentUserId: string) {
 
   const updateChatList = useCallback((updater: (prev: ChatListItemType[]) => ChatListItemType[] = (prev) => prev) => {
     const result = updater(chatsRef.current);
+    result.sort((a, b) => {
+      const timeA = a.lastMessage?.created_at ? new Date(a.lastMessage.created_at).getTime() : 0;
+      const timeB = b.lastMessage?.created_at ? new Date(b.lastMessage.created_at).getTime() : 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return (a.name || '').localeCompare(b.name || '');
+    });
     setChats(result);
   }, [setChats]);
 

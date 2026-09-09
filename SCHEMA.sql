@@ -834,7 +834,7 @@ BEGIN
             to_jsonb(p.*) AS profile_data,
             NULL::jsonb AS group_data,
             NULL::jsonb AS participants_data,
-            COALESCE((latest_msg.msg->>'created_at')::timestamptz, p.created_at) AS sort_time
+            COALESCE((latest_msg.msg->>'created_at')::timestamptz, '1970-01-01 00:00:00+00'::timestamptz) AS sort_time
         FROM (
             SELECT connection_id AS peer_id FROM public.connections WHERE user_id = p_user_id
             UNION
@@ -875,7 +875,7 @@ BEGIN
             NULL::jsonb AS profile_data,
             to_jsonb(gc.*) AS group_data,
             group_members.members AS participants_data,
-            COALESCE((latest_group_msg.msg->>'created_at')::timestamptz, gc.created_at) AS sort_time
+            COALESCE((latest_group_msg.msg->>'created_at')::timestamptz, '1970-01-01 00:00:00+00'::timestamptz) AS sort_time
         FROM public.group_chat_participants gcp
         JOIN public.group_chats gc ON gc.id = gcp.chat_id
         -- LATERAL join for latest group message
