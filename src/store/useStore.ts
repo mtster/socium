@@ -18,6 +18,7 @@ interface AppState {
   floatingAvatar: Profile | null;
   sharePost: Post | null;
   chats: ChatListItemType[];
+  hasMoreChats: boolean;
   inboxStates: Record<string, boolean>;
   
   setProfile: (profile: Profile | null) => void;
@@ -32,6 +33,7 @@ interface AppState {
   setFloatingAvatar: (profile: Profile | null) => void;
   setSharePost: (post: Post | null) => void;
   setChats: (chats: ChatListItemType[]) => void;
+  setHasMoreChats: (val: boolean) => void;
   setInboxStates: (states: Record<string, boolean>) => void;
   updateInboxState: (chatId: string, state: boolean) => void;
   handleGlobalNewMessage: (msg: any, currentUserId: string) => void;
@@ -61,6 +63,7 @@ export const useStore = create<AppState>((set, get) => ({
   floatingAvatar: null,
   sharePost: null,
   chats: [],
+  hasMoreChats: true,
   inboxStates: {},
 
   setProfile: (profile) => set({ profile }),
@@ -75,6 +78,7 @@ export const useStore = create<AppState>((set, get) => ({
   setFloatingAvatar: (floatingAvatar) => set({ floatingAvatar }),
   setSharePost: (sharePost) => set({ sharePost }),
   setChats: (chats) => set({ chats }),
+  setHasMoreChats: (hasMoreChats) => set({ hasMoreChats }),
   setInboxStates: (inboxStates) => set({ inboxStates }),
   updateInboxState: (chatId, state) => set(stateObj => ({
     inboxStates: {

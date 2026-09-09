@@ -204,14 +204,15 @@ async function syncRtdbInboxes(userId: string, chatItems: ChatListItemType[]) {
 
 export function useChatList(currentUserId: string) {
   const chats = useStore(state => state.chats);
+  const hasMore = useStore(state => state.hasMoreChats);
   const inboxStates = useStore(state => state.inboxStates);
   const setChats = useStore(state => state.setChats);
+  const setHasMore = useStore(state => state.setHasMoreChats);
   const setInboxStates = useStore(state => state.setInboxStates);
   const updateInboxState = useStore(state => state.updateInboxState);
   
   const [loading, setLoading] = useState(chats.length === 0);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const chatsRef = useRef<ChatListItemType[]>(chats);
   chatsRef.current = chats;
 
@@ -245,7 +246,7 @@ export function useChatList(currentUserId: string) {
     } finally {
       setLoading(false);
     }
-  }, [currentUserId, setChats]);
+  }, [currentUserId, setChats, setHasMore]);
 
   const fetchMoreChats = useCallback(async () => {
     if (loadingMore || !hasMore || !currentUserId) return;
@@ -274,7 +275,7 @@ export function useChatList(currentUserId: string) {
     } finally {
       setLoadingMore(false);
     }
-  }, [currentUserId, hasMore, loadingMore, setChats]);
+  }, [currentUserId, hasMore, loadingMore, setChats, setHasMore]);
 
   // Real-time listener for RTDB inboxes
   useEffect(() => {

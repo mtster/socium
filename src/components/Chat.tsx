@@ -44,12 +44,16 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const sentinelRef = React.useRef<HTMLDivElement>(null);
+  const userHasScrolledRef = React.useRef(false);
 
   // Scroll listener for fetching additional 5 chats per batch
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
+    if (target.scrollTop > 30) {
+      userHasScrolledRef.current = true;
+    }
     if (target.scrollHeight - target.scrollTop - target.clientHeight < 250) {
-      if (hasMore && !loadingMore && !loading && !searchQuery.trim()) {
+      if (userHasScrolledRef.current && hasMore && !loadingMore && !loading && !searchQuery.trim()) {
         fetchMoreChats();
       }
     }
@@ -62,12 +66,12 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          if (hasMore && !loadingMore) {
+          if (userHasScrolledRef.current && hasMore && !loadingMore) {
             fetchMoreChats();
           }
         }
       },
-      { root: scrollRef.current, rootMargin: '200px', threshold: 0 }
+      { root: scrollRef.current, rootMargin: '100px', threshold: 0 }
     );
 
     observer.observe(sentinelRef.current);
@@ -81,6 +85,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           setActiveChat(null);
         } else if (scrollRef.current) {
           scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+          userHasScrolledRef.current = false;
         }
       }
     };
@@ -164,9 +169,9 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           )}
 
           {/* Bottom Sentinel for 5-per-scroll pagination */}
-          {chats.length > 0 && !searchQuery.trim() && (
+          {chats.length >= 12 && hasMore && !searchQuery.trim() && (
             <div ref={sentinelRef} className="py-4 flex justify-center items-center">
-              {loadingMore && (
+              {loadingMore && userHasScrolledRef.current && (
                 <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
               )}
             </div>
