@@ -19,7 +19,16 @@ interface ChatProps {
 }
 
 export default function Chat({ currentUserId, initialActiveChat, onCloseChat, onChatStateChange }: ChatProps) {
-  const { chats, loading, updateChatList, inboxStates, markChatAsSeenOptimistically } = useChatList(currentUserId);
+  const { 
+    chats, 
+    loading, 
+    loadingMore, 
+    hasMore, 
+    fetchMoreChats, 
+    updateChatList, 
+    inboxStates, 
+    markChatAsSeenOptimistically 
+  } = useChatList(currentUserId);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeChat, setActiveChat] = useState<ChatListItemType | null>(initialActiveChat || null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -34,6 +43,36 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
   }, []);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+
+  // Scroll listener for fetching additional 5 chats per batch
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    if (target.scrollHeight - target.scrollTop - target.clientHeight < 250) {
+      if (hasMore && !loadingMore && !loading && !searchQuery.trim()) {
+        fetchMoreChats();
+      }
+    }
+  };
+
+  // IntersectionObserver for bottom sentinel
+  useEffect(() => {
+    if (!sentinelRef.current || !hasMore || loading || !!searchQuery.trim()) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          if (hasMore && !loadingMore) {
+            fetchMoreChats();
+          }
+        }
+      },
+      { root: scrollRef.current, rootMargin: '200px', threshold: 0 }
+    );
+
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, loading, chats.length, searchQuery, fetchMoreChats]);
 
   useEffect(() => {
     const handleResetTab = (e: any) => {
@@ -75,8 +114,15 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
              <input type="text" placeholder="Search chats..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-xl pl-12 pr-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all" />
            </div>
         </div>
-        <div ref={scrollRef} className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
-          {!loading && filteredConnections.length === 0 ? <div className="p-8 text-center text-white/40 text-sm">No chats found</div> : filteredConnections.map(c => {
+        <div 
+          ref={scrollRef} 
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]"
+        >
+          {!loading && filteredConnections.length === 0 ? (
+            <div className="p-8 text-center text-white/40 text-sm">No chats found</div>
+          ) : (
+            filteredConnections.map(c => {
               const isUnread = inboxStates?.[c.id] === false || (inboxStates?.[c.id] === undefined && c.unreadCount !== undefined && c.unreadCount > 0);
               return (
               <button 
@@ -114,7 +160,17 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                  </div>
               </button>
               );
-          })}
+            })
+          )}
+
+          {/* Bottom Sentinel for 5-per-scroll pagination */}
+          {chats.length > 0 && !searchQuery.trim() && (
+            <div ref={sentinelRef} className="py-4 flex justify-center items-center">
+              {loadingMore && (
+                <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              )}
+            </div>
+          )}
         </div>
       </div>
 

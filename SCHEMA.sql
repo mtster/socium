@@ -795,9 +795,140 @@ CREATE INDEX IF NOT EXISTS idx_messages_direct_conversation ON public.messages (
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_created_at ON public.messages (receiver_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_unread_dms ON public.messages (receiver_id, sender_id) WHERE read_at IS NULL AND group_chat_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_group_chat_created_at ON public.messages (group_chat_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_group_chat_unread ON public.messages (group_chat_id, created_at DESC, sender_id);
 CREATE INDEX IF NOT EXISTS idx_group_chat_participants_user_id ON public.group_chat_participants (user_id);
 CREATE INDEX IF NOT EXISTS idx_group_chat_participants_chat_id ON public.group_chat_participants (chat_id);
+CREATE INDEX IF NOT EXISTS idx_group_chat_participants_user_chat ON public.group_chat_participants (user_id, chat_id);
+CREATE INDEX IF NOT EXISTS idx_connections_user_id ON public.connections (user_id);
 CREATE INDEX IF NOT EXISTS idx_connections_connection_id ON public.connections (connection_id);
+CREATE INDEX IF NOT EXISTS idx_connections_user_conn ON public.connections (user_id, connection_id);
+
+-- ==============================================================================
+-- Single High-Performance RPC: get_user_chats
+-- Replaces 50+ individual HTTP network requests with ONE atomic PostgreSQL query
+-- Utilizes LEFT JOIN LATERAL for sub-millisecond latest message and unread count lookups
+-- Supports pagination (default: 12 initial, 5 per scroll)
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.get_user_chats(
+    p_user_id UUID,
+    p_limit INT DEFAULT 12,
+    p_offset INT DEFAULT 0
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_admin_id UUID := '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2'::UUID;
+    v_result JSONB;
+BEGIN
+    WITH all_user_chats AS (
+        -- 1. Direct 1-on-1 Chats (Connections + Admin)
+        SELECT 
+            p.id AS chat_id,
+            false AS is_group,
+            COALESCE(p.full_name, p.username, 'Unknown') AS name,
+            p.avatar_url AS avatar_url,
+            latest_msg.msg AS last_message,
+            COALESCE(unread.cnt, 0) AS unread_count,
+            to_jsonb(p.*) AS profile_data,
+            NULL::jsonb AS group_data,
+            NULL::jsonb AS participants_data,
+            COALESCE((latest_msg.msg->>'created_at')::timestamptz, p.created_at) AS sort_time
+        FROM (
+            SELECT connection_id AS peer_id FROM public.connections WHERE user_id = p_user_id
+            UNION
+            SELECT v_admin_id WHERE p_user_id <> v_admin_id
+        ) peers
+        JOIN public.profiles p ON p.id = peers.peer_id
+        -- LATERAL join for latest direct message
+        LEFT JOIN LATERAL (
+            SELECT to_jsonb(m.*) AS msg
+            FROM public.messages m
+            WHERE m.group_chat_id IS NULL
+              AND ((m.sender_id = p_user_id AND m.receiver_id = p.id)
+                OR (m.sender_id = p.id AND m.receiver_id = p_user_id))
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        ) latest_msg ON true
+        -- LATERAL join for unread direct messages count
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::INT AS cnt
+            FROM public.messages m
+            WHERE m.group_chat_id IS NULL
+              AND m.sender_id = p.id
+              AND m.receiver_id = p_user_id
+              AND m.read_at IS NULL
+        ) unread ON true
+        WHERE p.id <> p_user_id
+
+        UNION ALL
+
+        -- 2. Group Chats
+        SELECT 
+            gc.id AS chat_id,
+            true AS is_group,
+            COALESCE(gc.name, 'Group Chat') AS name,
+            gc.avatar_url AS avatar_url,
+            latest_group_msg.msg AS last_message,
+            COALESCE(group_unread.cnt, 0) AS unread_count,
+            NULL::jsonb AS profile_data,
+            to_jsonb(gc.*) AS group_data,
+            group_members.members AS participants_data,
+            COALESCE((latest_group_msg.msg->>'created_at')::timestamptz, gc.created_at) AS sort_time
+        FROM public.group_chat_participants gcp
+        JOIN public.group_chats gc ON gc.id = gcp.chat_id
+        -- LATERAL join for latest group message
+        LEFT JOIN LATERAL (
+            SELECT to_jsonb(m.*) AS msg
+            FROM public.messages m
+            WHERE m.group_chat_id = gc.id
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        ) latest_group_msg ON true
+        -- LATERAL join for unread group messages count
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::INT AS cnt
+            FROM public.messages m
+            WHERE m.group_chat_id = gc.id
+              AND m.sender_id <> p_user_id
+              AND (gcp.last_read_at IS NULL OR m.created_at > gcp.last_read_at)
+        ) group_unread ON true
+        -- LATERAL join for group participant profiles
+        LEFT JOIN LATERAL (
+            SELECT jsonb_agg(to_jsonb(mp.*)) AS members
+            FROM public.group_chat_participants p_sub
+            JOIN public.profiles mp ON mp.id = p_sub.user_id
+            WHERE p_sub.chat_id = gc.id
+        ) group_members ON true
+        WHERE gcp.user_id = p_user_id
+    )
+    SELECT COALESCE(jsonb_agg(
+        jsonb_build_object(
+            'id', chat_id,
+            'isGroup', is_group,
+            'name', name,
+            'avatar_url', avatar_url,
+            'lastMessage', last_message,
+            'unreadCount', unread_count,
+            'profile', profile_data,
+            'groupChat', group_data,
+            'participants', participants_data
+        )
+    ), '[]'::jsonb)
+    INTO v_result
+    FROM (
+        SELECT *
+        FROM all_user_chats
+        ORDER BY sort_time DESC
+        LIMIT p_limit
+        OFFSET p_offset
+    ) paginated_chats;
+
+    RETURN v_result;
+END;
+$$;
+
 
 
 
