@@ -4,7 +4,7 @@ import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAnd
 import { ChatListItemType } from '@/src/types/chat';
 import { invalidateVaultCache, vaultCache } from './VaultModal';
 import { optimizePostOrChatImage } from '@/src/lib/cropImage';
-import { compressVideoTo480p } from '@/src/lib/videoCompression';
+import { compressVideoTo480p, extractVideoThumbnail } from '@/src/lib/videoCompression';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -240,13 +240,26 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     };
   }, [activeChat.id, currentUserId]);
 
-  const sendSpecialMessage = async (mediaUrl: string | null, mediaType: 'image' | 'video' | 'audio' | 'location', contentStr: string = '') => {
+  const sendSpecialMessage = async (
+    mediaUrl: string | null, 
+    mediaType: 'image' | 'video' | 'audio' | 'location', 
+    contentStr: string = '',
+    metadata: any = null
+  ) => {
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
-    const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType, created_at: new Date().toISOString() };
+    const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType, metadata: metadata, created_at: new Date().toISOString() };
     setMessages(prev => [...prev, temp]);
     scrollToBottom();
     try {
-      const { data, error } = await supabase.from('messages').insert({ sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType }).select().single();
+      const { data, error } = await supabase.from('messages').insert({ 
+        sender_id: currentUserId, 
+        receiver_id: activeChat.isGroup ? null : activeChat.id, 
+        group_chat_id: activeChat.isGroup ? activeChat.id : null, 
+        content: contentStr, 
+        media_url: mediaUrl, 
+        media_type: mediaType,
+        metadata: metadata
+      }).select().single();
       if (error) throw error;
       setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
       if (!activeChat.isGroup) {
@@ -345,9 +358,28 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     setUploadingMedia(true);
     setShowFeatures(false);
     try {
-      const uploadType = type === 'audio' ? 'video' : type === 'video' ? 'video' : 'image';
-      const url = await uploadToCloudinary(file, uploadType);
-      await sendSpecialMessage(url, type);
+      if (type === 'video') {
+        // 1. Take first frame of video, compress to 400px on longest edge, convert to webp
+        let thumbnailUrl: string | null = null;
+        try {
+          const thumbBlob = await extractVideoThumbnail(file);
+          const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
+          thumbnailUrl = await uploadToCloudinary(thumbFile, 'image');
+        } catch (thumbErr) {
+          console.warn('Video thumbnail extraction error:', thumbErr);
+        }
+
+        // 2. Heavily compress and convert video to 480p on client frontend before uploading
+        const videoUrl = await uploadToCloudinary(file, 'video');
+
+        // 3. Store thumbnail url in metadata column
+        const metadata = thumbnailUrl ? { thumbnail_url: thumbnailUrl } : null;
+        await sendSpecialMessage(videoUrl, 'video', '', metadata);
+      } else {
+        const uploadType = type === 'audio' ? 'video' : 'image';
+        const url = await uploadToCloudinary(file, uploadType);
+        await sendSpecialMessage(url, type);
+      }
     } catch (e) {
       alert('Upload failed: ' + (e as Error).message);
     } finally { setUploadingMedia(false); }

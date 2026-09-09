@@ -207,7 +207,7 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
               onClick={togglePlayPause}
               className="absolute z-[705] w-18 h-18 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-90 hover:scale-105 transition-transform"
             >
-              <Play size={32} className="fill-white translate-x-1" />
+              <Play size={32} className="fill-white" />
             </motion.button>
           )}
         </AnimatePresence>
@@ -233,7 +233,7 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
                 {isPlaying ? (
                   <Pause size={16} className="fill-black" />
                 ) : (
-                  <Play size={16} className="fill-black translate-x-0.5" />
+                  <Play size={16} className="fill-black" />
                 )}
               </button>
 

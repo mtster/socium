@@ -135,43 +135,24 @@ export default {
                   // Already looking at the chat room, do nothing
                   shouldSendNotification = false;
              }
-             // Scenario B: If recipient is online but looking at a DIFFERENT chat room or dashboard area
-             else if (isOnline && location !== group_chat_id) {
-                  // 1. update the inbox node for that user's uuid
-                  await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
-                    method: 'PUT',
-                    body: 'false'
-                  });
-                  
-                  // 2. increment unseen chat count node for the recipient by +1 atomically
-                  if (inboxSeen !== false) {
-                      await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ".sv": { "increment": 1 } })
-                      });
-                  }
-                  shouldSendNotification = false; // Do not send push notification if user is online in app
-             }
-             // Scenario A: If the global presence of recipient is false (completely offline)
+             // Scenario B & Scenario A: Recipient is online in a different room OR completely offline
              else {
-                  // 1. update the inbox node for that user's uuid
-                  await fetch(`${dbUrl}/inboxes/${userId}/${group_chat_id}.json?access_token=${access_token}`, {
-                    method: 'PUT',
-                    body: 'false'
-                  });
-                  
-                  // 2. increment unseen chat count node for the recipient by +1 atomically (only if inbox was not already false)
+                  // Unite inbox update and unseen_chat_count increment in a single atomic multi-path PATCH request
+                  const updates = {
+                    [`inboxes/${userId}/${group_chat_id}`]: false
+                  };
                   if (inboxSeen !== false) {
-                      await fetch(`${dbUrl}/unseen_chat_count/${userId}.json?access_token=${access_token}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ".sv": { "increment": 1 } })
-                      });
+                    updates[`unseen_chat_count/${userId}`] = { ".sv": { "increment": 1 } };
                   }
                   
-                  // 3. send notification payload
-                  shouldSendNotification = true;
+                  await fetch(`${dbUrl}/.json?access_token=${access_token}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates)
+                  });
+
+                  // Send push notification only if user is offline (Scenario A)
+                  shouldSendNotification = !isOnline;
              }
 
              if (shouldSendNotification) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { MapPin, Phone, Video, ShieldCheck, Play } from "lucide-react";
 import { cn } from "@/src/lib/utils";
@@ -138,6 +138,25 @@ export const MessageBubble = React.memo(
 
     const [sharedPost, setSharedPost] = useState<any>(null);
     const [loadingPost, setLoadingPost] = useState(false);
+
+    const videoThumbnailUrl = useMemo(() => {
+      if (msg.media_type !== "video" || !msg.media_url) return null;
+      if (msg.metadata) {
+        try {
+          const parsed =
+            typeof msg.metadata === "string"
+              ? JSON.parse(msg.metadata)
+              : msg.metadata;
+          if (parsed?.thumbnail_url) return parsed.thumbnail_url;
+          if (parsed?.thumbnail) return parsed.thumbnail;
+        } catch (e) {}
+      }
+      // Dynamic fallback for Cloudinary video thumbnails
+      if (msg.media_url.includes("cloudinary.com/")) {
+        return msg.media_url.replace(/\/video\/upload\/(?:[^/]*\/)?(.*?)(?:\.[^.]+)?$/, "/video/upload/so_0,w_400,c_limit,f_webp/$1.webp");
+      }
+      return null;
+    }, [msg.media_type, msg.media_url, msg.metadata]);
 
     useEffect(() => {
       if (msg.media_type === "shared_post" && msg.metadata) {
@@ -406,19 +425,22 @@ export const MessageBubble = React.memo(
             )}
             {msg.media_type === "video" && msg.media_url && (
               <div 
-                className="relative group cursor-pointer overflow-hidden bg-black select-none"
+                className="relative group cursor-pointer overflow-hidden bg-neutral-900 select-none min-h-[140px] flex items-center justify-center"
                 onClick={() => setViewingVideo ? setViewingVideo(msg.media_url) : setViewingImage?.(msg.media_url)}
               >
-                <video
-                  src={msg.media_url}
-                  preload="metadata"
-                  playsInline
-                  muted
-                  className="w-full h-auto max-h-[400px] object-cover block pointer-events-none"
-                />
+                {videoThumbnailUrl ? (
+                  <img
+                    src={videoThumbnailUrl}
+                    alt="Video thumbnail"
+                    loading="lazy"
+                    className="w-full h-auto max-h-[400px] object-cover block pointer-events-none"
+                  />
+                ) : (
+                  <div className="w-full h-44 bg-neutral-900 flex items-center justify-center" />
+                )}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/25 group-hover:bg-black/40 transition-colors">
                   <div className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-2xl group-hover:scale-110 active:scale-95 transition-all">
-                    <Play size={20} className="fill-white translate-x-0.5" />
+                    <Play size={20} className="fill-white" />
                   </div>
                 </div>
               </div>

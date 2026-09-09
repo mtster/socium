@@ -1,6 +1,82 @@
 // Client-side video compression and 480p conversion utility
 // Compresses video efficiently to preserve Cloudinary 25GB free-tier storage
 
+export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    const sourceUrl = URL.createObjectURL(file);
+    video.src = sourceUrl;
+
+    let cleanupDone = false;
+    const cleanup = () => {
+      if (cleanupDone) return;
+      cleanupDone = true;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(sourceUrl);
+    };
+
+    video.onerror = () => {
+      cleanup();
+      reject(new Error('Failed to load video for thumbnail extraction'));
+    };
+
+    video.onloadeddata = () => {
+      // Seek slightly into the video (0.05s) to guarantee first frame is available and avoid black frame
+      video.currentTime = Math.min(0.05, (video.duration || 1) / 2);
+    };
+
+    video.onseeked = () => {
+      try {
+        const vw = video.videoWidth || 640;
+        const vh = video.videoHeight || 480;
+
+        // Longest edge = 400px
+        let tw: number;
+        let th: number;
+        if (vw >= vh) {
+          tw = 400;
+          th = Math.max(2, Math.round((vh * 400) / vw));
+        } else {
+          th = 400;
+          tw = Math.max(2, Math.round((vw * 400) / vh));
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = tw;
+        canvas.height = th;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          cleanup();
+          return reject(new Error('Canvas 2D context not available'));
+        }
+
+        ctx.drawImage(video, 0, 0, tw, th);
+        cleanup();
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error('Failed to create thumbnail WebP blob'));
+            }
+          },
+          'image/webp',
+          0.82
+        );
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+  });
+}
+
 export function getSupportedVideoMimeType(): string {
   if (typeof MediaRecorder === 'undefined') return '';
   const candidates = [
@@ -179,13 +255,11 @@ export async function compressVideoTo480p(
           }
         };
 
-        // Accelerate playback to 1.5x - 2.0x for quick client conversion
-        if (duration > 3) {
-          video.playbackRate = 1.75;
-        }
+        // Keep normal 1.0x playback rate so video decodes without dropped frames and audio remains synchronized
+        video.playbackRate = 1.0;
 
-        // Max timeout failsafe in case playback halts
-        const maxTimeMs = Math.min(Math.max((duration / (video.playbackRate || 1)) * 1200 + 4000, 8000), 45000);
+        // Dynamic timeout allowing full duration to complete without arbitrary 45s cutoff
+        const maxTimeMs = Math.max(duration * 1200 + 10000, 15000);
         timeoutId = setTimeout(() => {
           if (mediaRecorder && mediaRecorder.state === 'recording') {
             try {
@@ -229,7 +303,12 @@ export async function compressVideoTo480p(
           }
         };
 
-        await video.play();
+        try {
+          await video.play();
+        } catch (playErr) {
+          video.muted = true;
+          await video.play().catch(failSafe);
+        }
         renderFrame();
       } catch (err) {
         console.error('[videoCompression] Compression error:', err);

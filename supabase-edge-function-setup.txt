@@ -97,11 +97,21 @@ serve(async (req) => {
       console.error("Failed to check presence in edge function. Proceeding...", e);
     }
 
-    console.log(`Fetching FCM tokens for user: ${message.receiver_id}`);
-    const { data: subscriptions, error: subError } = await supabase
-      .from('push_subscriptions')
-      .select('*')
-      .eq('user_id', message.receiver_id);
+    console.log(`Fetching FCM tokens and sender profile for user: ${message.receiver_id}`);
+    const [subResult, senderResult] = await Promise.all([
+      supabase
+        .from('push_subscriptions')
+        .select('*')
+        .eq('user_id', message.receiver_id),
+      supabase
+        .from('profiles')
+        .select('full_name, username')
+        .eq('id', message.sender_id)
+        .single()
+    ]);
+
+    const subscriptions = subResult.data;
+    const subError = subResult.error;
 
     if (subError) {
       console.error("Error fetching subscriptions:", subError);
@@ -120,13 +130,7 @@ serve(async (req) => {
     const dedupedSubscriptions = Array.from(uniqueSubs.values());
     console.log(`Sending to ${dedupedSubscriptions.length} FCM endpoints.`);
 
-    // Fetch the sender profile for the name
-    const { data: senderProf } = await supabase
-      .from('profiles')
-      .select('full_name, username')
-      .eq('id', message.sender_id)
-      .single();
-
+    const senderProf = senderResult.data;
     const senderName = senderProf?.full_name || senderProf?.username || 'Someone';
 
     let bodyText = message.content;
@@ -146,17 +150,19 @@ serve(async (req) => {
       }
     }
 
-    const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
-      const fcmToken = sub.endpoint;
-      
-      // Calculate badge count from Firebase Realtime Database
-      let badgeCount = 0;
+    // Read unseen badge count from RTDB exactly once for the recipient (or use passed badgeCount)
+    let badgeCount = typeof message.badgeCount === 'number' ? message.badgeCount : 0;
+    if (typeof message.badgeCount !== 'number') {
       try {
         const snapshot = await admin.database().ref(`unseen_chat_count/${message.receiver_id}`).once('value');
         badgeCount = snapshot.val() || 0;
       } catch (dbError) {
         console.error("Failed to read unseen_chat_count from RTDB, defaulting to 0", dbError);
       }
+    }
+
+    const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
+      const fcmToken = sub.endpoint;
 
       const payload = {
         token: fcmToken,

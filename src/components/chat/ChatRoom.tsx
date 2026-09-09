@@ -66,6 +66,11 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
   } = useChatRoom(currentUserId, activeChat);
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
+  const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsVideoTooLong(false);
+  }, [pendingMedia?.dataUrl]);
 
   return (
     <>
@@ -218,18 +223,56 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
             
             <div className="flex-1 min-h-0 overflow-hidden flex items-center justify-center p-4 pb-24 relative">
               {pendingMedia.type === 'image' && <img src={pendingMedia.dataUrl} className="max-w-full max-h-full object-contain rounded-2xl shadow-xl" />}
-              {pendingMedia.type === 'video' && <video src={pendingMedia.dataUrl} controls playsInline className="max-w-full max-h-full object-contain rounded-2xl shadow-xl" />}
+              {pendingMedia.type === 'video' && (
+                <div className="relative max-w-full max-h-full flex items-center justify-center">
+                  <video 
+                    src={pendingMedia.dataUrl} 
+                    controls={!isVideoTooLong} 
+                    playsInline 
+                    onLoadedMetadata={(e) => {
+                      const dur = e.currentTarget.duration;
+                      if (dur && dur > 180) {
+                        setIsVideoTooLong(true);
+                      } else {
+                        setIsVideoTooLong(false);
+                      }
+                    }}
+                    className={cn(
+                      "max-w-full max-h-full object-contain rounded-2xl shadow-xl transition-all duration-300",
+                      isVideoTooLong && "grayscale opacity-40 pointer-events-none filter"
+                    )} 
+                  />
+                  {isVideoTooLong && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-4">
+                      <div className="bg-black/85 backdrop-blur-md border border-white/20 px-5 py-3 rounded-full text-white text-xs font-semibold shadow-2xl tracking-wide text-center">
+                        Videos must be shorter than 3 minutes.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {pendingMedia.type === 'audio' && <div className="w-full max-w-sm"><AudioPlayer src={pendingMedia.dataUrl!} isMine={true} /></div>}
             </div>
             
-            {/* Fixed Send button to the bottom-right part to ensure it remains visible above high aspect-ratio screenshots */}
+            {/* Action button in bottom-right: Replace if > 3 min, otherwise Send */}
             <div className="absolute bottom-6 right-6 z-20">
-              <button 
-                onClick={() => { if (pendingMedia.file) handleMediaMessage(pendingMedia.file, pendingMedia.type); setPendingMedia(null); }} 
-                className="bg-white text-black font-extrabold px-8 py-3.5 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.25)] flex items-center gap-2.5 active:scale-95 hover:bg-neutral-100 transition-all text-xs uppercase tracking-widest"
-              >
-                Send <SendHorizonal size={18} />
-              </button>
+              {isVideoTooLong ? (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-white text-black font-extrabold px-8 py-3.5 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.25)] flex items-center active:scale-95 hover:bg-neutral-100 transition-all text-xs uppercase tracking-widest"
+                >
+                  Replace
+                </button>
+              ) : (
+                <button 
+                  type="button"
+                  onClick={() => { if (pendingMedia.file) handleMediaMessage(pendingMedia.file, pendingMedia.type); setPendingMedia(null); }} 
+                  className="bg-white text-black font-extrabold px-8 py-3.5 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.25)] flex items-center gap-2.5 active:scale-95 hover:bg-neutral-100 transition-all text-xs uppercase tracking-widest"
+                >
+                  Send <SendHorizonal size={18} />
+                </button>
+              )}
             </div>
           </motion.div>
         )}
