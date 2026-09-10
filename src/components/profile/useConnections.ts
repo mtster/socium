@@ -46,16 +46,46 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     if (!currentUserId || !profile?.id) return;
 
     if (isOwnProfile) {
+      // 1. Fetch from connections table
       const { data: userConns, error: userConnsErr } = await supabase
         .from('connections')
-        .select('*, profiles!connection_id(*)').eq('user_id', profile.id);
+        .select('*, profiles!connection_id(*)')
+        .eq('user_id', profile.id);
       
       if (userConnsErr) {
         console.error('[useConnections] error fetching connections:', userConnsErr);
-        return;
       }
       
-      const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean);
+      const directConns = (userConns?.map(c => c.profiles) || []).filter(Boolean);
+
+      // 2. Self-healing check: also check connection_requests with status = 'accepted'
+      const { data: acceptedReqs } = await supabase
+        .from('connection_requests')
+        .select('id, requester_id, receiver_id, requester:profiles!requester_id(*), receiver:profiles!receiver_id(*)')
+        .or(`requester_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+        .eq('status', 'accepted');
+
+      const acceptedPeers: any[] = [];
+      const missingSelfHealInserts: any[] = [];
+
+      if (acceptedReqs) {
+        for (const req of acceptedReqs) {
+          const peerProf = req.requester_id === profile.id ? req.receiver : req.requester;
+          const peerId = req.requester_id === profile.id ? req.receiver_id : req.requester_id;
+          if (peerProf && peerId && peerId !== profile.id) {
+            acceptedPeers.push(peerProf);
+            // Check if present in directConns
+            if (!directConns.some(c => c.id === peerId) && profile.id === currentUserId) {
+              missingSelfHealInserts.push({ user_id: currentUserId, connection_id: peerId });
+            }
+          }
+        }
+      }
+
+      // Merge and deduplicate
+      const combined = Array.from(
+        new Map([...directConns, ...acceptedPeers].map(p => [p.id, p])).values()
+      );
       
       const adminProf = await getAdminProfile();
       if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
@@ -66,6 +96,13 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       profileConnectionsCache[profile.id] = filteredConnections;
       profileConnectionsTime[profile.id] = Date.now();
       setConnections(filteredConnections);
+
+      // Asynchronously heal any missing connections in background
+      if (missingSelfHealInserts.length > 0) {
+        supabase.from('connections').upsert(missingSelfHealInserts, { onConflict: 'user_id,connection_id' }).then(() => {
+          window.dispatchEvent(new CustomEvent('refreshChatList'));
+        }, err => console.warn('[useConnections] self-heal error:', err));
+      }
 
       const { data: pending, error: pendingErr } = await supabase
         .from('connection_requests')
@@ -121,10 +158,31 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       
       if (userConnsErr) {
         console.error('[useConnections] error fetching other connections:', userConnsErr);
-        return;
       }
       
-      const combined = (userConns?.map(c => c.profiles) || []).filter(Boolean);
+      const directConns = (userConns?.map(c => c.profiles) || []).filter(Boolean);
+
+      // Also check accepted requests for other user
+      const { data: otherAcceptedReqs } = await supabase
+        .from('connection_requests')
+        .select('id, requester_id, receiver_id, requester:profiles!requester_id(*), receiver:profiles!receiver_id(*)')
+        .or(`requester_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+        .eq('status', 'accepted');
+
+      const acceptedPeers: any[] = [];
+      if (otherAcceptedReqs) {
+        for (const req of otherAcceptedReqs) {
+          const peerProf = req.requester_id === profile.id ? req.receiver : req.requester;
+          const peerId = req.requester_id === profile.id ? req.receiver_id : req.requester_id;
+          if (peerProf && peerId && peerId !== profile.id) {
+            acceptedPeers.push(peerProf);
+          }
+        }
+      }
+
+      const combined = Array.from(
+        new Map([...directConns, ...acceptedPeers].map(p => [p.id, p])).values()
+      );
 
       const adminProf = await getAdminProfile();
       if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
@@ -202,23 +260,37 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
       }
       if (!rId) throw new Error("Could not identify requester ID");
 
-      const { error } = await supabase.from('connection_requests').update({ status: 'accepted' }).eq('id', id);
-      if (error) throw error;
+      const { error: updateErr } = await supabase.from('connection_requests').update({ status: 'accepted' }).eq('id', id);
+      if (updateErr) throw updateErr;
 
-      // Bidirectional insert into connections table
-      await supabase.from('connections').insert([
-        { user_id: currentUserId, connection_id: rId },
-        { user_id: rId, connection_id: currentUserId }
-      ]);
+      // 1. Insert row for current user
+      const { error: insertOwnErr } = await supabase.from('connections').upsert({
+        user_id: currentUserId,
+        connection_id: rId
+      }, { onConflict: 'user_id,connection_id' });
+      if (insertOwnErr) {
+        console.warn('[useConnections] error inserting own connection row:', insertOwnErr);
+      }
+
+      // 2. Insert row for peer user (if permitted by policy/trigger)
+      const { error: insertPeerErr } = await supabase.from('connections').upsert({
+        user_id: rId,
+        connection_id: currentUserId
+      }, { onConflict: 'user_id,connection_id' });
+      if (insertPeerErr) {
+        console.warn('[useConnections] notice inserting peer connection row:', insertPeerErr);
+      }
       
       profileConnectionsCache = {};
       profileConnectionsTime = {};
       window.dispatchEvent(new CustomEvent('connectionsChanged'));
+      window.dispatchEvent(new CustomEvent('refreshChatList'));
 
       if (isOwnProfile) {
         fetchConnections();
       } else {
         setConnectionStatus('accepted');
+        fetchConnections();
       }
     } catch (e: any) {
       alert(e.message);

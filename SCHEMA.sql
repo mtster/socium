@@ -605,7 +605,8 @@ DROP POLICY IF EXISTS "Connections viewable by everyone" ON public.connections;
 CREATE POLICY "Connections viewable by everyone" ON public.connections FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own connections" ON public.connections;
-CREATE POLICY "Users can insert own connections" ON public.connections FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert connections" ON public.connections;
+CREATE POLICY "Users can insert connections" ON public.connections FOR INSERT WITH CHECK (auth.uid() = user_id OR auth.uid() = connection_id);
 
 DROP POLICY IF EXISTS "Users can update own connections" ON public.connections;
 CREATE POLICY "Users can update own connections" ON public.connections FOR UPDATE USING (auth.uid() = user_id);
@@ -637,6 +638,30 @@ CREATE EXTENSION IF NOT EXISTS pg_net;
 -- Ensure connections default is_activity_muted to false and update existing NULL values
 ALTER TABLE public.connections ALTER COLUMN is_activity_muted SET DEFAULT false;
 UPDATE public.connections SET is_activity_muted = false WHERE is_activity_muted IS NULL;
+
+-- Trigger to automatically create bidirectional connection rows when connection_request is accepted
+CREATE OR REPLACE FUNCTION public.handle_connection_accepted()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  IF NEW.status = 'accepted' AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM 'accepted') THEN
+    INSERT INTO public.connections (user_id, connection_id, created_at)
+    VALUES 
+      (NEW.requester_id, NEW.receiver_id, NOW()),
+      (NEW.receiver_id, NEW.requester_id, NOW())
+    ON CONFLICT (user_id, connection_id) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_on_connection_accepted ON public.connection_requests;
+CREATE TRIGGER trigger_on_connection_accepted
+AFTER INSERT OR UPDATE OF status ON public.connection_requests
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_connection_accepted();
 
 -- Hook Postgres trigger to Cloudflare Feed Worker
 CREATE OR REPLACE FUNCTION public.notify_feed_worker()
@@ -837,6 +862,10 @@ BEGIN
             COALESCE((latest_msg.msg->>'created_at')::timestamptz, '1970-01-01 00:00:00+00'::timestamptz) AS sort_time
         FROM (
             SELECT connection_id AS peer_id FROM public.connections WHERE user_id = p_user_id
+            UNION
+            SELECT requester_id AS peer_id FROM public.connection_requests WHERE receiver_id = p_user_id AND status = 'accepted'
+            UNION
+            SELECT receiver_id AS peer_id FROM public.connection_requests WHERE requester_id = p_user_id AND status = 'accepted'
             UNION
             SELECT v_admin_id WHERE p_user_id <> v_admin_id
         ) peers

@@ -76,15 +76,48 @@ export function useUserProfile(session: any, registerPush: (uid: string) => void
               status: 'accepted'
             });
 
-            // Insert bidirectional records in actual connections
-            await supabase.from('connections').insert([
-              { user_id: ADMIN_ID, connection_id: userId },
+            // Insert own record in actual connections
+            await supabase.from('connections').upsert([
               { user_id: userId, connection_id: ADMIN_ID }
-            ]);
+            ], { onConflict: 'user_id,connection_id' });
           }
         } catch (connErr) {
           console.error('Error establishing default Socium connection:', connErr);
         }
+      }
+
+      // Self-heal any accepted connections for this user missing in public.connections
+      try {
+        const { data: acceptedReqs } = await supabase
+          .from('connection_requests')
+          .select('requester_id, receiver_id')
+          .or(`requester_id.eq.${userId},receiver_id.eq.${userId}`)
+          .eq('status', 'accepted');
+
+        if (acceptedReqs && acceptedReqs.length > 0) {
+          const { data: existingConns } = await supabase
+            .from('connections')
+            .select('connection_id')
+            .eq('user_id', userId);
+
+          const existingSet = new Set((existingConns || []).map(c => c.connection_id));
+          const toInsert: any[] = [];
+
+          for (const req of acceptedReqs) {
+            const peerId = req.requester_id === userId ? req.receiver_id : req.requester_id;
+            if (peerId && !existingSet.has(peerId)) {
+              toInsert.push({ user_id: userId, connection_id: peerId });
+            }
+          }
+
+          if (toInsert.length > 0) {
+            await supabase.from('connections').upsert(toInsert, { onConflict: 'user_id,connection_id' });
+            window.dispatchEvent(new CustomEvent('connectionsChanged'));
+            window.dispatchEvent(new CustomEvent('refreshChatList'));
+          }
+        }
+      } catch (healErr) {
+        console.warn('Self-heal connections sync notice:', healErr);
       }
 
       fetchUserPosts(userId, userId);

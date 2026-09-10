@@ -102,7 +102,32 @@ DROP POLICY IF EXISTS "Connections viewable by everyone" ON public.connections;
 CREATE POLICY "Connections viewable by everyone" ON public.connections FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own connections" ON public.connections;
-CREATE POLICY "Users can insert own connections" ON public.connections FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert connections" ON public.connections;
+CREATE POLICY "Users can insert connections" ON public.connections FOR INSERT WITH CHECK (auth.uid() = user_id OR auth.uid() = connection_id);
+
+-- Trigger to automatically create bidirectional connection rows when connection_request is accepted
+CREATE OR REPLACE FUNCTION public.handle_connection_accepted()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  IF NEW.status = 'accepted' AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM 'accepted') THEN
+    INSERT INTO public.connections (user_id, connection_id, created_at)
+    VALUES 
+      (NEW.requester_id, NEW.receiver_id, NOW()),
+      (NEW.receiver_id, NEW.requester_id, NOW())
+    ON CONFLICT (user_id, connection_id) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_on_connection_accepted ON public.connection_requests;
+CREATE TRIGGER trigger_on_connection_accepted
+AFTER INSERT OR UPDATE OF status ON public.connection_requests
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_connection_accepted();
 
 DROP POLICY IF EXISTS "Users can update own connections" ON public.connections;
 CREATE POLICY "Users can update own connections" ON public.connections FOR UPDATE USING (auth.uid() = user_id);

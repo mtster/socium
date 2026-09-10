@@ -33,14 +33,20 @@ async function fetchChatsFallback(userId: string, limit: number, offset: number)
   try {
     const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
 
-    // 1. Fetch connections, group memberships, admin profile, and recent direct messages in parallel
+    // 1. Fetch connections, accepted requests, group memberships, admin profile, and recent direct messages in parallel
     const [
       { data: userConns },
+      { data: acceptedReqs },
       { data: groupParticipants },
       { data: adminProf },
       { data: recentDmMessages }
     ] = await Promise.all([
       supabase.from('connections').select('*, profiles!connection_id(*)').eq('user_id', userId),
+      supabase
+        .from('connection_requests')
+        .select('id, requester_id, receiver_id, requester:profiles!requester_id(*), receiver:profiles!receiver_id(*)')
+        .or(`requester_id.eq.${userId},receiver_id.eq.${userId}`)
+        .eq('status', 'accepted'),
       supabase.from('group_chat_participants').select('chat_id, last_read_at').eq('user_id', userId),
       supabase.from('profiles').select('*').eq('id', ADMIN_ID).maybeSingle(),
       supabase
@@ -52,7 +58,29 @@ async function fetchChatsFallback(userId: string, limit: number, offset: number)
         .limit(500)
     ]);
 
-    const combinedProfs = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
+    const directProfs = (userConns?.map(c => c.profiles) || []).filter(Boolean) as Profile[];
+    const acceptedPeers: Profile[] = [];
+    const missingSelfHealInserts: any[] = [];
+
+    if (acceptedReqs) {
+      for (const req of acceptedReqs) {
+        const rawProf = req.requester_id === userId ? req.receiver : req.requester;
+        const peerProf = (Array.isArray(rawProf) ? rawProf[0] : rawProf) as Profile | undefined;
+        const peerId = req.requester_id === userId ? req.receiver_id : req.requester_id;
+        if (peerProf && peerId && peerId !== userId) {
+          acceptedPeers.push(peerProf);
+          if (!directProfs.some(c => c.id === peerId)) {
+            missingSelfHealInserts.push({ user_id: userId, connection_id: peerId });
+          }
+        }
+      }
+    }
+
+    if (missingSelfHealInserts.length > 0) {
+      supabase.from('connections').upsert(missingSelfHealInserts, { onConflict: 'user_id,connection_id' }).then(() => {}, (err) => console.warn(err));
+    }
+
+    const combinedProfs = [...directProfs, ...acceptedPeers];
     if (adminProf && !combinedProfs.some(c => c.id === ADMIN_ID) && userId !== ADMIN_ID) {
       combinedProfs.push(adminProf);
     }
