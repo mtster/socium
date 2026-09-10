@@ -324,15 +324,15 @@ export async function analyzeVideoForCloudinary(file: File | Blob): Promise<Vide
   const minDim = Math.min(width, height);
   const maxDim = Math.max(width, height);
 
-  // Targets: 480p on short edge (848 max on long edge), 30 FPS, ~600kbps bitrate ceiling
+  // Targets: 480p on short edge (848-854 max on long edge), 30 FPS, ~650kbps bitrate ceiling
   const TARGET_SHORT_EDGE = 480;
+  const TARGET_LONG_EDGE = 854;
   const TARGET_BITRATE_CEILING = 650_000; // 650 kbps
   const LOW_BITRATE_THRESHOLD = 520_000;  // 520 kbps
 
-  const isResAtOrBelow480p = minDim <= TARGET_SHORT_EDGE && maxDim <= 854;
+  const isResAtOrBelow480p = minDim <= TARGET_SHORT_EDGE && maxDim <= TARGET_LONG_EDGE;
   const isBitrateAtOrBelowTarget = sourceBitrateBps <= TARGET_BITRATE_CEILING;
   const isAlreadyLowBitrate = sourceBitrateBps <= LOW_BITRATE_THRESHOLD;
-  const isSmallFile = fileSizeBytes <= 2.2 * 1024 * 1024; // <= 2.2 MB
 
   videoLog.info('📊 [Cloudinary Video Analyzer] Inspecting video specs vs targets:', {
     resolution: `${width}x${height}`,
@@ -341,16 +341,13 @@ export async function analyzeVideoForCloudinary(file: File | Blob): Promise<Vide
     sourceBitrateKbps: Math.round(sourceBitrateBps / 1000),
     isResAtOrBelow480p,
     isBitrateAtOrBelowTarget,
-    isAlreadyLowBitrate,
-    isSmallFile
+    isAlreadyLowBitrate
   });
 
-  // CASE 1: Video is already lower than or equal to threshold
-  // e.g. 360x640 @ 400kbps (1.2MB), or 480p @ 500kbps, or compact file <= 2.2MB with moderate bitrate
-  if ((isResAtOrBelow480p && isBitrateAtOrBelowTarget) || (isSmallFile && isBitrateAtOrBelowTarget)) {
-    videoLog.info('✅ [Cloudinary Video Analyzer] Video is already at or below target threshold. Preserving original file directly.', {
-      reason: isSmallFile ? 'File is <= 2.2 MB with moderate bitrate' : 'Resolution is <= 480p and bitrate <= 650 kbps'
-    });
+  // CASE 1: Video is already lower than or equal to our targets (resolution <= 480p AND bitrate <= 650kbps)
+  // e.g. 360x640 @ 400kbps, or 480x848 @ 500kbps
+  if (isResAtOrBelow480p && isBitrateAtOrBelowTarget) {
+    videoLog.info('✅ [Cloudinary Video Analyzer] Video resolution (<= 480p) and bitrate (<= 650kbps) are already optimal. Preserving original file directly.');
     return {
       width,
       height,
@@ -360,39 +357,20 @@ export async function analyzeVideoForCloudinary(file: File | Blob): Promise<Vide
       needsTransformation: false,
       transformationString: null,
       category: 'already_optimal',
-      reason: 'Resolution and bitrate are already optimal (<= 480p and <= 650kbps). Preserving original.'
+      reason: 'Resolution is <= 480p and bitrate is <= 650kbps. Preserving original.'
     };
   }
 
-  // CASE 2: High resolution (e.g. 720p or 1080p), but ALREADY low bitrate (e.g. 350-500 kbps)
-  // Example: 720p video at 1.2MB for 25s (bitrate ~400kbps)
-  // If we re-encoded with br_600k, it would BLOAT the video!
+  // CASE 2: High resolution (e.g. 720p or 1080p), but already has moderate/low bitrate (e.g. 300-500 kbps)
+  // Example: 720x1280 video at 1.2MB for 25s (bitrate ~408 kbps).
+  // Target: Downscale to 480p (848 max edge) while strictly maintaining or reducing bitrate (never bloat to 600k!)
   if (!isResAtOrBelow480p && isAlreadyLowBitrate) {
-    // If file is already compact (<= 2.5MB), preserve it completely to avoid any bloat
-    if (fileSizeBytes <= 2.5 * 1024 * 1024) {
-      videoLog.info('✅ [Cloudinary Video Analyzer] High-res but low-bitrate compact video (<= 2.5MB). Preserving original to prevent bloat.', {
-        resolution: `${width}x${height}`,
-        bitrateKbps: Math.round(sourceBitrateBps / 1000)
-      });
-      return {
-        width,
-        height,
-        durationSec,
-        fileSizeBytes,
-        sourceBitrateBps,
-        needsTransformation: false,
-        transformationString: null,
-        category: 'already_optimal',
-        reason: 'Video is already compact (<= 2.5MB) with low bitrate. Preserving original to avoid bloat.'
-      };
-    }
-
-    // For larger high-res low-bitrate videos, downscale resolution and enforce strict low bitrate
-    const cappedBitrateKbps = Math.min(Math.round(sourceBitrateBps / 1000), 450);
-    const transformationString = `c_limit,w_848,h_848,fps_30,br_${cappedBitrateKbps}k,vc_h264,ac_aac,q_auto:eco`;
-    videoLog.info('🎞️ [Cloudinary Video Analyzer] High-res low-bitrate video: downsizing resolution while keeping bitrate low', {
-      resolution: `${width}x${height} -> 480p max`,
-      cappedBitrate: `${cappedBitrateKbps} kbps`,
+    const cappedBitrateKbps = Math.max(250, Math.min(Math.round((sourceBitrateBps / 1000) * 0.9), 500));
+    const transformationString = `c_limit,w_848,h_848,fps_30,br_${cappedBitrateKbps}k,vc_h264,ac_aac,q_auto:good`;
+    videoLog.info('🎞️ [Cloudinary Video Analyzer] High-res low-bitrate video: downsizing resolution to 480p while keeping bitrate constrained', {
+      resolution: `${width}x${height} -> 480p max (848 limit)`,
+      sourceBitrateKbps: Math.round(sourceBitrateBps / 1000),
+      targetBitrateKbps: cappedBitrateKbps,
       transformationString
     });
     return {
@@ -404,16 +382,16 @@ export async function analyzeVideoForCloudinary(file: File | Blob): Promise<Vide
       needsTransformation: true,
       transformationString,
       category: 'high_res_low_bitrate',
-      reason: `Downscaled to 480p with constrained bitrate (${cappedBitrateKbps}kbps) to avoid bloating`
+      reason: `Downscaled to 480p with constrained bitrate (${cappedBitrateKbps}kbps) to prevent bloating`
     };
   }
 
   // CASE 3: Low resolution (<= 480p), but BLOATED bitrate (> 650 kbps)
   // e.g. 360p or 480p recorded at 3 Mbps (15MB)
-  // Keep native resolution (c_limit does not upscale), cap fps, compress bitrate to 450kbps
+  // Keep native resolution (c_limit does not upscale), cap fps at 30, compress bitrate to 450kbps
   if (isResAtOrBelow480p && !isBitrateAtOrBelowTarget) {
     const transformationString = 'c_limit,w_848,h_848,fps_30,br_450k,vc_h264,ac_aac,q_auto:good';
-    videoLog.info('🎞️ [Cloudinary Video Analyzer] Low-res bloated video: compressing bitrate while preserving resolution', {
+    videoLog.info('🎞️ [Cloudinary Video Analyzer] Low-res bloated video: compressing bitrate while preserving native <= 480p resolution', {
       resolution: `${width}x${height}`,
       sourceBitrateKbps: Math.round(sourceBitrateBps / 1000),
       transformationString

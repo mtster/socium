@@ -26,6 +26,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadStatusText, setUploadStatusText] = useState<string | null>(null);
   const [pendingMedia, setPendingMedia] = useState<{file: File | Blob | null, type: 'image' | 'video' | 'audio' | 'location', dataUrl?: string, locationString?: string} | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
@@ -322,11 +323,19 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const uploadToCloudinary = async (
     file: File | Blob, 
     type: 'image' | 'video' | 'audio' | 'auto',
-    options?: { skipClientOptimization?: boolean; rawUrl?: boolean; onProgress?: (percent: number) => void }
+    options?: { 
+      skipClientOptimization?: boolean; 
+      rawUrl?: boolean; 
+      preset?: string;
+      onProgress?: (percent: number, statusText?: string) => void;
+    }
   ): Promise<string> => {
     const uploadStart = performance.now();
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    const defaultPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    const videoPreset = import.meta.env.VITE_CLOUDINARY_VIDEO_UPLOAD_PRESET || defaultPreset;
+    const uploadPreset = options?.preset || (type === 'video' ? videoPreset : defaultPreset);
+
     if (!cloudName || !uploadPreset) {
       videoLog.error('Cloudinary config missing: VITE_CLOUDINARY_CLOUD_NAME or VITE_CLOUDINARY_UPLOAD_PRESET is not defined');
       throw new Error('Cloudinary config missing');
@@ -357,10 +366,11 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
     const payloadKb = (fileToUpload.size / 1024).toFixed(1);
     const payloadMb = (fileToUpload.size / (1024 * 1024)).toFixed(2);
-    videoLog.info(`☁️ [Cloudinary Upload] Uploading ${type} (${payloadKb} KB / ${payloadMb} MB) to folder: chat_${type === 'image' ? 'images' : 'videos'}...`, {
+    videoLog.info(`☁️ [Cloudinary Upload] Uploading ${type} (${payloadKb} KB / ${payloadMb} MB) with preset "${uploadPreset}" to folder: chat_${type === 'image' ? 'images' : 'videos'}...`, {
       resourceType,
       fileName,
-      mimeType: fileToUpload.type
+      mimeType: fileToUpload.type,
+      uploadPreset
     });
 
     // Dynamic timeout calculation:
@@ -379,15 +389,24 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
       let lastLoggedPercent = 0;
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable && event.total > 0) {
-          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
-          if (options?.onProgress) {
-            options.onProgress(percent);
+          const rawPercent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          if (rawPercent >= 100) {
+            // Bytes transferred over network, server is now ingesting/saving
+            if (options?.onProgress) {
+              options.onProgress(82, 'Processing on server...');
+            }
+          } else {
+            // Map byte transfer smoothly to 10% - 80%
+            const mapped = Math.round(10 + rawPercent * 0.70);
+            if (options?.onProgress) {
+              options.onProgress(mapped, `Uploading ${type === 'video' ? 'video' : type} ${rawPercent}%`);
+            }
           }
-          if (percent - lastLoggedPercent >= 20 || percent === 100) {
-            lastLoggedPercent = percent;
+          if (rawPercent - lastLoggedPercent >= 20 || rawPercent === 100) {
+            lastLoggedPercent = rawPercent;
             const loadedMb = (event.loaded / (1024 * 1024)).toFixed(1);
             const totalMb = (event.total / (1024 * 1024)).toFixed(1);
-            videoLog.info(`☁️ [Cloudinary Upload] Progress: ${percent}% (${loadedMb}/${totalMb} MB)`);
+            videoLog.info(`☁️ [Cloudinary Upload] Progress: ${rawPercent}% (${loadedMb}/${totalMb} MB)`);
           }
         }
       };
@@ -449,11 +468,13 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     });
 
     setUploadingMedia(true);
-    setUploadProgress(0);
+    setUploadProgress(5);
+    setUploadStatusText(`Preparing ${type}...`);
     setShowFeatures(false);
     try {
       if (type === 'video') {
         // 1. Analyze video specifications for Cloudinary optimization (~30ms)
+        setUploadStatusText('Analyzing video specs...');
         videoLog.info('🎞️ [PIPELINE STEP 1/3] Analyzing video specifications for Cloudinary...');
         const analysis = await analyzeVideoForCloudinary(file);
         videoLog.info('📊 [Cloudinary Video Strategy]', {
@@ -466,11 +487,16 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
           reason: analysis.reason
         });
 
-        // 2. Upload video file to Cloudinary with progress tracking
+        // 2. Upload video file to Cloudinary with accurate stage-based progress tracking
+        setUploadProgress(10);
+        setUploadStatusText('Uploading video 0%');
         videoLog.info('☁️ [PIPELINE STEP 2/3] Uploading video to Cloudinary...');
         const rawVideoUrl = await uploadToCloudinary(file, 'video', { 
           skipClientOptimization: true,
-          onProgress: (percent) => setUploadProgress(percent)
+          onProgress: (percent, status) => {
+            setUploadProgress(percent);
+            if (status) setUploadStatusText(status);
+          }
         });
 
         // Apply Cloudinary 480p 30fps optimal delivery transformation to URL (if needed)
@@ -486,11 +512,15 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
         // 3. Video upload and transformation succeeded!
         // ONLY NOW create and upload the thumbnail (strictly guarantees no orphan thumbnails if video fails)
+        setUploadProgress(85);
+        setUploadStatusText('Generating preview...');
         let thumbnailUrl: string | null = null;
         try {
           videoLog.info('📸 [PIPELINE STEP 3/3] Creating and uploading thumbnail...');
           const thumbBlob = await extractVideoThumbnail(file);
           const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
+          setUploadProgress(90);
+          setUploadStatusText('Saving preview...');
           thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
           videoLog.success('📸 [Thumbnail Uploaded]', { thumbnailUrl });
         } catch (thumbErr) {
@@ -498,17 +528,30 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         }
 
         // 4. Send message record with finalVideoUrl and thumbnail_url metadata
+        setUploadProgress(96);
+        setUploadStatusText('Sending message...');
         const metadata = thumbnailUrl ? { thumbnail_url: thumbnailUrl } : null;
         await sendSpecialMessage(finalVideoUrl, 'video', '', metadata);
 
+        setUploadProgress(100);
+        setUploadStatusText('Sent!');
         const totalElapsed = ((performance.now() - pipelineStart) / 1000).toFixed(2);
         videoLog.success(`🎉 [PIPELINE COMPLETE] Video sent successfully in ${totalElapsed}s!`);
       } else {
         const uploadType = type === 'audio' ? 'video' : 'image';
+        setUploadProgress(10);
+        setUploadStatusText(`Uploading ${type}...`);
         const url = await uploadToCloudinary(file, uploadType, {
-          onProgress: (percent) => setUploadProgress(percent)
+          onProgress: (percent, status) => {
+            setUploadProgress(percent);
+            if (status) setUploadStatusText(status);
+          }
         });
+        setUploadProgress(95);
+        setUploadStatusText('Sending message...');
         await sendSpecialMessage(url, type);
+        setUploadProgress(100);
+        setUploadStatusText('Sent!');
       }
     } catch (e: any) {
       videoLog.error('❌ [PIPELINE FAILED] Error during media sending:', e);
@@ -517,6 +560,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     } finally { 
       setUploadingMedia(false); 
       setUploadProgress(null);
+      setUploadStatusText(null);
     }
   };
 
@@ -661,7 +705,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     messages, loadingMessages, hasMoreMessages, pullProgress, isPulling, setIsPulling, setPullProgress, fetchMessages,
     newMessage, setNewMessage, handleSendMessage, showFeatures, setShowFeatures,
     isRecording, recordingDuration, startRecording, stopRecording, handleLocationShare,
-    cameraInputRef, fileInputRef, uploadingMedia, uploadProgress, pendingMedia, setPendingMedia, handleMediaMessage,
+    cameraInputRef, fileInputRef, uploadingMedia, uploadProgress, uploadStatusText, pendingMedia, setPendingMedia, handleMediaMessage,
     messagesEndRef, scrollContainerRef, viewingImage, setViewingImage, viewingVideo, setViewingVideo, contextMenu,
     handleLongPress, handleDeleteMessage, saveToDevice, onTouchStart, onTouchMove, onTouchEnd,
     activeDateMsgId, setActiveDateMsgId,

@@ -44,6 +44,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     fileInputRef,
     uploadingMedia,
     uploadProgress,
+    uploadStatusText,
     pendingMedia,
     setPendingMedia,
     handleMediaMessage,
@@ -212,7 +213,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center gap-1.5 z-50 rounded-t-3xl backdrop-blur-xs">
                <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                <span className="text-[11px] text-white/90 font-medium tracking-wide">
-                 {uploadProgress !== null && uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Sending media...'}
+                 {uploadStatusText || (uploadProgress !== null && uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Sending media...')}
                </span>
              </div>
            )}
