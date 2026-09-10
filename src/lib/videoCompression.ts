@@ -307,7 +307,7 @@ async function getSupportedEncoderCodec(width: number, height: number, bitrate: 
         bitrate,
         framerate: 30,
         bitrateMode: 'variable',
-        latencyMode: 'realtime',
+        latencyMode: 'quality',
         avc: { format: 'avc' }
       });
       if (support.supported && support.config?.codec) {
@@ -324,6 +324,7 @@ async function getSupportedEncoderCodec(width: number, height: number, bitrate: 
  * with ZERO real-time playback delays, ZERO background-tab throttling, and perfect audio sync.
  * Includes a smart pre-compression threshold analyzer (Messenger style) that avoids re-encoding
  * already-optimal or low-bitrate videos, while compressing larger videos to optimal 480p ~600kbps.
+ * Gracefully falls back to the original file if device hardware fails transcoding.
  */
 export async function compressVideoTo480p(
   file: File | Blob,
@@ -348,35 +349,40 @@ export async function compressVideoTo480p(
   }
 
   videoLog.info('🚀 [Compression] Running WebCodecs hardware accelerated transcoding pipeline');
-  const arrayBuffer = await file.arrayBuffer();
-  const compressedFile = await compressVideoViaWebCodecs(arrayBuffer, file, onProgress);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const compressedFile = await compressVideoViaWebCodecs(arrayBuffer, file, onProgress);
 
-  if (compressedFile && compressedFile.size > 1000) {
-    const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-    const outputSizeMb = (compressedFile.size / (1024 * 1024)).toFixed(2);
-    const reductionPct = Math.round((1 - compressedFile.size / file.size) * 100);
-    
-    if (compressedFile === file || compressedFile.size === file.size) {
-      videoLog.success(`🎞️ [Compression] Original video preserved (already optimal / low bitrate) in ${elapsed}s`, {
-        size: `${outputSizeMb} MB`,
-        format: compressedFile.type
-      });
-    } else {
-      videoLog.success(`🎞️ [Compression] Completed in ${elapsed}s!`, {
-        originalSize: `${inputSizeMb} MB`,
-        compressedSize: `${outputSizeMb} MB`,
-        reduction: `${reductionPct}% saved`,
-        format: compressedFile.type
-      });
+    if (compressedFile && compressedFile.size > 1000) {
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+      const outputSizeMb = (compressedFile.size / (1024 * 1024)).toFixed(2);
+      const reductionPct = Math.round((1 - compressedFile.size / file.size) * 100);
+      
+      if (compressedFile === file || compressedFile.size === file.size) {
+        videoLog.success(`🎞️ [Compression] Original video preserved (already optimal / low bitrate) in ${elapsed}s`, {
+          size: `${outputSizeMb} MB`,
+          format: compressedFile.type
+        });
+      } else {
+        videoLog.success(`🎞️ [Compression] Completed in ${elapsed}s!`, {
+          originalSize: `${inputSizeMb} MB`,
+          compressedSize: `${outputSizeMb} MB`,
+          reduction: `${reductionPct}% saved`,
+          format: compressedFile.type
+        });
+      }
+      return compressedFile;
     }
-    return compressedFile;
+  } catch (err: any) {
+    videoLog.warn('⚠️ [Compression] Hardware transcoding encountered an issue, gracefully falling back to original video:', err?.message || err);
   }
 
-  throw new Error('Video compression failed: generated output is invalid');
+  // Graceful fallback: return original video file
+  return file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
 }
 
 /**
- * WebCodecs Hardware Transcoder Implementation with strict 15-second safety timeout.
+ * WebCodecs Hardware Transcoder Implementation with adaptive safety timeout.
  */
 async function compressVideoViaWebCodecs(
   arrayBuffer: ArrayBuffer,
@@ -404,11 +410,6 @@ async function compressVideoViaWebCodecs(
       reject(new Error(`Compression failed: ${reason}`));
     };
 
-    // Strict 15s timeout so compression never stalls the chat UI
-    timeoutId = setTimeout(() => {
-      abortWithError('15s safety timeout exceeded');
-    }, 15000);
-
     mp4file.onReady = async (info: MP4Info) => {
       try {
         const durationSec = info.duration / info.timescale;
@@ -423,6 +424,12 @@ async function compressVideoViaWebCodecs(
         if (!videoTrack) {
           return abortWithError('No video track in MP4');
         }
+
+        // Adaptive timeout: 25s minimum, or 1.5x duration
+        const safetyTimeoutMs = Math.max(25000, Math.round(durationSec * 1500));
+        timeoutId = setTimeout(() => {
+          abortWithError(`${Math.round(safetyTimeoutMs / 1000)}s safety timeout exceeded`);
+        }, safetyTimeoutMs);
 
         const origW = videoTrack.track_width || videoTrack.video?.width || 640;
         const origH = videoTrack.track_height || videoTrack.video?.height || 480;
@@ -467,8 +474,6 @@ async function compressVideoViaWebCodecs(
         const isAacAudio = audioTrack && audioTrack.codec && (audioTrack.codec.startsWith('mp4a') || audioTrack.codec.includes('aac'));
 
         // ==== SYNCHRONOUS EXTRACTION SETUP ====
-        // MP4Box requires setExtractionOptions and start() to be called synchronously
-        // inside onReady, otherwise the buffered media data is discarded.
         const videoSamplesToProcess: MP4Sample[] = [];
         const audioSamplesToProcess: MP4Sample[] = [];
 
@@ -525,10 +530,7 @@ async function compressVideoViaWebCodecs(
         let targetBitrate = Math.min(TARGET_VIDEO_BITRATE, Math.round(sourceBitrate * 0.8));
         targetBitrate = Math.max(250_000, targetBitrate);
 
-        const actualFps = durationSec > 0 ? videoSamplesToProcess.length / durationSec : 30;
-        const targetFps = Math.min(30, actualFps > 0 && actualFps < 120 ? actualFps : 30);
-
-        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} (16-aligned) @ ${Math.round(targetBitrate/1000)}kbps (${targetFps.toFixed(1)}fps)`);
+        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} (16-aligned) @ ${Math.round(targetBitrate/1000)}kbps (target 30fps)`);
 
         const audioChannels = audioTrack?.audio?.channel_count || 2;
         const audioSampleRate = audioTrack?.audio?.sample_rate || 44100;
@@ -577,8 +579,8 @@ async function compressVideoViaWebCodecs(
           height: targetH,
           bitrate: targetBitrate,
           bitrateMode: 'variable',
-          framerate: Math.round(targetFps),
-          latencyMode: 'realtime', // Guarantees strictly monotonic timestamps (PTS=DTS) without B-frame jitter
+          framerate: 30,
+          latencyMode: 'quality', // 'quality' allocates proper rate control buffers for file transcoding
           avc: { format: 'avc' }
         });
 
@@ -590,44 +592,66 @@ async function compressVideoViaWebCodecs(
         offscreen.height = targetH;
         const ctx = offscreen.getContext('2d', { alpha: false, desynchronized: true }) as any;
 
-        let frameIndex = 0;
+        let lastEncodedTimestampUs = -1;
+        let lastKeyFrameUs = -1;
+        let inFlightFrames = 0;
+        let encodedFramesCount = 0;
         let lastLoggedProgress = 0;
 
         videoDecoder = new VideoDecoder({
           output: (frame: VideoFrame) => {
             if (isFinished) {
               frame.close();
+              inFlightFrames = Math.max(0, inFlightFrames - 1);
               return;
             }
 
             try {
-              ctx.drawImage(frame, 0, 0, targetW, targetH);
-              const timestampUs = Math.round((frameIndex * 1_000_000) / targetFps);
-              const durationUs = Math.max(1, Math.round(1_000_000 / targetFps));
+              const currentTimestampUs = frame.timestamp;
 
+              // Clean 30 FPS decimation for high framerate/VFR video (e.g. 60 FPS iPhone recording):
+              // If the incoming frame is less than 28ms from the previously encoded frame, skip it.
+              // This maintains exact 1.0x real-world playback speed and exact audio sync!
+              if (lastEncodedTimestampUs >= 0 && (currentTimestampUs - lastEncodedTimestampUs) < 28_000) {
+                frame.close();
+                inFlightFrames = Math.max(0, inFlightFrames - 1);
+                return;
+              }
+
+              // Ensure monotonically increasing timestamp for the encoder
+              const safeTimestampUs = Math.max(lastEncodedTimestampUs + 1000, currentTimestampUs);
+
+              ctx.drawImage(frame, 0, 0, targetW, targetH);
               const scaledFrame = new VideoFrame(offscreen, {
-                timestamp: timestampUs,
-                duration: durationUs
+                timestamp: safeTimestampUs,
+                duration: frame.duration ?? 33_333
               });
 
               // Keyframe every 2 seconds for smooth seeking
-              const isKeyFrame = frameIndex % Math.round(targetFps * 2) === 0;
+              const isKeyFrame = lastKeyFrameUs < 0 || (safeTimestampUs - lastKeyFrameUs) >= 2_000_000;
+              if (isKeyFrame) {
+                lastKeyFrameUs = safeTimestampUs;
+              }
+
               videoEncoder?.encode(scaledFrame, { keyFrame: isKeyFrame });
 
               scaledFrame.close();
               frame.close();
-              frameIndex++;
+              inFlightFrames = Math.max(0, inFlightFrames - 1);
+              lastEncodedTimestampUs = safeTimestampUs;
+              encodedFramesCount++;
 
               if (totalDurationUs > 0) {
-                const pct = Math.min(Math.round((frameIndex / videoSamplesToProcess.length) * 100), 99);
+                const pct = Math.min(Math.round((safeTimestampUs / totalDurationUs) * 100), 99);
                 if (pct >= lastLoggedProgress + 20) {
                   lastLoggedProgress = pct;
-                  videoLog.progress(pct, frameIndex);
+                  videoLog.progress(pct, encodedFramesCount);
                 }
                 if (onProgress) onProgress(pct);
               }
             } catch (err) {
               try { frame.close(); } catch (e) {}
+              inFlightFrames = Math.max(0, inFlightFrames - 1);
               abortWithError('Frame scaling/encoding error', err);
             }
           },
@@ -668,13 +692,15 @@ async function compressVideoViaWebCodecs(
         for (let i = 0; i < videoSamplesToProcess.length; i++) {
           if (isFinished) return;
 
-          // Strict backpressure on both decoder and encoder queues
+          // Strict backpressure on in-flight decoded frames and queue sizes
+          // Keeps maximum 3 frames in GPU memory at any time, preventing GPU mailbox overflow crashes
           while (
-            (videoDecoder && videoDecoder.decodeQueueSize > 6) ||
-            (videoEncoder && videoEncoder.encodeQueueSize > 6)
+            inFlightFrames >= 3 ||
+            (videoDecoder && videoDecoder.decodeQueueSize >= 3) ||
+            (videoEncoder && videoEncoder.encodeQueueSize >= 3)
           ) {
             if (isFinished) return;
-            await new Promise((r) => setTimeout(r, 4));
+            await new Promise((r) => setTimeout(r, 2));
           }
 
           const sample = videoSamplesToProcess[i];
@@ -685,7 +711,14 @@ async function compressVideoViaWebCodecs(
             data: sample.data
           });
 
+          inFlightFrames++;
           videoDecoder.decode(chunk);
+        }
+
+        // Wait for all in-flight frames to finish encoding before flushing
+        while (inFlightFrames > 0) {
+          if (isFinished) return;
+          await new Promise((r) => setTimeout(r, 4));
         }
 
         // Flush decoder and encoder

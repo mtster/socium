@@ -422,8 +422,8 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         try {
           fileToUpload = await compressVideoTo480p(file);
         } catch (compressionErr) {
-          videoLog.error('❌ [Compression Failed] Video encoding failed, aborting upload process.', compressionErr);
-          throw new Error('Video compression failed. Upload aborted.');
+          videoLog.warn('⚠️ [Compression Fallback] Video encoding encountered an issue, proceeding with original file upload:', compressionErr);
+          fileToUpload = file;
         }
 
         // 3. Upload video file to Cloudinary
