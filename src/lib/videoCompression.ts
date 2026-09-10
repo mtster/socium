@@ -315,7 +315,8 @@ async function getSupportedEncoderCodec(width: number, height: number): Promise<
  * Industry-standard WebCodecs + MP4Box + mp4-muxer fast hardware transcoding pipeline.
  * Runs asynchronously in batch at full hardware decoding/encoding speed (100-300+ FPS),
  * with ZERO real-time playback delays, ZERO background-tab throttling, and perfect audio sync.
- * Includes a strict 10s timeout fail-safe that falls back seamlessly so video sending NEVER hangs.
+ * Includes a smart pre-compression threshold analyzer (Messenger style) that avoids re-encoding
+ * already-optimal videos, while compressing larger videos to optimal 480p ~600kbps.
  */
 export async function compressVideoTo480p(
   file: File | Blob,
@@ -334,38 +335,37 @@ export async function compressVideoTo480p(
   // Check WebCodecs availability
   const hasWebCodecs = typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
 
-  if (hasWebCodecs && isMP4OrMov) {
-    try {
-      videoLog.info('🚀 [Compression] Running WebCodecs hardware accelerated transcoding pipeline');
-      const arrayBuffer = await file.arrayBuffer();
-      const compressedFile = await compressVideoViaWebCodecs(arrayBuffer, file, onProgress);
-      if (compressedFile && compressedFile.size > 1000) {
-        const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-        const outputSizeMb = (compressedFile.size / (1024 * 1024)).toFixed(2);
-        const reductionPct = Math.round((1 - compressedFile.size / file.size) * 100);
-        videoLog.success(`🎞️ [Compression] Completed in ${elapsed}s!`, {
-          originalSize: `${inputSizeMb} MB`,
-          compressedSize: `${outputSizeMb} MB`,
-          reduction: `${reductionPct}% saved`,
-          format: compressedFile.type
-        });
-        return compressedFile;
-      }
-    } catch (webCodecsErr) {
-      videoLog.warn('⚠️ [Compression] WebCodecs pipeline bypassed, continuing with original file:', webCodecsErr);
-    }
-  } else {
-    videoLog.info('ℹ️ [Compression] WebCodecs not applicable for format or not supported in this browser, using original');
+  if (!hasWebCodecs || !isMP4OrMov) {
+    videoLog.info('ℹ️ [Compression] WebCodecs not applicable for format or not supported in this browser, using original file');
+    return file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
   }
 
-  // Graceful fallback to original file
-  const fallback = file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
-  videoLog.info('📦 [Compression] Prepared video payload for upload', {
-    size: `${(fallback.size / (1024 * 1024)).toFixed(2)} MB`,
-    name: fallback.name,
-    type: fallback.type
-  });
-  return fallback;
+  videoLog.info('🚀 [Compression] Running WebCodecs hardware accelerated transcoding pipeline');
+  const arrayBuffer = await file.arrayBuffer();
+  const compressedFile = await compressVideoViaWebCodecs(arrayBuffer, file, onProgress);
+
+  if (compressedFile && compressedFile.size > 1000) {
+    const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+    const outputSizeMb = (compressedFile.size / (1024 * 1024)).toFixed(2);
+    const reductionPct = Math.round((1 - compressedFile.size / file.size) * 100);
+    
+    if (compressedFile === file || compressedFile.size === file.size) {
+      videoLog.success(`🎞️ [Compression] Original video preserved (already optimal) in ${elapsed}s`, {
+        size: `${outputSizeMb} MB`,
+        format: compressedFile.type
+      });
+    } else {
+      videoLog.success(`🎞️ [Compression] Completed in ${elapsed}s!`, {
+        originalSize: `${inputSizeMb} MB`,
+        compressedSize: `${outputSizeMb} MB`,
+        reduction: `${reductionPct}% saved`,
+        format: compressedFile.type
+      });
+    }
+    return compressedFile;
+  }
+
+  throw new Error('Video compression failed: generated output is invalid');
 }
 
 /**
@@ -397,15 +397,16 @@ async function compressVideoViaWebCodecs(
       reject(new Error(`Compression failed: ${reason}`));
     };
 
-    // Strict 10s timeout so compression never stalls the chat UI
+    // Strict 15s timeout so compression never stalls the chat UI
     timeoutId = setTimeout(() => {
-      abortWithError('10s safety timeout exceeded');
-    }, 10000);
+      abortWithError('15s safety timeout exceeded');
+    }, 15000);
 
     mp4file.onReady = async (info: MP4Info) => {
       try {
+        const durationSec = info.duration / info.timescale;
         videoLog.info('🎞️ [WebCodecs] MP4 metadata parsed', {
-          durationSec: (info.duration / info.timescale).toFixed(2),
+          durationSec: durationSec.toFixed(2),
           tracksCount: info.tracks.length,
           videoTracks: info.videoTracks.length,
           audioTracks: info.audioTracks?.length || 0
@@ -414,6 +415,38 @@ async function compressVideoViaWebCodecs(
         const videoTrack = info.videoTracks[0];
         if (!videoTrack) {
           return abortWithError('No video track in MP4');
+        }
+
+        const origW = videoTrack.track_width || videoTrack.video?.width || 640;
+        const origH = videoTrack.track_height || videoTrack.video?.height || 480;
+        const sourceBitrate = durationSec > 0 ? (originalFile.size * 8) / durationSec : 800_000;
+
+        // TARGET SPECIFICATIONS (Messenger / WhatsApp optimal 480p style):
+        // 1. Max resolution: 480p on shorter dimension, 854px max on longer dimension
+        // 2. Target Video Bitrate: 600 kbps (total bitrate threshold ~700 kbps)
+        // 3. Max FPS: 30 fps
+        const TARGET_VIDEO_BITRATE = 600_000;
+        const TARGET_TOTAL_BITRATE_THRESHOLD = 700_000;
+
+        const isShortDimensionOptimal = Math.min(origW, origH) <= 480;
+        const isLongDimensionOptimal = Math.max(origW, origH) <= 854;
+        const isBitrateOptimal = sourceBitrate <= TARGET_TOTAL_BITRATE_THRESHOLD;
+
+        videoLog.info('📊 [Compression Analyzer] Video specs vs. targets:', {
+          resolution: `${origW}x${origH}`,
+          duration: `${durationSec.toFixed(1)}s`,
+          sourceBitrate: `${Math.round(sourceBitrate / 1000)} kbps`,
+          targetThreshold: `${Math.round(TARGET_TOTAL_BITRATE_THRESHOLD / 1000)} kbps`,
+          isResolutionWithinTarget: isShortDimensionOptimal && isLongDimensionOptimal,
+          isBitrateWithinTarget: isBitrateOptimal
+        });
+
+        // SMART DECISION: If video is already <= 480p AND bitrate <= 700kbps, do NOT re-encode (preserves 100% quality and prevents file bloat)
+        if (isShortDimensionOptimal && isLongDimensionOptimal && isBitrateOptimal) {
+          videoLog.info('✅ [Compression Analyzer] Video already meets or is below 480p/700kbps target threshold. Preserving original file.');
+          isFinished = true;
+          cleanup();
+          return resolve(originalFile instanceof File ? originalFile : new File([originalFile], 'video.mp4', { type: 'video/mp4' }));
         }
 
         const audioTrack = info.audioTracks?.[0];
@@ -447,40 +480,37 @@ async function compressVideoViaWebCodecs(
         }
         // ======================================
 
-        const origW = videoTrack.track_width || videoTrack.video?.width || 640;
-        const origH = videoTrack.track_height || videoTrack.video?.height || 480;
         const totalDurationUs = (info.duration * 1_000_000) / info.timescale;
-
-        const durationSec = info.duration / info.timescale;
-        const sourceBitrate = (originalFile.size * 8) / durationSec;
-
-        // Skip re-encoding if already small/optimized (< 3MB and <= 480p) or very low bitrate
-        if ((originalFile.size < 3 * 1024 * 1024 && Math.min(origW, origH) <= 480) || sourceBitrate < 400_000) {
-          videoLog.info('🎞️ [WebCodecs] File already compact, optimized, or low bitrate. Skipping re-encode');
-          isFinished = true;
-          cleanup();
-          return resolve(originalFile instanceof File ? originalFile : new File([originalFile], 'video.mp4', { type: 'video/mp4' }));
-        }
 
         // Calculate 480p dimensions preserving aspect ratio (must be even numbers)
         let targetW: number;
         let targetH: number;
         if (origW >= origH) {
+          // Landscape or square
           targetH = Math.min(480, origH);
           targetW = Math.round((origW * (targetH / origH)) / 2) * 2;
+          if (targetW > 854) {
+            targetW = 854;
+            targetH = Math.round((origH * (targetW / origW)) / 2) * 2;
+          }
         } else {
+          // Portrait (e.g. mobile recording)
           targetW = Math.min(480, origW);
           targetH = Math.round((origH * (targetW / origW)) / 2) * 2;
+          if (targetH > 854) {
+            targetH = 854;
+            targetW = Math.round((origW * (targetH / origW)) / 2) * 2;
+          }
         }
         targetW = Math.max(2, targetW);
         targetH = Math.max(2, targetH);
         
-        // Ensure compression, cap at 800kbps, but limit to 70% of original to force size reduction. Floor at 100kbps.
-        let targetBitrate = Math.min(800_000, sourceBitrate * 0.7);
-        targetBitrate = Math.max(100_000, Math.round(targetBitrate));
+        // Target video bitrate: cap at 600 kbps, or 80% of source bitrate if lower, with a 250 kbps floor
+        let targetBitrate = Math.min(TARGET_VIDEO_BITRATE, Math.round(sourceBitrate * 0.8));
+        targetBitrate = Math.max(250_000, targetBitrate);
 
-        const actualFps = videoSamplesToProcess.length / durationSec;
-        const targetFps = (actualFps > 0 && actualFps < 120) ? actualFps : 30;
+        const actualFps = durationSec > 0 ? videoSamplesToProcess.length / durationSec : 30;
+        const targetFps = Math.min(30, actualFps > 0 && actualFps < 120 ? actualFps : 30);
 
         videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} @ ${Math.round(targetBitrate/1000)}kbps (${targetFps.toFixed(1)}fps)`);
 
@@ -498,8 +528,8 @@ async function compressVideoViaWebCodecs(
             numberOfChannels: audioTrack.audio?.channel_count || 2,
             sampleRate: audioTrack.audio?.sample_rate || 44100
           } : undefined,
-          fastStart: false,
-          firstTimestampBehavior: 'strict'
+          fastStart: 'in-memory',
+          firstTimestampBehavior: 'offset'
         });
 
         if (isAacAudio) {
@@ -512,26 +542,10 @@ async function compressVideoViaWebCodecs(
         const encoderCodec = await getSupportedEncoderCodec(targetW, targetH);
         videoLog.info(`🎞️ [WebCodecs] Selected AVC encoder codec: ${encoderCodec}`);
 
-        const frameToDtsMap = new Map<number, number>();
-
         videoEncoder = new VideoEncoder({
           output: (chunk, meta) => {
             if (isFinished) return;
-            // Retrieve synthetic monotonic DTS safely
-            const syntheticDts = frameToDtsMap.get(chunk.timestamp) ?? chunk.timestamp;
-            
-            const safeChunkBuffer = new ArrayBuffer(chunk.byteLength);
-            chunk.copyTo(safeChunkBuffer);
-
-            // Re-wrap chunk with explicit DTS to ensure monotonic timeline for muxer
-            const safeChunk = new EncodedVideoChunk({
-              type: chunk.type,
-              timestamp: syntheticDts, // Used as DTS by mp4-muxer
-              duration: chunk.duration ?? undefined,
-              data: safeChunkBuffer
-            });
-            
-            muxer.addVideoChunk(safeChunk, meta);
+            muxer.addVideoChunk(chunk, meta);
           },
           error: (e) => {
             abortWithError('VideoEncoder error', e);
@@ -543,8 +557,9 @@ async function compressVideoViaWebCodecs(
           width: targetW,
           height: targetH,
           bitrate: targetBitrate,
+          bitrateMode: 'variable',
           framerate: Math.round(targetFps),
-          latencyMode: 'quality', // Return to quality mode for better compression
+          latencyMode: 'realtime', // Guarantees strictly monotonic timestamps (PTS=DTS) without B-frame jitter
           avc: { format: 'avc' }
         });
 
@@ -557,7 +572,6 @@ async function compressVideoViaWebCodecs(
         const ctx = offscreen.getContext('2d', { alpha: false }) as any;
 
         let frameIndex = 0;
-        let encodedFrameIndex = 0;
         let lastLoggedProgress = 0;
 
         videoDecoder = new VideoDecoder({
@@ -571,10 +585,6 @@ async function compressVideoViaWebCodecs(
               ctx.drawImage(frame, 0, 0, targetW, targetH);
               const timestampUs = Math.round((frameIndex * 1_000_000) / targetFps);
               const durationUs = Math.max(1, Math.round(1_000_000 / targetFps));
-              
-              // Register monotonically increasing synthetic timestamp
-              const encodeDtsUs = Math.round((encodedFrameIndex * 1_000_000) / targetFps);
-              frameToDtsMap.set(timestampUs, encodeDtsUs);
 
               const scaledFrame = new VideoFrame(offscreen, {
                 timestamp: timestampUs,
@@ -588,7 +598,6 @@ async function compressVideoViaWebCodecs(
               scaledFrame.close();
               frame.close();
               frameIndex++;
-              encodedFrameIndex++;
 
               if (totalDurationUs > 0) {
                 const pct = Math.min(Math.round((frame.timestamp / totalDurationUs) * 100), 99);
