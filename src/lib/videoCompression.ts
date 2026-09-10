@@ -502,8 +502,8 @@ async function compressVideoViaWebCodecs(
             numberOfChannels: audioTrack.audio?.channel_count || 2,
             sampleRate: audioTrack.audio?.sample_rate || 44100
           } : undefined,
-          fastStart: 'in-memory',
-          firstTimestampBehavior: 'offset'
+          fastStart: false,
+          firstTimestampBehavior: 'strict'
         });
 
         if (isAacAudio) {
@@ -516,9 +516,26 @@ async function compressVideoViaWebCodecs(
         const encoderCodec = await getSupportedEncoderCodec(targetW, targetH);
         videoLog.info(`🎞️ [WebCodecs] Selected AVC encoder codec: ${encoderCodec}`);
 
+        const frameToDtsMap = new Map<number, number>();
+
         videoEncoder = new VideoEncoder({
           output: (chunk, meta) => {
-            muxer.addVideoChunk(chunk, meta);
+            if (isFinished) return;
+            // Retrieve synthetic monotonic DTS safely
+            const syntheticDts = frameToDtsMap.get(chunk.timestamp) ?? chunk.timestamp;
+            
+            const safeChunkBuffer = new ArrayBuffer(chunk.byteLength);
+            chunk.copyTo(safeChunkBuffer);
+
+            // Re-wrap chunk with explicit DTS to ensure monotonic timeline for muxer
+            const safeChunk = new EncodedVideoChunk({
+              type: chunk.type,
+              timestamp: syntheticDts, // Used as DTS by mp4-muxer
+              duration: chunk.duration ?? undefined,
+              data: safeChunkBuffer
+            });
+            
+            muxer.addVideoChunk(safeChunk, meta);
           },
           error: (e) => {
             abortWithError('VideoEncoder error', e);
@@ -531,7 +548,7 @@ async function compressVideoViaWebCodecs(
           height: targetH,
           bitrate: targetBitrate,
           framerate: Math.round(targetFps),
-          latencyMode: 'realtime', // Prevents B-frame reordering to guarantee monotonic DTS
+          latencyMode: 'quality', // Return to quality mode for better compression
           avc: { format: 'avc' }
         });
 
@@ -544,6 +561,7 @@ async function compressVideoViaWebCodecs(
         const ctx = offscreen.getContext('2d', { alpha: false }) as any;
 
         let frameIndex = 0;
+        let encodedFrameIndex = 0;
         let lastLoggedProgress = 0;
 
         videoDecoder = new VideoDecoder({
@@ -557,6 +575,11 @@ async function compressVideoViaWebCodecs(
               ctx.drawImage(frame, 0, 0, targetW, targetH);
               const timestampUs = Math.round((frameIndex * 1_000_000) / targetFps);
               const durationUs = Math.max(1, Math.round(1_000_000 / targetFps));
+              
+              // Register monotonically increasing synthetic timestamp
+              const encodeDtsUs = Math.round((encodedFrameIndex * 1_000_000) / targetFps);
+              frameToDtsMap.set(timestampUs, encodeDtsUs);
+
               const scaledFrame = new VideoFrame(offscreen, {
                 timestamp: timestampUs,
                 duration: durationUs
@@ -569,6 +592,7 @@ async function compressVideoViaWebCodecs(
               scaledFrame.close();
               frame.close();
               frameIndex++;
+              encodedFrameIndex++;
 
               if (totalDurationUs > 0) {
                 const pct = Math.min(Math.round((frame.timestamp / totalDurationUs) * 100), 99);
