@@ -393,17 +393,17 @@ async function compressVideoViaWebCodecs(
       try { videoDecoder?.close(); } catch (e) {}
     };
 
-    const abortWithFallback = (reason: string, err?: any) => {
+    const abortWithError = (reason: string, err?: any) => {
       if (isFinished) return;
       isFinished = true;
-      videoLog.warn(`⚠️ [Compression] Aborting WebCodecs (${reason}), using fallback:`, err || '');
+      videoLog.error(`⚠️ [Compression] Aborting WebCodecs (${reason})`, err || '');
       cleanup();
-      resolve(fallbackFile);
+      reject(new Error(`Compression failed: ${reason}`));
     };
 
     // Strict 10s timeout so compression never stalls the chat UI
     timeoutId = setTimeout(() => {
-      abortWithFallback('10s safety timeout exceeded');
+      abortWithError('10s safety timeout exceeded');
     }, 10000);
 
     mp4file.onReady = async (info: MP4Info) => {
@@ -417,7 +417,7 @@ async function compressVideoViaWebCodecs(
 
         const videoTrack = info.videoTracks[0];
         if (!videoTrack) {
-          return abortWithFallback('No video track in MP4');
+          return abortWithError('No video track in MP4');
         }
 
         const audioTrack = info.audioTracks?.[0];
@@ -447,7 +447,7 @@ async function compressVideoViaWebCodecs(
         videoLog.info(`🎞️ [WebCodecs] Extracted ${videoSamplesToProcess.length} video samples & ${audioSamplesToProcess.length} audio chunks synchronously`);
 
         if (videoSamplesToProcess.length === 0) {
-          return abortWithFallback('No video samples extracted');
+          return abortWithError('No video samples extracted');
         }
         // ======================================
 
@@ -455,9 +455,12 @@ async function compressVideoViaWebCodecs(
         const origH = videoTrack.track_height || videoTrack.video?.height || 480;
         const totalDurationUs = (info.duration * 1_000_000) / info.timescale;
 
-        // Skip re-encoding if already small (< 1.2MB and <= 480p)
-        if (originalFile.size < 1.2 * 1024 * 1024 && Math.min(origW, origH) <= 480) {
-          videoLog.info('🎞️ [WebCodecs] File already compact & <= 480p, skipping re-encode');
+        const durationSec = info.duration / info.timescale;
+        const sourceBitrate = (originalFile.size * 8) / durationSec;
+
+        // Skip re-encoding if already small/optimized (< 3MB and <= 480p) or very low bitrate
+        if ((originalFile.size < 3 * 1024 * 1024 && Math.min(origW, origH) <= 480) || sourceBitrate < 400_000) {
+          videoLog.info('🎞️ [WebCodecs] File already compact, optimized, or low bitrate. Skipping re-encode');
           isFinished = true;
           cleanup();
           return resolve(fallbackFile);
@@ -475,9 +478,6 @@ async function compressVideoViaWebCodecs(
         }
         targetW = Math.max(2, targetW);
         targetH = Math.max(2, targetH);
-
-        const durationSec = info.duration / info.timescale;
-        const sourceBitrate = (originalFile.size * 8) / durationSec;
         
         // Ensure compression, cap at 800kbps, but limit to 70% of original to force size reduction. Floor at 100kbps.
         let targetBitrate = Math.min(800_000, sourceBitrate * 0.7);
@@ -521,7 +521,7 @@ async function compressVideoViaWebCodecs(
             muxer.addVideoChunk(chunk, meta);
           },
           error: (e) => {
-            abortWithFallback('VideoEncoder error', e);
+            abortWithError('VideoEncoder error', e);
           }
         });
 
@@ -556,8 +556,10 @@ async function compressVideoViaWebCodecs(
             try {
               ctx.drawImage(frame, 0, 0, targetW, targetH);
               const timestampUs = Math.round((frameIndex * 1_000_000) / targetFps);
+              const durationUs = Math.max(1, Math.round(1_000_000 / targetFps));
               const scaledFrame = new VideoFrame(offscreen, {
-                timestamp: timestampUs
+                timestamp: timestampUs,
+                duration: durationUs
               });
 
               // Keyframe every 2 seconds for smooth seeking
@@ -578,11 +580,11 @@ async function compressVideoViaWebCodecs(
               }
             } catch (err) {
               try { frame.close(); } catch (e) {}
-              abortWithFallback('Frame scaling/encoding error', err);
+              abortWithError('Frame scaling/encoding error', err);
             }
           },
           error: (e) => {
-            abortWithFallback('VideoDecoder error', e);
+            abortWithError('VideoDecoder error', e);
           }
         });
 
@@ -651,15 +653,15 @@ async function compressVideoViaWebCodecs(
           const resultFile = new File([compressedBlob], 'compressed_video.mp4', { type: 'video/mp4' });
           resolve(resultFile);
         } else {
-          abortWithFallback('Generated blob empty');
+          abortWithError('Generated blob empty');
         }
       } catch (pipelineErr) {
-        abortWithFallback('Pipeline exception', pipelineErr);
+        abortWithError('Pipeline exception', pipelineErr);
       }
     };
 
     mp4file.onError = (err) => {
-      abortWithFallback('MP4Box error', err);
+      abortWithError('MP4Box error', err);
     };
 
     const fileBuf = arrayBuffer as ArrayBuffer & { fileStart?: number };
