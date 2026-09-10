@@ -43,6 +43,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     cameraInputRef,
     fileInputRef,
     uploadingMedia,
+    uploadProgress,
     pendingMedia,
     setPendingMedia,
     handleMediaMessage,
@@ -207,7 +208,14 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                 </motion.div>
              )}
            </AnimatePresence>
-           {uploadingMedia && <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50 rounded-t-3xl"><div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /></div>}
+           {uploadingMedia && (
+             <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center gap-1.5 z-50 rounded-t-3xl backdrop-blur-xs">
+               <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+               <span className="text-[11px] text-white/90 font-medium tracking-wide">
+                 {uploadProgress !== null && uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Sending media...'}
+               </span>
+             </div>
+           )}
             <input type="file" ref={fileInputRef} accept="image/*,video/*" className="hidden" onChange={(e) => { 
               const file = e.target.files?.[0]; 
               if (file) { 

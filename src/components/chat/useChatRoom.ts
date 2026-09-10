@@ -25,6 +25,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [pendingMedia, setPendingMedia] = useState<{file: File | Blob | null, type: 'image' | 'video' | 'audio' | 'location', dataUrl?: string, locationString?: string} | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
@@ -321,8 +322,8 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const uploadToCloudinary = async (
     file: File | Blob, 
     type: 'image' | 'video' | 'audio' | 'auto',
-    options?: { skipClientOptimization?: boolean; rawUrl?: boolean }
-  ) => {
+    options?: { skipClientOptimization?: boolean; rawUrl?: boolean; onProgress?: (percent: number) => void }
+  ): Promise<string> => {
     const uploadStart = performance.now();
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
@@ -355,44 +356,88 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     }
 
     const payloadKb = (fileToUpload.size / 1024).toFixed(1);
-    videoLog.info(`☁️ [Cloudinary Upload] Uploading ${type} (${payloadKb} KB) to folder: chat_${type === 'image' ? 'images' : 'videos'}...`, {
+    const payloadMb = (fileToUpload.size / (1024 * 1024)).toFixed(2);
+    videoLog.info(`☁️ [Cloudinary Upload] Uploading ${type} (${payloadKb} KB / ${payloadMb} MB) to folder: chat_${type === 'image' ? 'images' : 'videos'}...`, {
       resourceType,
       fileName,
       mimeType: fileToUpload.type
     });
 
-    // 45s safety timeout on network upload
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
+    // Dynamic timeout calculation:
+    // Large videos on mobile connections (e.g. 14MB+ on cellular uplinks) need sufficient time.
+    // Minimum 5 minutes (300,000 ms) for videos, up to 10 minutes (600,000 ms).
+    // Images/Audio: 90 seconds.
+    const timeoutDurationMs = type === 'video'
+      ? Math.min(600000, Math.max(300000, Math.ceil(fileToUpload.size / (25 * 1024)) * 1000))
+      : 90000;
 
-    try {
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, { 
-        method: 'POST', 
-        body: formData,
-        signal: controller.signal
-      });
-      clearTimeout(timeout);
+    return new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, true);
+      xhr.timeout = timeoutDurationMs;
 
-      if (!res.ok) {
-        const errText = await res.text();
-        videoLog.error(`☁️ [Cloudinary Upload] Upload failed with status ${res.status}:`, errText);
-        throw new Error(`Upload failed (${res.status}): ${errText}`);
-      }
-      const data = await res.json();
-      const uploadElapsed = ((performance.now() - uploadStart) / 1000).toFixed(2);
-      videoLog.success(`☁️ [Cloudinary Upload] Finished in ${uploadElapsed}s!`, {
-        url: data.secure_url,
-        bytes: data.bytes,
-        format: data.format
-      });
-      
-      // Return raw secure_url to avoid Cloudinary on-the-fly server transformations and keep uploaded WebP pristine
-      return data.secure_url;
-    } catch (uploadErr: any) {
-      clearTimeout(timeout);
-      videoLog.error('☁️ [Cloudinary Upload] Upload failed or timed out:', uploadErr);
-      throw uploadErr;
-    }
+      let lastLoggedPercent = 0;
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          if (options?.onProgress) {
+            options.onProgress(percent);
+          }
+          if (percent - lastLoggedPercent >= 20 || percent === 100) {
+            lastLoggedPercent = percent;
+            const loadedMb = (event.loaded / (1024 * 1024)).toFixed(1);
+            const totalMb = (event.total / (1024 * 1024)).toFixed(1);
+            videoLog.info(`☁️ [Cloudinary Upload] Progress: ${percent}% (${loadedMb}/${totalMb} MB)`);
+          }
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            const uploadElapsed = ((performance.now() - uploadStart) / 1000).toFixed(2);
+            videoLog.success(`☁️ [Cloudinary Upload] Finished in ${uploadElapsed}s!`, {
+              url: data.secure_url,
+              bytes: data.bytes,
+              format: data.format
+            });
+            resolve(data.secure_url);
+          } catch (jsonErr) {
+            videoLog.error('☁️ [Cloudinary Upload] Invalid JSON response:', xhr.responseText);
+            reject(new Error('Invalid response from upload server'));
+          }
+        } else {
+          let errMsg = `Upload failed with status ${xhr.status}`;
+          try {
+            const errJson = JSON.parse(xhr.responseText);
+            if (errJson?.error?.message) {
+              errMsg = errJson.error.message;
+            }
+          } catch {}
+          videoLog.error(`☁️ [Cloudinary Upload] Upload failed with status ${xhr.status}:`, errMsg);
+          reject(new Error(`Upload failed: ${errMsg}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        videoLog.error('☁️ [Cloudinary Upload] Network error during upload');
+        reject(new Error('Network error during media upload. Please check your internet connection and try again.'));
+      };
+
+      xhr.ontimeout = () => {
+        const timeoutSec = Math.round(timeoutDurationMs / 1000);
+        videoLog.error(`☁️ [Cloudinary Upload] Timed out after ${timeoutSec}s`);
+        reject(new Error(`Video upload timed out after ${timeoutSec}s. Your connection may be slow for a ${payloadMb} MB file. Please check your network and try again.`));
+      };
+
+      xhr.onabort = () => {
+        videoLog.warn('☁️ [Cloudinary Upload] Upload was aborted');
+        reject(new Error('Upload was aborted'));
+      };
+
+      xhr.send(formData);
+    });
   };
 
   const handleMediaMessage = async (file: File | Blob, type: 'image' | 'video' | 'audio' | 'location') => {
@@ -404,6 +449,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     });
 
     setUploadingMedia(true);
+    setUploadProgress(0);
     setShowFeatures(false);
     try {
       if (type === 'video') {
@@ -420,9 +466,12 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
           reason: analysis.reason
         });
 
-        // 2. Upload video file to Cloudinary
+        // 2. Upload video file to Cloudinary with progress tracking
         videoLog.info('☁️ [PIPELINE STEP 2/3] Uploading video to Cloudinary...');
-        const rawVideoUrl = await uploadToCloudinary(file, 'video', { skipClientOptimization: true });
+        const rawVideoUrl = await uploadToCloudinary(file, 'video', { 
+          skipClientOptimization: true,
+          onProgress: (percent) => setUploadProgress(percent)
+        });
 
         // Apply Cloudinary 480p 30fps optimal delivery transformation to URL (if needed)
         const finalVideoUrl = analysis.transformationString
@@ -456,14 +505,18 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         videoLog.success(`🎉 [PIPELINE COMPLETE] Video sent successfully in ${totalElapsed}s!`);
       } else {
         const uploadType = type === 'audio' ? 'video' : 'image';
-        const url = await uploadToCloudinary(file, uploadType);
+        const url = await uploadToCloudinary(file, uploadType, {
+          onProgress: (percent) => setUploadProgress(percent)
+        });
         await sendSpecialMessage(url, type);
       }
     } catch (e: any) {
       videoLog.error('❌ [PIPELINE FAILED] Error during media sending:', e);
-      alert('Upload failed: ' + (e as Error).message);
+      const msg = (e as Error)?.message || 'Unknown error occurred during media sending';
+      alert(msg.startsWith('Upload failed:') ? msg : `Upload failed: ${msg}`);
     } finally { 
       setUploadingMedia(false); 
+      setUploadProgress(null);
     }
   };
 
@@ -608,7 +661,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     messages, loadingMessages, hasMoreMessages, pullProgress, isPulling, setIsPulling, setPullProgress, fetchMessages,
     newMessage, setNewMessage, handleSendMessage, showFeatures, setShowFeatures,
     isRecording, recordingDuration, startRecording, stopRecording, handleLocationShare,
-    cameraInputRef, fileInputRef, uploadingMedia, pendingMedia, setPendingMedia, handleMediaMessage,
+    cameraInputRef, fileInputRef, uploadingMedia, uploadProgress, pendingMedia, setPendingMedia, handleMediaMessage,
     messagesEndRef, scrollContainerRef, viewingImage, setViewingImage, viewingVideo, setViewingVideo, contextMenu,
     handleLongPress, handleDeleteMessage, saveToDevice, onTouchStart, onTouchMove, onTouchEnd,
     activeDateMsgId, setActiveDateMsgId,
