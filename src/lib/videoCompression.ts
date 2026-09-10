@@ -383,10 +383,6 @@ async function compressVideoViaWebCodecs(
     let isFinished = false;
     let timeoutId: any = null;
 
-    const fallbackFile = originalFile instanceof File 
-      ? originalFile 
-      : new File([originalFile], 'video.mp4', { type: 'video/mp4' });
-
     const cleanup = () => {
       if (timeoutId) clearTimeout(timeoutId);
       try { videoEncoder?.close(); } catch (e) {}
@@ -463,7 +459,7 @@ async function compressVideoViaWebCodecs(
           videoLog.info('🎞️ [WebCodecs] File already compact, optimized, or low bitrate. Skipping re-encode');
           isFinished = true;
           cleanup();
-          return resolve(fallbackFile);
+          return resolve(originalFile instanceof File ? originalFile : new File([originalFile], 'video.mp4', { type: 'video/mp4' }));
         }
 
         // Calculate 480p dimensions preserving aspect ratio (must be even numbers)

@@ -331,10 +331,6 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     if (!options?.skipClientOptimization) {
       if (type === 'image') {
         fileToUpload = await optimizePostOrChatImage(file, 'chat_image.webp');
-      } else if (type === 'video') {
-        // Heavily compress and convert video to 480p on client frontend before uploading
-        videoLog.info('🎞️ [Step] Calling compressVideoTo480p...');
-        fileToUpload = await compressVideoTo480p(file);
       }
     }
 
@@ -421,7 +417,17 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
         // 2. Heavily compress and convert video to 480p on client frontend before uploading
         videoLog.info('🎞️ [PIPELINE STEP 3/4] Compressing and uploading video to Cloudinary...');
-        const videoUrl = await uploadToCloudinary(file, 'video');
+        
+        let fileToUpload = file;
+        try {
+          videoLog.info('🎞️ [Step] Calling compressVideoTo480p...');
+          fileToUpload = await compressVideoTo480p(file);
+        } catch (compressionErr) {
+          videoLog.error('❌ [Compression Failed] Video encoding failed, aborting upload process.', compressionErr);
+          throw new Error('Video compression failed. Upload aborted.');
+        }
+
+        const videoUrl = await uploadToCloudinary(fileToUpload, 'video', { skipClientOptimization: true });
 
         // 3. Store thumbnail url in metadata column
         videoLog.info('💬 [PIPELINE STEP 4/4] Sending message record to chat...', {
