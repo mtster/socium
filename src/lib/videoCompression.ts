@@ -1,36 +1,5 @@
 import encodeWebp from '@jsquash/webp/encode';
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
-import * as MP4Box from 'mp4box';
 import { videoLog } from './videoLogger';
-
-type MP4File = MP4Box.MP4File;
-type MP4Info = MP4Box.MP4Info;
-type MP4Sample = MP4Box.MP4Sample;
-
-/**
- * Extracts the codec description (e.g. avcC box payload) from an MP4 file track for VideoDecoder.
- */
-function getTrackDescription(trackId: number, mp4file: any): Uint8Array | undefined {
-  try {
-    const trak = mp4file.getTrackById(trackId);
-    if (!trak) return undefined;
-    const entries = trak.mdia?.minf?.stbl?.stsd?.entries;
-    if (Array.isArray(entries)) {
-      for (const entry of entries) {
-        const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
-        if (box) {
-          const stream = new MP4Box.DataStream(undefined, 0, false);
-          box.write(stream);
-          // Box header in ISO BMFF is 8 bytes (4 bytes length + 4 bytes box type name)
-          return new Uint8Array(stream.buffer, 8);
-        }
-      }
-    }
-  } catch (e) {
-    videoLog.warn('Failed to extract ISO track description box:', e);
-  }
-  return undefined;
-}
 
 /**
  * Checks if a canvas context is purely blank / black (all alpha 0 or black pixels).
@@ -98,10 +67,10 @@ async function canvasToWebpBlob(
 /**
  * Extracts a representative frame from a video file:
  * - Uses modern HTMLVideoElement with requestVideoFrameCallback (guaranteeing GPU has rendered frame)
- * - Uses createImageBitmap / VideoFrame for direct hardware texture capture
+ * - Uses createImageBitmap for direct hardware texture capture
  * - Resizes so longest edge is 400px
  * - Encodes to high-quality WebP format
- * - Never hangs: guarded by strict safety timeout
+ * - Never hangs: guarded by safety timeout
  */
 export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
   const startTime = performance.now();
@@ -205,7 +174,6 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
         // Check if blank (black or transparent)
         if (isCanvasBlank(ctx, tw, th)) {
           videoLog.warn('📸 [Thumbnail] Canvas is blank, waiting for next frame presentation...');
-          // Give video one more presentation cycle
           if ('requestVideoFrameCallback' in video && typeof (video as any).requestVideoFrameCallback === 'function') {
             (video as any).requestVideoFrameCallback(async () => {
               if (isFinished) return;
@@ -230,13 +198,11 @@ export async function extractVideoThumbnail(file: File | Blob): Promise<Blob> {
     };
 
     const onSeekReady = () => {
-      // Modern API: requestVideoFrameCallback ensures the GPU has rendered the frame surface
       if ('requestVideoFrameCallback' in video && typeof (video as any).requestVideoFrameCallback === 'function') {
         (video as any).requestVideoFrameCallback(() => {
           captureFrame();
         });
       } else {
-        // Fallback: wait a tick for GPU frame buffer to be available
         requestAnimationFrame(() => {
           setTimeout(captureFrame, 80);
         });
@@ -286,471 +252,224 @@ function createEmergencyFallbackThumbnail(): Blob {
 }
 
 /**
- * Checks for best supported AVC/H.264 video codec string for VideoEncoder.
+ * Extracts basic video metadata (width, height, duration) using HTMLVideoElement.
+ * Runs in ~30-50ms with zero heavy processing.
  */
-async function getSupportedEncoderCodec(width: number, height: number, bitrate: number): Promise<string> {
-  const candidates = [
-    'avc1.4d001f', // Main profile 3.1
-    'avc1.42001f', // Baseline profile 3.1
-    'avc1.64001f', // High profile 3.1
-    'avc1.4d0028', // Main profile 4.0
-    'avc1.420028', // Baseline profile 4.0
-    'avc1.42001e', // Baseline 3.0
-  ];
-
-  for (const codec of candidates) {
-    try {
-      const support = await VideoEncoder.isConfigSupported({
-        codec,
-        width,
-        height,
-        bitrate,
-        framerate: 30,
-        bitrateMode: 'variable',
-        latencyMode: 'quality',
-        avc: { format: 'avc' }
-      });
-      if (support.supported && support.config?.codec) {
-        return support.config.codec;
-      }
-    } catch (e) {}
-  }
-  return 'avc1.42001f';
-}
-
-/**
- * Industry-standard WebCodecs + MP4Box + mp4-muxer fast hardware transcoding pipeline.
- * Runs asynchronously in batch at full hardware decoding/encoding speed (100-300+ FPS),
- * with ZERO real-time playback delays, ZERO background-tab throttling, and perfect audio sync.
- * Includes a smart pre-compression threshold analyzer (Messenger style) that avoids re-encoding
- * already-optimal or low-bitrate videos, while compressing larger videos to optimal 480p ~600kbps.
- * Gracefully falls back to the original file if device hardware fails transcoding.
- */
-export async function compressVideoTo480p(
-  file: File | Blob,
-  onProgress?: (percent: number) => void
-): Promise<File> {
-  const startTime = performance.now();
-  const inputSizeMb = (file.size / (1024 * 1024)).toFixed(2);
-  const isMP4OrMov = file.type.includes('mp4') || file.type.includes('quicktime') || (file instanceof File && (file.name.endsWith('.mp4') || file.name.endsWith('.mov')));
-
-  videoLog.info('🎞️ [Compression] Starting video compression analysis', {
-    inputSize: `${inputSizeMb} MB`,
-    mimeType: file.type || 'unknown',
-    fileName: file instanceof File ? file.name : 'blob'
-  });
-
-  // Check WebCodecs availability
-  const hasWebCodecs = typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
-
-  if (!hasWebCodecs || !isMP4OrMov) {
-    videoLog.info('ℹ️ [Compression] WebCodecs not applicable for format or not supported in this browser, using original file');
-    return file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
-  }
-
-  videoLog.info('🚀 [Compression] Running WebCodecs hardware accelerated transcoding pipeline');
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const compressedFile = await compressVideoViaWebCodecs(arrayBuffer, file, onProgress);
-
-    if (compressedFile && compressedFile.size > 1000) {
-      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-      const outputSizeMb = (compressedFile.size / (1024 * 1024)).toFixed(2);
-      const reductionPct = Math.round((1 - compressedFile.size / file.size) * 100);
-      
-      if (compressedFile === file || compressedFile.size === file.size) {
-        videoLog.success(`🎞️ [Compression] Original video preserved (already optimal / low bitrate) in ${elapsed}s`, {
-          size: `${outputSizeMb} MB`,
-          format: compressedFile.type
-        });
-      } else {
-        videoLog.success(`🎞️ [Compression] Completed in ${elapsed}s!`, {
-          originalSize: `${inputSizeMb} MB`,
-          compressedSize: `${outputSizeMb} MB`,
-          reduction: `${reductionPct}% saved`,
-          format: compressedFile.type
-        });
-      }
-      return compressedFile;
-    }
-  } catch (err: any) {
-    videoLog.warn('⚠️ [Compression] Hardware transcoding encountered an issue, gracefully falling back to original video:', err?.message || err);
-  }
-
-  // Graceful fallback: return original video file
-  return file instanceof File ? file : new File([file], 'video.mp4', { type: file.type || 'video/mp4' });
-}
-
-/**
- * WebCodecs Hardware Transcoder Implementation with adaptive safety timeout.
- */
-async function compressVideoViaWebCodecs(
-  arrayBuffer: ArrayBuffer,
-  originalFile: File | Blob,
-  onProgress?: (percent: number) => void
-): Promise<File> {
-  return new Promise((resolve, reject) => {
-    const mp4file: MP4File = MP4Box.createFile();
-    let videoEncoder: VideoEncoder | null = null;
-    let videoDecoder: VideoDecoder | null = null;
-    let isFinished = false;
-    let timeoutId: any = null;
+export function getVideoMetadata(file: File | Blob): Promise<{ width: number; height: number; durationSec: number }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve({ width: 640, height: 480, durationSec: 1 });
+    }, 3000);
 
     const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      try { videoEncoder?.close(); } catch (e) {}
-      try { videoDecoder?.close(); } catch (e) {}
+      clearTimeout(timeout);
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      URL.revokeObjectURL(url);
     };
 
-    const abortWithError = (reason: string, err?: any) => {
-      if (isFinished) return;
-      isFinished = true;
-      videoLog.error(`⚠️ [Compression] Aborting WebCodecs (${reason})`, err || '');
+    video.onloadedmetadata = () => {
+      const width = video.videoWidth || 640;
+      const height = video.videoHeight || 480;
+      const durationSec = video.duration && !isNaN(video.duration) && video.duration > 0 ? video.duration : 1;
       cleanup();
-      reject(new Error(`Compression failed: ${reason}`));
+      resolve({ width, height, durationSec });
     };
 
-    mp4file.onReady = async (info: MP4Info) => {
-      try {
-        const durationSec = info.duration / info.timescale;
-        videoLog.info('🎞️ [WebCodecs] MP4 metadata parsed', {
-          durationSec: durationSec.toFixed(2),
-          tracksCount: info.tracks.length,
-          videoTracks: info.videoTracks.length,
-          audioTracks: info.audioTracks?.length || 0
-        });
-
-        const videoTrack = info.videoTracks[0];
-        if (!videoTrack) {
-          return abortWithError('No video track in MP4');
-        }
-
-        // Adaptive timeout: 25s minimum, or 1.5x duration
-        const safetyTimeoutMs = Math.max(25000, Math.round(durationSec * 1500));
-        timeoutId = setTimeout(() => {
-          abortWithError(`${Math.round(safetyTimeoutMs / 1000)}s safety timeout exceeded`);
-        }, safetyTimeoutMs);
-
-        const origW = videoTrack.track_width || videoTrack.video?.width || 640;
-        const origH = videoTrack.track_height || videoTrack.video?.height || 480;
-        const sourceBitrate = durationSec > 0 ? Math.round((originalFile.size * 8) / durationSec) : 800_000;
-
-        // TARGET SPECIFICATIONS (Messenger / WhatsApp optimal 480p style):
-        // 1. Max resolution: 480p on shorter dimension, 848px max on longer dimension (multiples of 16)
-        // 2. Target Video Bitrate: 600 kbps (total bitrate ceiling ~700 kbps)
-        // 3. Max FPS: 30 fps
-        const TARGET_VIDEO_BITRATE = 600_000;
-        const TARGET_TOTAL_BITRATE_THRESHOLD = 700_000;
-
-        const isShortDimensionOptimal = Math.min(origW, origH) <= 480;
-        const isLongDimensionOptimal = Math.max(origW, origH) <= 848;
-        const isBitrateOptimal = sourceBitrate <= TARGET_TOTAL_BITRATE_THRESHOLD;
-        const isAlreadyLowBitrate = sourceBitrate <= 550_000;
-        const isCompactAndEfficient = originalFile.size <= 2.5 * 1024 * 1024 && sourceBitrate <= 700_000;
-
-        videoLog.info('📊 [Compression Analyzer] Video specs vs. targets:', {
-          resolution: `${origW}x${origH}`,
-          duration: `${durationSec.toFixed(1)}s`,
-          fileSize: `${(originalFile.size / (1024 * 1024)).toFixed(2)} MB`,
-          sourceBitrate: `${Math.round(sourceBitrate / 1000)} kbps`,
-          targetThreshold: `${Math.round(TARGET_TOTAL_BITRATE_THRESHOLD / 1000)} kbps`,
-          isAlreadyLowBitrate,
-          isCompactAndEfficient
-        });
-
-        // SMART DECISION (Messenger style):
-        // If video is already low bitrate (<= 550kbps) OR compact (<= 2.5MB with <=700kbps) OR within 480p/700kbps,
-        // DO NOT re-encode! Preserves 100% quality and prevents low-quality videos from bloating.
-        if (isAlreadyLowBitrate || isCompactAndEfficient || (isShortDimensionOptimal && isLongDimensionOptimal && isBitrateOptimal)) {
-          videoLog.info('✅ [Compression Analyzer] Video already meets or is below 480p/700kbps target threshold. Preserving original file.', {
-            reason: isAlreadyLowBitrate ? 'Source bitrate <= 550 kbps' : isCompactAndEfficient ? 'File size <= 2.5 MB' : 'Resolution <= 480p and bitrate <= 700 kbps'
-          });
-          isFinished = true;
-          cleanup();
-          return resolve(originalFile instanceof File ? originalFile : new File([originalFile], 'video.mp4', { type: 'video/mp4' }));
-        }
-
-        const audioTrack = info.audioTracks?.[0];
-        const isAacAudio = audioTrack && audioTrack.codec && (audioTrack.codec.startsWith('mp4a') || audioTrack.codec.includes('aac'));
-
-        // ==== SYNCHRONOUS EXTRACTION SETUP ====
-        const videoSamplesToProcess: MP4Sample[] = [];
-        const audioSamplesToProcess: MP4Sample[] = [];
-
-        if (isAacAudio && audioTrack) {
-          mp4file.setExtractionOptions(audioTrack.id, null, { nbSamples: 1000 });
-        }
-        mp4file.setExtractionOptions(videoTrack.id, null, { nbSamples: 1000 });
-
-        mp4file.onSamples = (id: number, user: any, samples: MP4Sample[]) => {
-          if (isAacAudio && audioTrack && id === audioTrack.id) {
-            for (let i = 0; i < samples.length; i++) audioSamplesToProcess.push(samples[i]);
-          } else if (id === videoTrack.id) {
-            for (let i = 0; i < samples.length; i++) videoSamplesToProcess.push(samples[i]);
-          }
-        };
-
-        mp4file.start();
-
-        videoLog.info(`🎞️ [WebCodecs] Extracted ${videoSamplesToProcess.length} video samples & ${audioSamplesToProcess.length} audio chunks synchronously`);
-
-        if (videoSamplesToProcess.length === 0) {
-          return abortWithError('No video samples extracted');
-        }
-        // ======================================
-
-        const totalDurationUs = (info.duration * 1_000_000) / info.timescale;
-
-        // Ensure macroblock (16-pixel) alignment for AVC hardware encoders
-        const roundTo16 = (n: number) => Math.max(16, Math.round(n / 16) * 16);
-
-        let targetW: number;
-        let targetH: number;
-        if (origW >= origH) {
-          // Landscape or square: cap short edge at 480, long edge at 848
-          targetH = 480;
-          targetW = roundTo16(origW * (480 / origH));
-          if (targetW > 848) {
-            targetW = 848;
-            targetH = roundTo16(origH * (848 / origW));
-          }
-        } else {
-          // Portrait: cap short edge at 480, long edge at 848
-          targetW = 480;
-          targetH = roundTo16(origH * (480 / origW));
-          if (targetH > 848) {
-            targetH = 848;
-            targetW = roundTo16(origW * (848 / origH));
-          }
-        }
-        targetW = roundTo16(targetW);
-        targetH = roundTo16(targetH);
-        
-        // Target video bitrate: cap at 600 kbps, or 80% of source bitrate if lower, with a 250 kbps floor
-        let targetBitrate = Math.min(TARGET_VIDEO_BITRATE, Math.round(sourceBitrate * 0.8));
-        targetBitrate = Math.max(250_000, targetBitrate);
-
-        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} (16-aligned) @ ${Math.round(targetBitrate/1000)}kbps (target 30fps)`);
-
-        const audioChannels = audioTrack?.audio?.channel_count || 2;
-        const audioSampleRate = audioTrack?.audio?.sample_rate || 44100;
-
-        const target = new ArrayBufferTarget();
-        const muxer = new Muxer({
-          target,
-          video: {
-            codec: 'avc',
-            width: targetW,
-            height: targetH,
-            rotation: 0
-          },
-          audio: isAacAudio ? {
-            codec: 'aac',
-            numberOfChannels: audioChannels,
-            sampleRate: audioSampleRate
-          } : undefined,
-          fastStart: 'in-memory',
-          firstTimestampBehavior: 'offset'
-        });
-
-        if (isAacAudio) {
-          videoLog.info('🎵 [WebCodecs Audio] Preserving bit-exact AAC audio track via fast pass-through', {
-            channels: audioChannels,
-            sampleRate: audioSampleRate
-          });
-        }
-
-        const encoderCodec = await getSupportedEncoderCodec(targetW, targetH, targetBitrate);
-        videoLog.info(`🎞️ [WebCodecs] Selected AVC encoder codec: ${encoderCodec}`);
-
-        videoEncoder = new VideoEncoder({
-          output: (chunk, meta) => {
-            if (isFinished) return;
-            muxer.addVideoChunk(chunk, meta);
-          },
-          error: (e) => {
-            abortWithError('VideoEncoder error', e);
-          }
-        });
-
-        videoEncoder.configure({
-          codec: encoderCodec,
-          width: targetW,
-          height: targetH,
-          bitrate: targetBitrate,
-          bitrateMode: 'variable',
-          framerate: 30,
-          latencyMode: 'quality', // 'quality' allocates proper rate control buffers for file transcoding
-          avc: { format: 'avc' }
-        });
-
-        // Use OffscreenCanvas to scale frames cleanly
-        const offscreen = typeof OffscreenCanvas !== 'undefined'
-          ? new OffscreenCanvas(targetW, targetH)
-          : document.createElement('canvas');
-        offscreen.width = targetW;
-        offscreen.height = targetH;
-        const ctx = offscreen.getContext('2d', { alpha: false, desynchronized: true }) as any;
-
-        let lastEncodedTimestampUs = -1;
-        let lastKeyFrameUs = -1;
-        let inFlightFrames = 0;
-        let encodedFramesCount = 0;
-        let lastLoggedProgress = 0;
-
-        videoDecoder = new VideoDecoder({
-          output: (frame: VideoFrame) => {
-            if (isFinished) {
-              frame.close();
-              inFlightFrames = Math.max(0, inFlightFrames - 1);
-              return;
-            }
-
-            try {
-              const currentTimestampUs = frame.timestamp;
-
-              // Clean 30 FPS decimation for high framerate/VFR video (e.g. 60 FPS iPhone recording):
-              // If the incoming frame is less than 28ms from the previously encoded frame, skip it.
-              // This maintains exact 1.0x real-world playback speed and exact audio sync!
-              if (lastEncodedTimestampUs >= 0 && (currentTimestampUs - lastEncodedTimestampUs) < 28_000) {
-                frame.close();
-                inFlightFrames = Math.max(0, inFlightFrames - 1);
-                return;
-              }
-
-              // Ensure monotonically increasing timestamp for the encoder
-              const safeTimestampUs = Math.max(lastEncodedTimestampUs + 1000, currentTimestampUs);
-
-              ctx.drawImage(frame, 0, 0, targetW, targetH);
-              const scaledFrame = new VideoFrame(offscreen, {
-                timestamp: safeTimestampUs,
-                duration: frame.duration ?? 33_333
-              });
-
-              // Keyframe every 2 seconds for smooth seeking
-              const isKeyFrame = lastKeyFrameUs < 0 || (safeTimestampUs - lastKeyFrameUs) >= 2_000_000;
-              if (isKeyFrame) {
-                lastKeyFrameUs = safeTimestampUs;
-              }
-
-              videoEncoder?.encode(scaledFrame, { keyFrame: isKeyFrame });
-
-              scaledFrame.close();
-              frame.close();
-              inFlightFrames = Math.max(0, inFlightFrames - 1);
-              lastEncodedTimestampUs = safeTimestampUs;
-              encodedFramesCount++;
-
-              if (totalDurationUs > 0) {
-                const pct = Math.min(Math.round((safeTimestampUs / totalDurationUs) * 100), 99);
-                if (pct >= lastLoggedProgress + 20) {
-                  lastLoggedProgress = pct;
-                  videoLog.progress(pct, encodedFramesCount);
-                }
-                if (onProgress) onProgress(pct);
-              }
-            } catch (err) {
-              try { frame.close(); } catch (e) {}
-              inFlightFrames = Math.max(0, inFlightFrames - 1);
-              abortWithError('Frame scaling/encoding error', err);
-            }
-          },
-          error: (e) => {
-            abortWithError('VideoDecoder error', e);
-          }
-        });
-
-        const description = getTrackDescription(videoTrack.id, mp4file);
-
-        try {
-          videoDecoder.configure({
-            codec: videoTrack.codec,
-            description,
-            codedWidth: origW,
-            codedHeight: origH
-          });
-        } catch (e) {
-          videoDecoder.configure({ codec: videoTrack.codec });
-        }
-
-        // Feed extracted audio samples to muxer with exact DTS timestamps
-        if (isAacAudio && audioTrack && audioSamplesToProcess.length > 0) {
-          for (const sample of audioSamplesToProcess) {
-            const timestampUs = Math.round((sample.dts * 1_000_000) / sample.timescale);
-            const durationUs = Math.round((sample.duration * 1_000_000) / sample.timescale);
-            muxer.addAudioChunkRaw(
-              sample.data,
-              sample.is_sync ? 'key' : 'delta',
-              timestampUs,
-              durationUs
-            );
-          }
-          videoLog.info(`🎵 [WebCodecs Audio] Muxed ${audioSamplesToProcess.length} raw audio chunks`);
-        }
-
-        // Process video samples through hardware decoder with strict backpressure to protect GPU memory
-        for (let i = 0; i < videoSamplesToProcess.length; i++) {
-          if (isFinished) return;
-
-          // Strict backpressure on in-flight decoded frames and queue sizes
-          // Keeps maximum 3 frames in GPU memory at any time, preventing GPU mailbox overflow crashes
-          while (
-            inFlightFrames >= 3 ||
-            (videoDecoder && videoDecoder.decodeQueueSize >= 3) ||
-            (videoEncoder && videoEncoder.encodeQueueSize >= 3)
-          ) {
-            if (isFinished) return;
-            await new Promise((r) => setTimeout(r, 2));
-          }
-
-          const sample = videoSamplesToProcess[i];
-          const chunk = new EncodedVideoChunk({
-            type: sample.is_sync ? 'key' : 'delta',
-            timestamp: Math.round((sample.cts * 1_000_000) / sample.timescale),
-            duration: Math.round((sample.duration * 1_000_000) / sample.timescale),
-            data: sample.data
-          });
-
-          inFlightFrames++;
-          videoDecoder.decode(chunk);
-        }
-
-        // Wait for all in-flight frames to finish encoding before flushing
-        while (inFlightFrames > 0) {
-          if (isFinished) return;
-          await new Promise((r) => setTimeout(r, 4));
-        }
-
-        // Flush decoder and encoder
-        await videoDecoder.flush();
-        await videoEncoder.flush();
-        muxer.finalize();
-
-        if (isFinished) return;
-        isFinished = true;
-        cleanup();
-
-        if (onProgress) onProgress(100);
-
-        const compressedBlob = new Blob([target.buffer], { type: 'video/mp4' });
-        if (compressedBlob.size > 1000) {
-          const resultFile = new File([compressedBlob], 'compressed_video.mp4', { type: 'video/mp4' });
-          resolve(resultFile);
-        } else {
-          abortWithError('Generated blob empty');
-        }
-      } catch (pipelineErr) {
-        abortWithError('Pipeline exception', pipelineErr);
-      }
+    video.onerror = () => {
+      cleanup();
+      resolve({ width: 640, height: 480, durationSec: 1 });
     };
 
-    mp4file.onError = (err) => {
-      abortWithError('MP4Box error', err);
-    };
-
-    const fileBuf = arrayBuffer as ArrayBuffer & { fileStart?: number };
-    fileBuf.fileStart = 0;
-    mp4file.appendBuffer(fileBuf);
-    mp4file.flush();
+    video.src = url;
+    video.load();
   });
+}
+
+export interface VideoAnalysisResult {
+  width: number;
+  height: number;
+  durationSec: number;
+  fileSizeBytes: number;
+  sourceBitrateBps: number;
+  needsTransformation: boolean;
+  transformationString: string | null;
+  category: 'already_optimal' | 'high_res_low_bitrate' | 'high_res_high_bitrate' | 'low_res_bloated_bitrate';
+  reason: string;
+}
+
+/**
+ * Intelligent Cloudinary Video Transformation Analyzer.
+ * 
+ * Target: 480p resolution (max 848px long edge), 30 FPS, optimal ~600kbps bitrate.
+ * 
+ * Handles all variable configurations:
+ * 1. Low quality / already optimal videos: PRESERVED WITHOUT TRANSFORMATION (never bloated!).
+ * 2. High resolution but low bitrate videos: Downscales resolution while maintaining or lowering bitrate.
+ * 3. Low resolution but bloated bitrate videos: Re-encodes bitrate without altering native resolution.
+ * 4. High resolution & high bitrate videos (e.g. 1080p 60fps iPhone): Fully compressed to optimal 480p 30fps.
+ */
+export async function analyzeVideoForCloudinary(file: File | Blob): Promise<VideoAnalysisResult> {
+  const metadata = await getVideoMetadata(file);
+  const { width, height, durationSec } = metadata;
+  const fileSizeBytes = file.size;
+  const sourceBitrateBps = durationSec > 0 ? Math.round((fileSizeBytes * 8) / durationSec) : 800_000;
+
+  const minDim = Math.min(width, height);
+  const maxDim = Math.max(width, height);
+
+  // Targets: 480p on short edge (848 max on long edge), 30 FPS, ~600kbps bitrate ceiling
+  const TARGET_SHORT_EDGE = 480;
+  const TARGET_BITRATE_CEILING = 650_000; // 650 kbps
+  const LOW_BITRATE_THRESHOLD = 520_000;  // 520 kbps
+
+  const isResAtOrBelow480p = minDim <= TARGET_SHORT_EDGE && maxDim <= 854;
+  const isBitrateAtOrBelowTarget = sourceBitrateBps <= TARGET_BITRATE_CEILING;
+  const isAlreadyLowBitrate = sourceBitrateBps <= LOW_BITRATE_THRESHOLD;
+  const isSmallFile = fileSizeBytes <= 2.2 * 1024 * 1024; // <= 2.2 MB
+
+  videoLog.info('📊 [Cloudinary Video Analyzer] Inspecting video specs vs targets:', {
+    resolution: `${width}x${height}`,
+    duration: `${durationSec.toFixed(1)}s`,
+    fileSizeMb: (fileSizeBytes / (1024 * 1024)).toFixed(2),
+    sourceBitrateKbps: Math.round(sourceBitrateBps / 1000),
+    isResAtOrBelow480p,
+    isBitrateAtOrBelowTarget,
+    isAlreadyLowBitrate,
+    isSmallFile
+  });
+
+  // CASE 1: Video is already lower than or equal to threshold
+  // e.g. 360x640 @ 400kbps (1.2MB), or 480p @ 500kbps, or compact file <= 2.2MB with moderate bitrate
+  if ((isResAtOrBelow480p && isBitrateAtOrBelowTarget) || (isSmallFile && isBitrateAtOrBelowTarget)) {
+    videoLog.info('✅ [Cloudinary Video Analyzer] Video is already at or below target threshold. Preserving original file directly.', {
+      reason: isSmallFile ? 'File is <= 2.2 MB with moderate bitrate' : 'Resolution is <= 480p and bitrate <= 650 kbps'
+    });
+    return {
+      width,
+      height,
+      durationSec,
+      fileSizeBytes,
+      sourceBitrateBps,
+      needsTransformation: false,
+      transformationString: null,
+      category: 'already_optimal',
+      reason: 'Resolution and bitrate are already optimal (<= 480p and <= 650kbps). Preserving original.'
+    };
+  }
+
+  // CASE 2: High resolution (e.g. 720p or 1080p), but ALREADY low bitrate (e.g. 350-500 kbps)
+  // Example: 720p video at 1.2MB for 25s (bitrate ~400kbps)
+  // If we re-encoded with br_600k, it would BLOAT the video!
+  if (!isResAtOrBelow480p && isAlreadyLowBitrate) {
+    // If file is already compact (<= 2.5MB), preserve it completely to avoid any bloat
+    if (fileSizeBytes <= 2.5 * 1024 * 1024) {
+      videoLog.info('✅ [Cloudinary Video Analyzer] High-res but low-bitrate compact video (<= 2.5MB). Preserving original to prevent bloat.', {
+        resolution: `${width}x${height}`,
+        bitrateKbps: Math.round(sourceBitrateBps / 1000)
+      });
+      return {
+        width,
+        height,
+        durationSec,
+        fileSizeBytes,
+        sourceBitrateBps,
+        needsTransformation: false,
+        transformationString: null,
+        category: 'already_optimal',
+        reason: 'Video is already compact (<= 2.5MB) with low bitrate. Preserving original to avoid bloat.'
+      };
+    }
+
+    // For larger high-res low-bitrate videos, downscale resolution and enforce strict low bitrate
+    const cappedBitrateKbps = Math.min(Math.round(sourceBitrateBps / 1000), 450);
+    const transformationString = `c_limit,w_848,h_848,fps_30,br_${cappedBitrateKbps}k,vc_h264,ac_aac,q_auto:eco`;
+    videoLog.info('🎞️ [Cloudinary Video Analyzer] High-res low-bitrate video: downsizing resolution while keeping bitrate low', {
+      resolution: `${width}x${height} -> 480p max`,
+      cappedBitrate: `${cappedBitrateKbps} kbps`,
+      transformationString
+    });
+    return {
+      width,
+      height,
+      durationSec,
+      fileSizeBytes,
+      sourceBitrateBps,
+      needsTransformation: true,
+      transformationString,
+      category: 'high_res_low_bitrate',
+      reason: `Downscaled to 480p with constrained bitrate (${cappedBitrateKbps}kbps) to avoid bloating`
+    };
+  }
+
+  // CASE 3: Low resolution (<= 480p), but BLOATED bitrate (> 650 kbps)
+  // e.g. 360p or 480p recorded at 3 Mbps (15MB)
+  // Keep native resolution (c_limit does not upscale), cap fps, compress bitrate to 450kbps
+  if (isResAtOrBelow480p && !isBitrateAtOrBelowTarget) {
+    const transformationString = 'c_limit,w_848,h_848,fps_30,br_450k,vc_h264,ac_aac,q_auto:good';
+    videoLog.info('🎞️ [Cloudinary Video Analyzer] Low-res bloated video: compressing bitrate while preserving resolution', {
+      resolution: `${width}x${height}`,
+      sourceBitrateKbps: Math.round(sourceBitrateBps / 1000),
+      transformationString
+    });
+    return {
+      width,
+      height,
+      durationSec,
+      fileSizeBytes,
+      sourceBitrateBps,
+      needsTransformation: true,
+      transformationString,
+      category: 'low_res_bloated_bitrate',
+      reason: 'Compressed bitrate to 450kbps while preserving native <= 480p resolution'
+    };
+  }
+
+  // CASE 4: Standard / High Quality (High Resolution AND High Bitrate)
+  // e.g. 720p/1080p/4K @ 1.5 - 20 Mbps, 60fps (iPhone recordings, DSLR, high quality downloads)
+  // Full 480p 30fps compression: scale down to 480p (848 max edge), cap at 30fps, 600kbps, H.264 + AAC
+  const transformationString = 'c_limit,w_848,h_848,fps_30,br_600k,vc_h264,ac_aac,q_auto:good';
+  videoLog.info('🎞️ [Cloudinary Video Analyzer] High quality video: compressing to optimal 480p 30fps @ 600kbps', {
+    resolution: `${width}x${height} -> 480p max`,
+    sourceBitrateKbps: Math.round(sourceBitrateBps / 1000),
+    transformationString
+  });
+  return {
+    width,
+    height,
+    durationSec,
+    fileSizeBytes,
+    sourceBitrateBps,
+    needsTransformation: true,
+    transformationString,
+    category: 'high_res_high_bitrate',
+    reason: 'Compressed to 480p 30fps @ 600kbps universal H.264+AAC format'
+  };
+}
+
+/**
+ * Injects Cloudinary video transformation parameters into a Cloudinary delivery URL.
+ * 
+ * Example:
+ * Input:  https://res.cloudinary.com/cloud/video/upload/v12345/chat_videos/test.mp4
+ * Output: https://res.cloudinary.com/cloud/video/upload/c_limit,w_848,h_848,fps_30,br_600k,vc_h264,ac_aac,q_auto:good/v12345/chat_videos/test.mp4
+ */
+export function applyCloudinaryVideoTransformation(
+  rawUrl: string,
+  transformation: string | null
+): string {
+  if (!transformation || !rawUrl || !rawUrl.includes('/video/upload/')) {
+    return rawUrl;
+  }
+  // Check if transformation is already present in url
+  if (rawUrl.includes(`/video/upload/${transformation}/`)) {
+    return rawUrl;
+  }
+  return rawUrl.replace('/video/upload/', `/video/upload/${transformation}/`);
 }

@@ -4,7 +4,11 @@ import { setChatLocation, checkRecipientPresenceAndNotify, checkGroupPresenceAnd
 import { ChatListItemType } from '@/src/types/chat';
 import { invalidateVaultCache, vaultCache } from './VaultModal';
 import { optimizePostOrChatImage } from '@/src/lib/cropImage';
-import { compressVideoTo480p, extractVideoThumbnail } from '@/src/lib/videoCompression';
+import { 
+  extractVideoThumbnail, 
+  analyzeVideoForCloudinary, 
+  applyCloudinaryVideoTransformation 
+} from '@/src/lib/videoCompression';
 import { videoLog } from '@/src/lib/videoLogger';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
@@ -403,48 +407,50 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     setShowFeatures(false);
     try {
       if (type === 'video') {
-        // 1. Extract thumbnail in memory as WebP blob (DO NOT upload to Cloudinary yet)
-        videoLog.info('📸 [PIPELINE STEP 1/4] Extracting video thumbnail locally in memory...');
-        let thumbBlob: Blob | null = null;
-        try {
-          thumbBlob = await extractVideoThumbnail(file);
-          videoLog.info('📸 [Thumbnail] Extracted locally in memory', {
-            sizeKb: (thumbBlob.size / 1024).toFixed(1),
-            type: thumbBlob.type
-          });
-        } catch (thumbErr) {
-          videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail extraction skipped:', thumbErr);
-        }
+        // 1. Analyze video specifications for Cloudinary optimization (~30ms)
+        videoLog.info('🎞️ [PIPELINE STEP 1/3] Analyzing video specifications for Cloudinary...');
+        const analysis = await analyzeVideoForCloudinary(file);
+        videoLog.info('📊 [Cloudinary Video Strategy]', {
+          category: analysis.category,
+          resolution: `${analysis.width}x${analysis.height}`,
+          duration: `${analysis.durationSec.toFixed(1)}s`,
+          sourceBitrate: `${Math.round(analysis.sourceBitrateBps / 1000)} kbps`,
+          needsTransformation: analysis.needsTransformation,
+          transformation: analysis.transformationString,
+          reason: analysis.reason
+        });
 
-        // 2. Compress or bypass video based on smart thresholds (Messenger style)
-        videoLog.info('🎞️ [PIPELINE STEP 2/4] Analyzing and processing video...');
-        let fileToUpload = file;
-        try {
-          fileToUpload = await compressVideoTo480p(file);
-        } catch (compressionErr) {
-          videoLog.warn('⚠️ [Compression Fallback] Video encoding encountered an issue, proceeding with original file upload:', compressionErr);
-          fileToUpload = file;
-        }
+        // 2. Upload video file to Cloudinary
+        videoLog.info('☁️ [PIPELINE STEP 2/3] Uploading video to Cloudinary...');
+        const rawVideoUrl = await uploadToCloudinary(file, 'video', { skipClientOptimization: true });
 
-        // 3. Upload video file to Cloudinary
-        videoLog.info('☁️ [PIPELINE STEP 3/4] Uploading video to Cloudinary...');
-        const videoUrl = await uploadToCloudinary(fileToUpload, 'video', { skipClientOptimization: true });
+        // Apply Cloudinary 480p 30fps optimal delivery transformation to URL (if needed)
+        const finalVideoUrl = analysis.transformationString
+          ? applyCloudinaryVideoTransformation(rawVideoUrl, analysis.transformationString)
+          : rawVideoUrl;
 
-        // 4. Video upload succeeded! Now upload thumbnail to Cloudinary (prevents orphan thumbnails if video fails)
+        videoLog.success('🎬 [Cloudinary Video Ready]', {
+          rawVideoUrl,
+          finalVideoUrl,
+          mode: analysis.transformationString ? 'Transformed (480p 30fps optimized)' : 'Original Preserved (already optimal)'
+        });
+
+        // 3. Video upload and transformation succeeded!
+        // ONLY NOW create and upload the thumbnail (strictly guarantees no orphan thumbnails if video fails)
         let thumbnailUrl: string | null = null;
-        if (thumbBlob) {
-          try {
-            videoLog.info('📸 [PIPELINE STEP 4/4] Uploading thumbnail to Cloudinary...');
-            const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
-            thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
-          } catch (thumbUploadErr) {
-            videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail upload skipped:', thumbUploadErr);
-          }
+        try {
+          videoLog.info('📸 [PIPELINE STEP 3/3] Creating and uploading thumbnail...');
+          const thumbBlob = await extractVideoThumbnail(file);
+          const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
+          thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
+          videoLog.success('📸 [Thumbnail Uploaded]', { thumbnailUrl });
+        } catch (thumbErr) {
+          videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail creation or upload skipped:', thumbErr);
         }
 
-        // 5. Send message record with both videoUrl and thumbnail_url metadata
+        // 4. Send message record with finalVideoUrl and thumbnail_url metadata
         const metadata = thumbnailUrl ? { thumbnail_url: thumbnailUrl } : null;
-        await sendSpecialMessage(videoUrl, 'video', '', metadata);
+        await sendSpecialMessage(finalVideoUrl, 'video', '', metadata);
 
         const totalElapsed = ((performance.now() - pipelineStart) / 1000).toFixed(2);
         videoLog.success(`🎉 [PIPELINE COMPLETE] Video sent successfully in ${totalElapsed}s!`);
