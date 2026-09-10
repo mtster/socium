@@ -403,37 +403,46 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     setShowFeatures(false);
     try {
       if (type === 'video') {
-        // 1. Take first frame of video, compress to 400px on longest edge, convert to webp
-        videoLog.info('📸 [PIPELINE STEP 1/4] Extracting video thumbnail...');
-        let thumbnailUrl: string | null = null;
+        // 1. Extract thumbnail in memory as WebP blob (DO NOT upload to Cloudinary yet)
+        videoLog.info('📸 [PIPELINE STEP 1/4] Extracting video thumbnail locally in memory...');
+        let thumbBlob: Blob | null = null;
         try {
-          const thumbBlob = await extractVideoThumbnail(file);
-          const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
-          videoLog.info('📸 [PIPELINE STEP 2/4] Uploading thumbnail to Cloudinary...');
-          thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
+          thumbBlob = await extractVideoThumbnail(file);
+          videoLog.info('📸 [Thumbnail] Extracted locally in memory', {
+            sizeKb: (thumbBlob.size / 1024).toFixed(1),
+            type: thumbBlob.type
+          });
         } catch (thumbErr) {
-          videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail extraction/upload skipped:', thumbErr);
+          videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail extraction skipped:', thumbErr);
         }
 
-        // 2. Heavily compress and convert video to 480p on client frontend before uploading
-        videoLog.info('🎞️ [PIPELINE STEP 3/4] Compressing and uploading video to Cloudinary...');
-        
+        // 2. Compress or bypass video based on smart thresholds (Messenger style)
+        videoLog.info('🎞️ [PIPELINE STEP 2/4] Analyzing and processing video...');
         let fileToUpload = file;
         try {
-          videoLog.info('🎞️ [Step] Calling compressVideoTo480p...');
           fileToUpload = await compressVideoTo480p(file);
         } catch (compressionErr) {
           videoLog.error('❌ [Compression Failed] Video encoding failed, aborting upload process.', compressionErr);
           throw new Error('Video compression failed. Upload aborted.');
         }
 
+        // 3. Upload video file to Cloudinary
+        videoLog.info('☁️ [PIPELINE STEP 3/4] Uploading video to Cloudinary...');
         const videoUrl = await uploadToCloudinary(fileToUpload, 'video', { skipClientOptimization: true });
 
-        // 3. Store thumbnail url in metadata column
-        videoLog.info('💬 [PIPELINE STEP 4/4] Sending message record to chat...', {
-          videoUrl,
-          thumbnailUrl
-        });
+        // 4. Video upload succeeded! Now upload thumbnail to Cloudinary (prevents orphan thumbnails if video fails)
+        let thumbnailUrl: string | null = null;
+        if (thumbBlob) {
+          try {
+            videoLog.info('📸 [PIPELINE STEP 4/4] Uploading thumbnail to Cloudinary...');
+            const thumbFile = new File([thumbBlob], 'thumbnail.webp', { type: 'image/webp' });
+            thumbnailUrl = await uploadToCloudinary(thumbFile, 'image', { skipClientOptimization: true, rawUrl: true });
+          } catch (thumbUploadErr) {
+            videoLog.warn('📸 [Thumbnail Pipeline] Thumbnail upload skipped:', thumbUploadErr);
+          }
+        }
+
+        // 5. Send message record with both videoUrl and thumbnail_url metadata
         const metadata = thumbnailUrl ? { thumbnail_url: thumbnailUrl } : null;
         await sendSpecialMessage(videoUrl, 'video', '', metadata);
 

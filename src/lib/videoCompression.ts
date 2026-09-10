@@ -288,12 +288,14 @@ function createEmergencyFallbackThumbnail(): Blob {
 /**
  * Checks for best supported AVC/H.264 video codec string for VideoEncoder.
  */
-async function getSupportedEncoderCodec(width: number, height: number): Promise<string> {
+async function getSupportedEncoderCodec(width: number, height: number, bitrate: number): Promise<string> {
   const candidates = [
-    'avc1.42001f', // Baseline profile 3.1
     'avc1.4d001f', // Main profile 3.1
+    'avc1.42001f', // Baseline profile 3.1
     'avc1.64001f', // High profile 3.1
-    'avc1.42E01E', // Baseline 3.0
+    'avc1.4d0028', // Main profile 4.0
+    'avc1.420028', // Baseline profile 4.0
+    'avc1.42001e', // Baseline 3.0
   ];
 
   for (const codec of candidates) {
@@ -302,10 +304,15 @@ async function getSupportedEncoderCodec(width: number, height: number): Promise<
         codec,
         width,
         height,
-        bitrate: 800_000,
-        framerate: 30
+        bitrate,
+        framerate: 30,
+        bitrateMode: 'variable',
+        latencyMode: 'realtime',
+        avc: { format: 'avc' }
       });
-      if (support.supported) return codec;
+      if (support.supported && support.config?.codec) {
+        return support.config.codec;
+      }
     } catch (e) {}
   }
   return 'avc1.42001f';
@@ -316,7 +323,7 @@ async function getSupportedEncoderCodec(width: number, height: number): Promise<
  * Runs asynchronously in batch at full hardware decoding/encoding speed (100-300+ FPS),
  * with ZERO real-time playback delays, ZERO background-tab throttling, and perfect audio sync.
  * Includes a smart pre-compression threshold analyzer (Messenger style) that avoids re-encoding
- * already-optimal videos, while compressing larger videos to optimal 480p ~600kbps.
+ * already-optimal or low-bitrate videos, while compressing larger videos to optimal 480p ~600kbps.
  */
 export async function compressVideoTo480p(
   file: File | Blob,
@@ -350,7 +357,7 @@ export async function compressVideoTo480p(
     const reductionPct = Math.round((1 - compressedFile.size / file.size) * 100);
     
     if (compressedFile === file || compressedFile.size === file.size) {
-      videoLog.success(`🎞️ [Compression] Original video preserved (already optimal) in ${elapsed}s`, {
+      videoLog.success(`🎞️ [Compression] Original video preserved (already optimal / low bitrate) in ${elapsed}s`, {
         size: `${outputSizeMb} MB`,
         format: compressedFile.type
       });
@@ -369,7 +376,7 @@ export async function compressVideoTo480p(
 }
 
 /**
- * WebCodecs Hardware Transcoder Implementation with strict 10-second timeout.
+ * WebCodecs Hardware Transcoder Implementation with strict 15-second safety timeout.
  */
 async function compressVideoViaWebCodecs(
   arrayBuffer: ArrayBuffer,
@@ -419,38 +426,45 @@ async function compressVideoViaWebCodecs(
 
         const origW = videoTrack.track_width || videoTrack.video?.width || 640;
         const origH = videoTrack.track_height || videoTrack.video?.height || 480;
-        const sourceBitrate = durationSec > 0 ? (originalFile.size * 8) / durationSec : 800_000;
+        const sourceBitrate = durationSec > 0 ? Math.round((originalFile.size * 8) / durationSec) : 800_000;
 
         // TARGET SPECIFICATIONS (Messenger / WhatsApp optimal 480p style):
-        // 1. Max resolution: 480p on shorter dimension, 854px max on longer dimension
-        // 2. Target Video Bitrate: 600 kbps (total bitrate threshold ~700 kbps)
+        // 1. Max resolution: 480p on shorter dimension, 848px max on longer dimension (multiples of 16)
+        // 2. Target Video Bitrate: 600 kbps (total bitrate ceiling ~700 kbps)
         // 3. Max FPS: 30 fps
         const TARGET_VIDEO_BITRATE = 600_000;
         const TARGET_TOTAL_BITRATE_THRESHOLD = 700_000;
 
         const isShortDimensionOptimal = Math.min(origW, origH) <= 480;
-        const isLongDimensionOptimal = Math.max(origW, origH) <= 854;
+        const isLongDimensionOptimal = Math.max(origW, origH) <= 848;
         const isBitrateOptimal = sourceBitrate <= TARGET_TOTAL_BITRATE_THRESHOLD;
+        const isAlreadyLowBitrate = sourceBitrate <= 550_000;
+        const isCompactAndEfficient = originalFile.size <= 2.5 * 1024 * 1024 && sourceBitrate <= 700_000;
 
         videoLog.info('📊 [Compression Analyzer] Video specs vs. targets:', {
           resolution: `${origW}x${origH}`,
           duration: `${durationSec.toFixed(1)}s`,
+          fileSize: `${(originalFile.size / (1024 * 1024)).toFixed(2)} MB`,
           sourceBitrate: `${Math.round(sourceBitrate / 1000)} kbps`,
           targetThreshold: `${Math.round(TARGET_TOTAL_BITRATE_THRESHOLD / 1000)} kbps`,
-          isResolutionWithinTarget: isShortDimensionOptimal && isLongDimensionOptimal,
-          isBitrateWithinTarget: isBitrateOptimal
+          isAlreadyLowBitrate,
+          isCompactAndEfficient
         });
 
-        // SMART DECISION: If video is already <= 480p AND bitrate <= 700kbps, do NOT re-encode (preserves 100% quality and prevents file bloat)
-        if (isShortDimensionOptimal && isLongDimensionOptimal && isBitrateOptimal) {
-          videoLog.info('✅ [Compression Analyzer] Video already meets or is below 480p/700kbps target threshold. Preserving original file.');
+        // SMART DECISION (Messenger style):
+        // If video is already low bitrate (<= 550kbps) OR compact (<= 2.5MB with <=700kbps) OR within 480p/700kbps,
+        // DO NOT re-encode! Preserves 100% quality and prevents low-quality videos from bloating.
+        if (isAlreadyLowBitrate || isCompactAndEfficient || (isShortDimensionOptimal && isLongDimensionOptimal && isBitrateOptimal)) {
+          videoLog.info('✅ [Compression Analyzer] Video already meets or is below 480p/700kbps target threshold. Preserving original file.', {
+            reason: isAlreadyLowBitrate ? 'Source bitrate <= 550 kbps' : isCompactAndEfficient ? 'File size <= 2.5 MB' : 'Resolution <= 480p and bitrate <= 700 kbps'
+          });
           isFinished = true;
           cleanup();
           return resolve(originalFile instanceof File ? originalFile : new File([originalFile], 'video.mp4', { type: 'video/mp4' }));
         }
 
         const audioTrack = info.audioTracks?.[0];
-        const isAacAudio = audioTrack && audioTrack.codec && audioTrack.codec.startsWith('mp4a');
+        const isAacAudio = audioTrack && audioTrack.codec && (audioTrack.codec.startsWith('mp4a') || audioTrack.codec.includes('aac'));
 
         // ==== SYNCHRONOUS EXTRACTION SETUP ====
         // MP4Box requires setExtractionOptions and start() to be called synchronously
@@ -482,28 +496,30 @@ async function compressVideoViaWebCodecs(
 
         const totalDurationUs = (info.duration * 1_000_000) / info.timescale;
 
-        // Calculate 480p dimensions preserving aspect ratio (must be even numbers)
+        // Ensure macroblock (16-pixel) alignment for AVC hardware encoders
+        const roundTo16 = (n: number) => Math.max(16, Math.round(n / 16) * 16);
+
         let targetW: number;
         let targetH: number;
         if (origW >= origH) {
-          // Landscape or square
-          targetH = Math.min(480, origH);
-          targetW = Math.round((origW * (targetH / origH)) / 2) * 2;
-          if (targetW > 854) {
-            targetW = 854;
-            targetH = Math.round((origH * (targetW / origW)) / 2) * 2;
+          // Landscape or square: cap short edge at 480, long edge at 848
+          targetH = 480;
+          targetW = roundTo16(origW * (480 / origH));
+          if (targetW > 848) {
+            targetW = 848;
+            targetH = roundTo16(origH * (848 / origW));
           }
         } else {
-          // Portrait (e.g. mobile recording)
-          targetW = Math.min(480, origW);
-          targetH = Math.round((origH * (targetW / origW)) / 2) * 2;
-          if (targetH > 854) {
-            targetH = 854;
-            targetW = Math.round((origW * (targetH / origW)) / 2) * 2;
+          // Portrait: cap short edge at 480, long edge at 848
+          targetW = 480;
+          targetH = roundTo16(origH * (480 / origW));
+          if (targetH > 848) {
+            targetH = 848;
+            targetW = roundTo16(origW * (848 / origH));
           }
         }
-        targetW = Math.max(2, targetW);
-        targetH = Math.max(2, targetH);
+        targetW = roundTo16(targetW);
+        targetH = roundTo16(targetH);
         
         // Target video bitrate: cap at 600 kbps, or 80% of source bitrate if lower, with a 250 kbps floor
         let targetBitrate = Math.min(TARGET_VIDEO_BITRATE, Math.round(sourceBitrate * 0.8));
@@ -512,7 +528,10 @@ async function compressVideoViaWebCodecs(
         const actualFps = durationSec > 0 ? videoSamplesToProcess.length / durationSec : 30;
         const targetFps = Math.min(30, actualFps > 0 && actualFps < 120 ? actualFps : 30);
 
-        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} @ ${Math.round(targetBitrate/1000)}kbps (${targetFps.toFixed(1)}fps)`);
+        videoLog.info(`🎞️ [WebCodecs] Scaling from ${origW}x${origH} -> ${targetW}x${targetH} (16-aligned) @ ${Math.round(targetBitrate/1000)}kbps (${targetFps.toFixed(1)}fps)`);
+
+        const audioChannels = audioTrack?.audio?.channel_count || 2;
+        const audioSampleRate = audioTrack?.audio?.sample_rate || 44100;
 
         const target = new ArrayBufferTarget();
         const muxer = new Muxer({
@@ -525,8 +544,8 @@ async function compressVideoViaWebCodecs(
           },
           audio: isAacAudio ? {
             codec: 'aac',
-            numberOfChannels: audioTrack.audio?.channel_count || 2,
-            sampleRate: audioTrack.audio?.sample_rate || 44100
+            numberOfChannels: audioChannels,
+            sampleRate: audioSampleRate
           } : undefined,
           fastStart: 'in-memory',
           firstTimestampBehavior: 'offset'
@@ -534,12 +553,12 @@ async function compressVideoViaWebCodecs(
 
         if (isAacAudio) {
           videoLog.info('🎵 [WebCodecs Audio] Preserving bit-exact AAC audio track via fast pass-through', {
-            channels: audioTrack.audio?.channel_count,
-            sampleRate: audioTrack.audio?.sample_rate
+            channels: audioChannels,
+            sampleRate: audioSampleRate
           });
         }
 
-        const encoderCodec = await getSupportedEncoderCodec(targetW, targetH);
+        const encoderCodec = await getSupportedEncoderCodec(targetW, targetH, targetBitrate);
         videoLog.info(`🎞️ [WebCodecs] Selected AVC encoder codec: ${encoderCodec}`);
 
         videoEncoder = new VideoEncoder({
@@ -569,7 +588,7 @@ async function compressVideoViaWebCodecs(
           : document.createElement('canvas');
         offscreen.width = targetW;
         offscreen.height = targetH;
-        const ctx = offscreen.getContext('2d', { alpha: false }) as any;
+        const ctx = offscreen.getContext('2d', { alpha: false, desynchronized: true }) as any;
 
         let frameIndex = 0;
         let lastLoggedProgress = 0;
@@ -600,7 +619,7 @@ async function compressVideoViaWebCodecs(
               frameIndex++;
 
               if (totalDurationUs > 0) {
-                const pct = Math.min(Math.round((frame.timestamp / totalDurationUs) * 100), 99);
+                const pct = Math.min(Math.round((frameIndex / videoSamplesToProcess.length) * 100), 99);
                 if (pct >= lastLoggedProgress + 20) {
                   lastLoggedProgress = pct;
                   videoLog.progress(pct, frameIndex);
@@ -630,36 +649,39 @@ async function compressVideoViaWebCodecs(
           videoDecoder.configure({ codec: videoTrack.codec });
         }
 
-        // Feed extracted audio samples directly to muxer (pass-through lossless AAC)
+        // Feed extracted audio samples to muxer with exact DTS timestamps
         if (isAacAudio && audioTrack && audioSamplesToProcess.length > 0) {
-          let currentAudioTimeUs = 0;
           for (const sample of audioSamplesToProcess) {
-            const durationUs = (sample.duration * 1_000_000) / sample.timescale;
+            const timestampUs = Math.round((sample.dts * 1_000_000) / sample.timescale);
+            const durationUs = Math.round((sample.duration * 1_000_000) / sample.timescale);
             muxer.addAudioChunkRaw(
               sample.data,
               sample.is_sync ? 'key' : 'delta',
-              currentAudioTimeUs,
+              timestampUs,
               durationUs
             );
-            currentAudioTimeUs += durationUs;
           }
           videoLog.info(`🎵 [WebCodecs Audio] Muxed ${audioSamplesToProcess.length} raw audio chunks`);
         }
 
-        // Process all collected video samples through hardware decoder
+        // Process video samples through hardware decoder with strict backpressure to protect GPU memory
         for (let i = 0; i < videoSamplesToProcess.length; i++) {
           if (isFinished) return;
 
-          // Backpressure flow control
-          if (videoEncoder.encodeQueueSize > 30) {
-            await new Promise((r) => setTimeout(r, 10));
+          // Strict backpressure on both decoder and encoder queues
+          while (
+            (videoDecoder && videoDecoder.decodeQueueSize > 6) ||
+            (videoEncoder && videoEncoder.encodeQueueSize > 6)
+          ) {
+            if (isFinished) return;
+            await new Promise((r) => setTimeout(r, 4));
           }
 
           const sample = videoSamplesToProcess[i];
           const chunk = new EncodedVideoChunk({
             type: sample.is_sync ? 'key' : 'delta',
-            timestamp: (sample.cts * 1_000_000) / sample.timescale,
-            duration: (sample.duration * 1_000_000) / sample.timescale,
+            timestamp: Math.round((sample.cts * 1_000_000) / sample.timescale),
+            duration: Math.round((sample.duration * 1_000_000) / sample.timescale),
             data: sample.data
           });
 
