@@ -74,3 +74,88 @@ FOR SELECT USING (
     )
   )
 );
+
+-- 5. Update feed_activity RLS Policy so private posts are never visible to unauthorized users
+DROP POLICY IF EXISTS "Feed activities are viewable by authenticated users" ON public.feed_activity;
+DROP POLICY IF EXISTS "Feed activities are viewable by authorized users" ON public.feed_activity;
+CREATE POLICY "Feed activities are viewable by authorized users" ON public.feed_activity FOR SELECT TO authenticated USING (
+  initiator_id = auth.uid() OR
+  post_id IS NULL OR
+  EXISTS (
+    SELECT 1 FROM public.posts p 
+    WHERE p.id = feed_activity.post_id
+  )
+);
+
+-- 6. Update notify_feed_worker function to pass visibility_mode and audience to Cloudflare Worker
+CREATE OR REPLACE FUNCTION public.notify_feed_worker()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  cf_worker_url TEXT := 'https://socium-feed-notifications.brare-black.workers.dev/';
+  webhook_secret TEXT;
+  payload JSONB;
+  target_user_id UUID;
+  initiator_name TEXT;
+  v_visibility_mode TEXT := 'all_connections';
+  v_audience UUID[] := NULL;
+BEGIN
+  -- Retrieve secret from Supabase Vault
+  SELECT decrypted_secret INTO webhook_secret
+  FROM vault.decrypted_secrets
+  WHERE name = 'WEBHOOK_SECRET_TOKEN'
+  LIMIT 1;
+
+  IF NEW.activity_type = 'connection_request' THEN
+    SELECT receiver_id INTO target_user_id FROM public.connection_requests WHERE id = NEW.connection_request_id;
+  ELSIF NEW.activity_type = 'like' THEN
+    SELECT user_id INTO target_user_id FROM public.posts WHERE id = NEW.post_id;
+  ELSIF NEW.activity_type = 'comment' THEN
+    SELECT user_id INTO target_user_id FROM public.posts WHERE id = NEW.post_id;
+  END IF;
+
+  -- Fetch post visibility rules if linked to a post
+  IF NEW.post_id IS NOT NULL THEN
+    SELECT COALESCE(visibility_mode, 'all_connections'), audience 
+    INTO v_visibility_mode, v_audience
+    FROM public.posts WHERE id = NEW.post_id;
+  END IF;
+
+  -- Don't send if it's the user's own action (e.g. liking own post)
+  IF target_user_id IS NOT NULL AND target_user_id = NEW.initiator_id THEN
+    RETURN NEW;
+  END IF;
+
+  -- Fetch initiator name
+  SELECT COALESCE(full_name, username, 'Someone') INTO initiator_name 
+  FROM public.profiles 
+  WHERE id = NEW.initiator_id;
+
+  payload := jsonb_build_object(
+    'id', NEW.id,
+    'activity_type', NEW.activity_type,
+    'initiator_id', NEW.initiator_id,
+    'initiator_name', initiator_name,
+    'post_id', NEW.post_id,
+    'comment_id', NEW.comment_id,
+    'connection_request_id', NEW.connection_request_id,
+    'created_at', NEW.created_at,
+    'target_user_id', target_user_id,
+    'tagged_user_ids', NEW.tagged_user_ids,
+    'visibility_mode', v_visibility_mode,
+    'audience', v_audience
+  );
+
+  PERFORM net.http_post(
+      url := cf_worker_url,
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || webhook_secret
+      ),
+      body := payload
+  );
+  RETURN NEW;
+END;
+$$;

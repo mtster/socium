@@ -723,6 +723,8 @@ DECLARE
   payload JSONB;
   target_user_id UUID;
   initiator_name TEXT;
+  v_visibility_mode TEXT := 'all_connections';
+  v_audience UUID[] := NULL;
 BEGIN
   -- Retrieve secret from Supabase Vault
   SELECT decrypted_secret INTO webhook_secret
@@ -736,6 +738,13 @@ BEGIN
     SELECT user_id INTO target_user_id FROM public.posts WHERE id = NEW.post_id;
   ELSIF NEW.activity_type = 'comment' THEN
     SELECT user_id INTO target_user_id FROM public.posts WHERE id = NEW.post_id;
+  END IF;
+
+  -- Fetch post visibility rules if linked to a post
+  IF NEW.post_id IS NOT NULL THEN
+    SELECT COALESCE(visibility_mode, 'all_connections'), audience 
+    INTO v_visibility_mode, v_audience
+    FROM public.posts WHERE id = NEW.post_id;
   END IF;
 
   -- Don't send if it's the user's own action (e.g. liking own post)
@@ -758,7 +767,9 @@ BEGIN
     'connection_request_id', NEW.connection_request_id,
     'created_at', NEW.created_at,
     'target_user_id', target_user_id,
-    'tagged_user_ids', NEW.tagged_user_ids
+    'tagged_user_ids', NEW.tagged_user_ids,
+    'visibility_mode', v_visibility_mode,
+    'audience', v_audience
   );
 
   PERFORM net.http_post(

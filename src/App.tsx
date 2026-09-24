@@ -478,15 +478,24 @@ export default function App() {
                          ...prev,
                          posts: prev.posts.map(p => {
                            if (p.id === id) {
-                             return { ...p, has_liked: !isLiked, likes_count: (p.likes_count || 0) + (isLiked ? -1 : 1)};
+                             return { ...p, has_liked: !isLiked, likes_count: Math.max(0, (p.likes_count || 0) + (isLiked ? -1 : 1)) };
                            }
                            return p;
                          })
                        };
                      });
                      try {
-                        if (isLiked) await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
-                        else await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                       if (isLiked) {
+                         await supabase.from('likes').delete().eq('post_id', id).eq('user_id', session.user.id);
+                         await supabase.from('feed_activity').delete().eq('post_id', id).eq('initiator_id', session.user.id).eq('activity_type', 'like');
+                       } else {
+                         await supabase.from('likes').insert({ post_id: id, user_id: session.user.id });
+                         await logFeedActivity({
+                           activityType: 'like',
+                           initiatorId: session.user.id,
+                           postId: id
+                         });
+                       }
                      } catch(e) {}
                    }}
                    onRefetch={() => handleUserClick(viewingProfileData.profile.id)}

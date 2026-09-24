@@ -68,13 +68,22 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     
     const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
     const currentUserId = session?.user?.id;
-    let query = supabase.from('posts').select('*, profiles(*)').eq('user_id', userId);
+    let query = supabase
+      .from('posts')
+      .select('*, profiles(*), likes(user_id), comments(id)')
+      .eq('user_id', userId);
     if (currentUserId !== ADMIN_ID) {
       query = query.lte('created_at', new Date().toISOString());
     }
     const { data: postsData } = await query.order('created_at', { ascending: false });
     
-    let finalPosts = (postsData as any) || [];
+    let finalPosts = (postsData || []).map((p: any) => ({
+      ...p,
+      likes_count: p.likes?.length || 0,
+      has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
+      comments_count: p.comments?.length || 0
+    }));
+
     if (currentUserId && currentUserId !== userId && currentUserId !== ADMIN_ID && userId !== '00000000-0000-0000-0000-000000000001') {
       const { data: conn } = await supabase
         .from('connections')

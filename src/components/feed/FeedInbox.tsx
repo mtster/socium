@@ -178,7 +178,8 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             }
             // Check post visibility: hide if post is not viewable by current user
             if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
-              if (!act.post || !isPostVisibleToUser(act.post, currentUserId, true)) {
+              const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
+              if (!postObj || !isPostVisibleToUser(postObj, currentUserId, true)) {
                 return;
               }
             }
@@ -290,7 +291,8 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             if (act.initiator_id === currentUserId) return;
             // Check post visibility: hide if post is not viewable by current user
             if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
-              if (!act.post || !isPostVisibleToUser(act.post, currentUserId, true)) {
+              const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
+              if (!postObj || !isPostVisibleToUser(postObj, currentUserId, true)) {
                 return;
               }
             }

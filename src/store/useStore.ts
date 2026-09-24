@@ -426,17 +426,25 @@ export const useStore = create<AppState>((set, get) => ({
         });
       }
 
-      // Query latest activities - separate queries to avoid PostgREST parsing errors with long OR clauses
+      // Query latest activities
       const { data: featsFromConnections, error: err1 } = await supabase
         .from('feed_activity')
-        .select('*')
+        .select('*, post:posts(user_id, visibility_mode, audience, visible_to)')
         .in('initiator_id', connectionIds)
         .order('created_at', { ascending: false })
         .limit(15);
         
       let feats: any[] = [];
       if (featsFromConnections) {
-        feats = featsFromConnections;
+        feats = featsFromConnections.filter((act: any) => {
+          if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
+            const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
+            if (!postObj || !isPostVisibleToUser(postObj, userId, true)) {
+              return false;
+            }
+          }
+          return true;
+        });
       }
 
       if (feats.length > 0) {

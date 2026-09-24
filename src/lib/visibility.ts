@@ -16,42 +16,48 @@ export const HUMOR_BOT_ID = '00000000-0000-0000-0000-000000000001';
  * 7. Legacy fallback: if visible_to array exists, only users in visible_to can view.
  */
 export function isPostVisibleToUser(
-  post: {
-    user_id: string;
-    visibility_mode?: PostVisibilityMode | string | null;
-    audience?: string[] | null;
-    visible_to?: string[] | null;
-  },
+  rawPost: any,
   viewerId?: string | null,
   isConnection: boolean = true
 ): boolean {
-  if (!viewerId) return false;
+  if (!rawPost || !viewerId) return false;
+
+  // Handle case where post is returned as an array from a PostgREST join (e.g. act.post = [{...}])
+  const post = Array.isArray(rawPost) ? rawPost[0] : rawPost;
+  if (!post || typeof post !== 'object') return false;
+
+  const postUserId = post.user_id;
+  const normalizedViewerId = String(viewerId).toLowerCase().trim();
+  const normalizedPostUserId = postUserId ? String(postUserId).toLowerCase().trim() : '';
 
   // 1. Author can always see their own post
-  if (viewerId === post.user_id) return true;
+  if (normalizedViewerId === normalizedPostUserId) return true;
 
   // 2. Admin can always see everything
-  if (viewerId === ADMIN_ID) return true;
+  if (normalizedViewerId === ADMIN_ID.toLowerCase()) return true;
 
   // 3. Humor department bot posts bypass all restrictions
-  if (post.user_id === HUMOR_BOT_ID) return true;
+  if (normalizedPostUserId === HUMOR_BOT_ID.toLowerCase()) return true;
 
   const mode = (post.visibility_mode as PostVisibilityMode) || 'all_connections';
-  const audience = Array.isArray(post.audience) ? post.audience : [];
+  const audience = Array.isArray(post.audience) 
+    ? post.audience.map((id: any) => String(id).toLowerCase().trim()) 
+    : [];
 
   if (mode === 'allowed_list') {
-    return audience.includes(viewerId);
+    return audience.includes(normalizedViewerId);
   }
 
   if (mode === 'except_list') {
     if (!isConnection) return false;
-    return !audience.includes(viewerId);
+    return !audience.includes(normalizedViewerId);
   }
 
   // mode === 'all_connections'
   // Backward compatibility with legacy visible_to column if still present in old posts
   if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-    return post.visible_to.includes(viewerId);
+    const legacyVisibleTo = post.visible_to.map((id: any) => String(id).toLowerCase().trim());
+    return legacyVisibleTo.includes(normalizedViewerId);
   }
 
   return isConnection;

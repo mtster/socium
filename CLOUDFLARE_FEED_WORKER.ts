@@ -87,22 +87,32 @@ export default {
 
         // Filter connectionIds and taggedIds according to post visibility rules
         if (post_id) {
-          const postRecords = await fetchSupabase(
-            env,
-            `/rest/v1/posts?id=eq.${post_id}&select=visibility_mode,audience,user_id`
-          );
-          if (Array.isArray(postRecords) && postRecords.length > 0) {
-            const p = postRecords[0];
-            const mode = p.visibility_mode || 'all_connections';
-            const audience = Array.isArray(p.audience) ? p.audience : [];
+          let mode = record.visibility_mode;
+          let audience = record.audience;
 
-            if (mode === 'allowed_list') {
-              connectionIds = connectionIds.filter((uid) => audience.includes(uid));
-              allowedTaggedIds = allowedTaggedIds.filter((uid) => audience.includes(uid));
-            } else if (mode === 'except_list') {
-              connectionIds = connectionIds.filter((uid) => !audience.includes(uid));
-              allowedTaggedIds = allowedTaggedIds.filter((uid) => !audience.includes(uid));
+          if (!mode && !audience) {
+            const postRecords = await fetchSupabase(
+              env,
+              `/rest/v1/posts?id=eq.${post_id}&select=visibility_mode,audience,user_id`
+            );
+            if (Array.isArray(postRecords) && postRecords.length > 0) {
+              const p = postRecords[0];
+              mode = p.visibility_mode || 'all_connections';
+              audience = Array.isArray(p.audience) ? p.audience : [];
             }
+          }
+
+          mode = mode || 'all_connections';
+          const audienceList = Array.isArray(audience)
+            ? audience.map((uid) => String(uid).toLowerCase().trim())
+            : [];
+
+          if (mode === 'allowed_list') {
+            connectionIds = connectionIds.filter((uid) => audienceList.includes(String(uid).toLowerCase().trim()));
+            allowedTaggedIds = allowedTaggedIds.filter((uid) => audienceList.includes(String(uid).toLowerCase().trim()));
+          } else if (mode === 'except_list') {
+            connectionIds = connectionIds.filter((uid) => !audienceList.includes(String(uid).toLowerCase().trim()));
+            allowedTaggedIds = allowedTaggedIds.filter((uid) => !audienceList.includes(String(uid).toLowerCase().trim()));
           }
         }
 
@@ -134,20 +144,30 @@ export default {
           .filter(Boolean);
 
         if (post_id) {
-          const postRecords = await fetchSupabase(
-            env,
-            `/rest/v1/posts?id=eq.${post_id}&select=visibility_mode,audience,user_id`
-          );
-          if (Array.isArray(postRecords) && postRecords.length > 0) {
-            const p = postRecords[0];
-            const mode = p.visibility_mode || 'all_connections';
-            const audience = Array.isArray(p.audience) ? p.audience : [];
+          let mode = record.visibility_mode;
+          let audience = record.audience;
 
-            if (mode === 'allowed_list') {
-              connectionIds = connectionIds.filter((uid) => audience.includes(uid));
-            } else if (mode === 'except_list') {
-              connectionIds = connectionIds.filter((uid) => !audience.includes(uid));
+          if (!mode && !audience) {
+            const postRecords = await fetchSupabase(
+              env,
+              `/rest/v1/posts?id=eq.${post_id}&select=visibility_mode,audience,user_id`
+            );
+            if (Array.isArray(postRecords) && postRecords.length > 0) {
+              const p = postRecords[0];
+              mode = p.visibility_mode || 'all_connections';
+              audience = Array.isArray(p.audience) ? p.audience : [];
             }
+          }
+
+          mode = mode || 'all_connections';
+          const audienceList = Array.isArray(audience)
+            ? audience.map((uid) => String(uid).toLowerCase().trim())
+            : [];
+
+          if (mode === 'allowed_list') {
+            connectionIds = connectionIds.filter((uid) => audienceList.includes(String(uid).toLowerCase().trim()));
+          } else if (mode === 'except_list') {
+            connectionIds = connectionIds.filter((uid) => !audienceList.includes(String(uid).toLowerCase().trim()));
           }
         }
 
