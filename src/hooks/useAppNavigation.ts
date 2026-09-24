@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Profile, Post } from '../types';
 import { useStore } from '../store/useStore';
+import { isPostVisibleToUser } from '../lib/visibility';
 
 export function useAppNavigation(session: any, fetchProfileData: (uid: string) => void, registerPush: (uid: string) => void) {
   const { 
@@ -66,13 +67,27 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     }
     
     const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+    const currentUserId = session?.user?.id;
     let query = supabase.from('posts').select('*, profiles(*)').eq('user_id', userId);
-    if (session?.user?.id !== ADMIN_ID) {
+    if (currentUserId !== ADMIN_ID) {
       query = query.lte('created_at', new Date().toISOString());
     }
     const { data: postsData } = await query.order('created_at', { ascending: false });
     
-    setViewingProfileData({ profile: pData, posts: postsData as any || [] });
+    let finalPosts = (postsData as any) || [];
+    if (currentUserId && currentUserId !== userId && currentUserId !== ADMIN_ID && userId !== '00000000-0000-0000-0000-000000000001') {
+      const { data: conn } = await supabase
+        .from('connections')
+        .select('connection_id')
+        .eq('user_id', userId)
+        .eq('connection_id', currentUserId)
+        .maybeSingle();
+
+      const isConnection = !!conn;
+      finalPosts = finalPosts.filter((post: any) => isPostVisibleToUser(post, currentUserId, isConnection));
+    }
+    
+    setViewingProfileData({ profile: pData, posts: finalPosts });
   };
 
   // Custom events and listeners

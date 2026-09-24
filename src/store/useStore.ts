@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { Profile, Post } from '../types';
 import { ChatListItemType } from '../types/chat';
+import { isPostVisibleToUser } from '../lib/visibility';
 
 interface AppState {
   profile: Profile | null;
@@ -157,13 +158,17 @@ export const useStore = create<AppState>((set, get) => ({
         comments_count: p.comments?.length || 0
       }));
 
-      if (viewerId !== userId && viewerId !== ADMIN_ID) {
-        processed = processed.filter(post => {
-          if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-            return post.visible_to.includes(viewerId);
-          }
-          return true;
-        });
+      if (viewerId !== userId && viewerId !== ADMIN_ID && userId !== '00000000-0000-0000-0000-000000000001') {
+        // Query if viewer is connected to the profile owner
+        const { data: conn } = await supabase
+          .from('connections')
+          .select('connection_id')
+          .eq('user_id', userId)
+          .eq('connection_id', viewerId)
+          .maybeSingle();
+
+        const isConnection = !!conn;
+        processed = processed.filter(post => isPostVisibleToUser(post, viewerId, isConnection));
       }
       set({ userPosts: processed as any });
     }
@@ -225,11 +230,7 @@ export const useStore = create<AppState>((set, get) => ({
         }));
 
         processed = processed.filter((post: any) => {
-          if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
-          if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-            return post.visible_to.includes(currentUserId);
-          }
-          return true;
+          return isPostVisibleToUser(post, currentUserId, true);
         });
 
         set({ 
@@ -304,11 +305,7 @@ export const useStore = create<AppState>((set, get) => ({
         }));
 
         processed = processed.filter((post: any) => {
-          if (currentUserId === ADMIN_ID || post.user_id === currentUserId) return true;
-          if (post.visible_to && Array.isArray(post.visible_to) && post.visible_to.length > 0) {
-            return post.visible_to.includes(currentUserId);
-          }
-          return true;
+          return isPostVisibleToUser(post, currentUserId, true);
         });
 
         // Deduplicate against loaded posts

@@ -112,7 +112,8 @@ Return the final output strictly as a structured JSON object containing a "jokes
         user_id: BOT_ID,
         caption: parsedJokesArray[i].caption,
         image_url: null,
-        visible_to: null,
+        visibility_mode: 'all_connections',
+        audience: null,
         created_at: futureTimestamp.toISOString(),
         updated_at: futureTimestamp.toISOString()
       });

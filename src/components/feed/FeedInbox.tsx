@@ -7,6 +7,7 @@ import { formatDate, renderClickableAndMentionText } from '@/src/lib/utils';
 import PostCard from '@/src/components/PostCard';
 import { rtdb } from '@/src/lib/firebase';
 import { ref, set } from 'firebase/database';
+import { isPostVisibleToUser } from '@/src/lib/visibility';
 
 interface FeedInboxProps {
   currentUserId: string;
@@ -84,12 +85,14 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       const sIds = new Set<string>((seenData || []).map((s: any) => s.activity_id));
       setSeenIds(sIds);
 
-      // 3. Get connections to fetch post creators
-      const { data: conns } = await supabase
-        .from('connections')
-        .select('connection_id')
-        .eq('user_id', currentUserId);
+      // 3. Concurrently fetch connections, my posts, and my connection requests in one batch
+      const [connsRes, myPostsRes, myRequestsRes] = await Promise.all([
+        supabase.from('connections').select('connection_id').eq('user_id', currentUserId),
+        supabase.from('posts').select('id').eq('user_id', currentUserId),
+        supabase.from('connection_requests').select('id').eq('receiver_id', currentUserId)
+      ]);
 
+      const conns = connsRes.data;
       const connectionIds = [
         currentUserId,
         '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', // Admin
@@ -102,19 +105,8 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       }
 
       // 4. Query activities using highly targeted parallel queries to ensure free-tier speed and accuracy:
-      // A. Get my post IDs to filter likes & comments on my posts
-      const { data: myPosts } = await supabase
-        .from('posts')
-        .select('id')
-        .eq('user_id', currentUserId);
-      const myPostIds = (myPosts || []).map(p => p.id);
-
-      // B. Get connection request IDs where I am the receiver
-      const { data: myRequests } = await supabase
-        .from('connection_requests')
-        .select('id')
-        .eq('receiver_id', currentUserId);
-      const myRequestIds = (myRequests || []).map(r => r.id);
+      const myPostIds = (myPostsRes.data || []).map(p => p.id);
+      const myRequestIds = (myRequestsRes.data || []).map(r => r.id);
 
       // Save context IDs for subsequent paginated loads
       contextIdsRef.current = { connectionIds, myPostIds, myRequestIds };
@@ -397,6 +389,13 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
             .maybeSingle();
           
           if (postItem) {
+            const isConn = (contextIdsRef.current.connectionIds || []).includes(postItem.user_id);
+            if (!isPostVisibleToUser(postItem, currentUserId, isConn)) {
+              if (!cached) setActivePost(null);
+              alert('This post is private or no longer available to you.');
+              return;
+            }
+
             setActivePost({
               ...postItem,
               has_liked: postItem.likes?.some((l: any) => l.user_id === currentUserId),

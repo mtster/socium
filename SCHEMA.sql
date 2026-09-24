@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS posts (
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   image_url TEXT, -- Made optional for text-only posts
   caption TEXT,
-  visible_to UUID[], -- Restricted audience
+  visibility_mode TEXT DEFAULT 'all_connections' CHECK (visibility_mode IN ('all_connections', 'allowed_list', 'except_list')),
+  audience UUID[], -- Selected users UUIDs based on visibility_mode
   is_profile_picture_update BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -34,14 +35,25 @@ CREATE TABLE IF NOT EXISTS posts (
 -- Safely alter columns if table already exists
 DO $$ 
 BEGIN 
-  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='visible_to') THEN 
-    ALTER TABLE posts ADD COLUMN visible_to UUID[];
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='visibility_mode') THEN 
+    ALTER TABLE posts ADD COLUMN visibility_mode TEXT DEFAULT 'all_connections' CHECK (visibility_mode IN ('all_connections', 'allowed_list', 'except_list'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='audience') THEN 
+    ALTER TABLE posts ADD COLUMN audience UUID[];
+  END IF;
+  -- Safely migrate legacy visible_to if it existed
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='visible_to') THEN 
+    UPDATE posts SET audience = visible_to, visibility_mode = 'allowed_list' WHERE visible_to IS NOT NULL AND array_length(visible_to, 1) > 0;
+    ALTER TABLE posts DROP COLUMN visible_to CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='is_profile_picture_update') THEN 
     ALTER TABLE posts ADD COLUMN is_profile_picture_update BOOLEAN DEFAULT FALSE;
   END IF;
   ALTER TABLE posts ALTER COLUMN image_url DROP NOT NULL;
 END $$;
+
+CREATE INDEX IF NOT EXISTS idx_posts_visibility_mode ON public.posts (visibility_mode);
+CREATE INDEX IF NOT EXISTS idx_posts_audience_gin ON public.posts USING GIN (audience);
 
 -- Likes table
 CREATE TABLE IF NOT EXISTS likes (
@@ -164,8 +176,28 @@ DROP POLICY IF EXISTS "Posts are viewable by everyone" ON posts;
 DROP POLICY IF EXISTS "Posts are viewable by authorized audience" ON posts;
 CREATE POLICY "Posts are viewable by authorized audience" ON posts FOR SELECT USING (
   auth.uid() = user_id OR 
-  visible_to IS NULL OR 
-  auth.uid() = ANY(visible_to)
+  auth.uid() = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2'::UUID OR
+  user_id = '00000000-0000-0000-0000-000000000001'::UUID OR
+  (
+    visibility_mode = 'allowed_list' AND
+    audience IS NOT NULL AND
+    auth.uid() = ANY(audience)
+  ) OR
+  (
+    visibility_mode = 'except_list' AND
+    (audience IS NULL OR NOT (auth.uid() = ANY(audience))) AND
+    EXISTS (
+      SELECT 1 FROM public.connections c 
+      WHERE c.user_id = posts.user_id AND c.connection_id = auth.uid()
+    )
+  ) OR
+  (
+    (visibility_mode IS NULL OR visibility_mode = 'all_connections') AND
+    EXISTS (
+      SELECT 1 FROM public.connections c 
+      WHERE c.user_id = posts.user_id AND c.connection_id = auth.uid()
+    )
+  )
 );
 
 DROP POLICY IF EXISTS "Users can insert own posts" ON posts;

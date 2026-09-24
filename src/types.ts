@@ -8,18 +8,22 @@ export interface Profile {
   updated_at: string;
 }
 
+export type PostVisibilityMode = 'all_connections' | 'allowed_list' | 'except_list';
+
 export interface Post {
   id: string;
   user_id: string;
   image_url: string | null;
   caption: string | null;
+  visibility_mode?: PostVisibilityMode;
+  audience?: string[] | null;
+  visible_to?: string[] | null;
   is_profile_picture_update?: boolean;
   created_at: string;
   profiles: Profile;
   likes_count?: number;
   has_liked?: boolean;
   comments_count?: number;
-  visible_to?: string[] | null;
 }
 
 export interface Comment {

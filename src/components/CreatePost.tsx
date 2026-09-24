@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Camera, Image as ImageIcon, X, Send } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
-import { motion, AnimatePresence } from 'motion/react';
-import { Profile } from '@/src/types';
+import { motion } from 'motion/react';
+import { PostVisibilityMode } from '@/src/types';
 import { logFeedActivity } from '@/src/lib/feed';
 import MentionEditor from './MentionEditor';
 import { extractMentionedUserIds } from '@/src/lib/utils';
 import { optimizePostOrChatImage } from '@/src/lib/cropImage';
+import PostVisibilityModal from './PostVisibilityModal';
 
 interface CreatePostProps {
   key?: string;
@@ -21,26 +22,9 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
   const [previews, setPreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   
-  const [visibleTo, setVisibleTo] = useState<string[]>([]);
+  const [visibilityMode, setVisibilityMode] = useState<PostVisibilityMode>('all_connections');
+  const [audience, setAudience] = useState<string[]>([]);
   const [showVisibilityModal, setShowVisibilityModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [connections, setConnections] = useState<Profile[]>([]);
-
-  useEffect(() => {
-    fetchConnections();
-  }, [userId]);
-
-  const fetchConnections = async () => {
-    const { data: userConns, error } = await supabase
-      .from('connections')
-      .select('*, profiles!connection_id(*)')
-      .eq('user_id', userId);
-    
-    if (!error && userConns) {
-      const combined = (userConns.map(c => c.profiles) || []).filter(Boolean) as Profile[];
-      setConnections(combined);
-    }
-  };
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
@@ -130,18 +114,21 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
           user_id: userId,
           image_url: imageUrls.join(',') || '',
           caption: caption.trim() || null,
+          visibility_mode: visibilityMode,
+          audience: audience.length > 0 ? audience : null,
         };
-
-        if (visibleTo.length > 0) {
-           payload.visible_to = visibleTo;
-        }
 
         const { data: newPost, error: supabaseError } = await supabase.from('posts').insert(payload).select().maybeSingle();
         let finalPost = newPost;
 
         if (supabaseError) {
-          if (supabaseError.message.includes('column "visible_to"')) {
-            delete payload.visible_to;
+          if (
+            supabaseError.message.includes('column "visibility_mode"') || 
+            supabaseError.message.includes('column "audience"') ||
+            supabaseError.message.includes('column "visible_to"')
+          ) {
+            delete payload.visibility_mode;
+            delete payload.audience;
             const { data: retryPost, error: retryError } = await supabase.from('posts').insert(payload).select().maybeSingle();
             if (retryError) throw new Error(retryError.message);
             finalPost = retryPost;
@@ -251,81 +238,33 @@ export default function CreatePost({ onSuccess, onCancel, userId }: CreatePostPr
         <div className="mb-4 mt-auto pt-4">
            <label className="text-[10px] uppercase tracking-widest font-bold text-white/30 px-1 block mb-2">Visible to</label>
            <button 
+             type="button"
              onClick={() => setShowVisibilityModal(true)}
              className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 flex justify-between items-center active:scale-95 transition-all text-sm font-medium"
            >
-             <span className="text-white/80">{visibleTo.length === 0 ? 'All Connections' : `${visibleTo.length} Selected`}</span>
+             <span className="text-white/80">
+               {visibilityMode === 'all_connections' || audience.length === 0
+                 ? 'All Connections'
+                 : visibilityMode === 'allowed_list'
+                 ? `${audience.length} Allowed`
+                 : `${audience.length} Excluded`}
+             </span>
              <span className="text-[10px] uppercase tracking-widest text-white/30 px-2 py-1 bg-white/5 rounded-full">Change</span>
            </button>
         </div>
       </div>
 
-      <AnimatePresence>
-        {showVisibilityModal && (
-          <motion.div 
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed inset-0 bg-black z-[110] flex flex-col"
-          >
-             <div className="flex items-center justify-between px-4 h-16 border-b border-white/10">
-               <button onClick={() => setShowVisibilityModal(false)} className="text-white/60">
-                 <X size={24} />
-               </button>
-               <h2 className="text-sm font-bold uppercase tracking-widest">Select Audience</h2>
-               <button onClick={() => setShowVisibilityModal(false)} className="text-white font-bold text-sm">
-                 Done
-               </button>
-             </div>
-             
-             <div className="p-4 border-b border-white/10">
-               <input 
-                 type="text" 
-                 placeholder="Search connections..." 
-                 value={searchQuery}
-                 onChange={e => setSearchQuery(e.target.value)}
-                 className="w-full bg-white/10 border border-white/10 text-white placeholder:text-white/40 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 text-sm transition-all"
-               />
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                <button 
-                  onClick={() => setVisibleTo([])}
-                  className="w-full flex items-center justify-between p-3 rounded-xl bg-white/5 active:bg-white/10 transition-colors"
-                >
-                  <span className="font-bold text-white text-sm">All Connections</span>
-                  {visibleTo.length === 0 && <div className="w-3 h-3 rounded-full bg-white" />}
-                </button>
-                {connections.filter(c => (c.full_name || c.username)?.toLowerCase().includes(searchQuery.toLowerCase())).map(c => (
-                  <button 
-                    key={c.id} 
-                    onClick={() => {
-                      if (visibleTo.includes(c.id)) {
-                        setVisibleTo(visibleTo.filter(id => id !== c.id));
-                      } else {
-                        setVisibleTo([...visibleTo, c.id]);
-                      }
-                    }}
-                    className="w-full flex items-center justify-between p-3 rounded-xl bg-white/5 active:bg-white/10 transition-colors"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/10 shrink-0">
-                        {c.avatar_url ? (
-                          <img src={c.avatar_url} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                           <div className="w-full h-full flex items-center justify-center text-[10px] text-white/50">{c.username?.charAt(0).toUpperCase()}</div>
-                        )}
-                      </div>
-                      <span className="font-bold text-white/80 text-sm">{c.full_name || c.username}</span>
-                    </div>
-                    {visibleTo.includes(c.id) && <div className="w-3 h-3 rounded-full bg-white" />}
-                  </button>
-                ))}
-             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <PostVisibilityModal
+        isOpen={showVisibilityModal}
+        onClose={() => setShowVisibilityModal(false)}
+        userId={userId}
+        initialMode={visibilityMode}
+        initialAudience={audience}
+        onSave={(mode, aud) => {
+          setVisibilityMode(mode);
+          setAudience(aud);
+        }}
+      />
     </motion.div>
   );
 }
