@@ -132,7 +132,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       queries.push(
         supabase
           .from('feed_activity')
-          .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+          .select('*, post:posts(*), initiator:profiles!feed_activity_initiator_id_fkey(*)')
           .contains('tagged_user_ids', [currentUserId])
           .order('created_at', { ascending: false })
           .limit(INITIAL_LIMIT)
@@ -156,7 +156,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         queries.push(
           supabase
             .from('feed_activity')
-            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .select('*, post:posts(*), initiator:profiles!feed_activity_initiator_id_fkey(*)')
             .in('activity_type', ['post', 'profile_picture'])
             .in('initiator_id', connectionIds)
             .order('created_at', { ascending: false })
@@ -175,6 +175,12 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
           res.data.forEach((act: any) => {
             if (act.activity_type === 'profile_picture' && !act.post_id) {
               return;
+            }
+            // Check post visibility: hide if post is not viewable by current user
+            if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
+              if (!act.post || !isPostVisibleToUser(act.post, currentUserId, true)) {
+                return;
+              }
             }
             if (!seenActivityIds.has(act.id)) {
               seenActivityIds.add(act.id);
@@ -237,7 +243,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
       queries.push(
         supabase
           .from('feed_activity')
-          .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+          .select('*, post:posts(*), initiator:profiles!feed_activity_initiator_id_fkey(*)')
           .contains('tagged_user_ids', [currentUserId])
           .lt('created_at', cursor)
           .order('created_at', { ascending: false })
@@ -263,7 +269,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
         queries.push(
           supabase
             .from('feed_activity')
-            .select('*, initiator:profiles!feed_activity_initiator_id_fkey(*)')
+            .select('*, post:posts(*), initiator:profiles!feed_activity_initiator_id_fkey(*)')
             .in('activity_type', ['post', 'profile_picture'])
             .in('initiator_id', connectionIds)
             .lt('created_at', cursor)
@@ -282,6 +288,12 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
           res.data.forEach((act: any) => {
             if (act.activity_type === 'profile_picture' && !act.post_id) return;
             if (act.initiator_id === currentUserId) return;
+            // Check post visibility: hide if post is not viewable by current user
+            if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
+              if (!act.post || !isPostVisibleToUser(act.post, currentUserId, true)) {
+                return;
+              }
+            }
             if (!existingIds.has(act.id)) {
               existingIds.add(act.id);
               newlyFetched.push(act);

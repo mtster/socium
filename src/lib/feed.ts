@@ -12,7 +12,11 @@ export interface FeedActivityPayload {
   taggedUserIds?: string[] | null;
 }
 
-export async function syncFeedRtdbOnly(initiatorId: string, taggedUserIds?: string[] | null) {
+export async function syncFeedRtdbOnly(
+  initiatorId: string, 
+  taggedUserIds?: string[] | null,
+  postId?: string | null
+) {
   if (!rtdb) return;
   try {
     const { data: conns } = await supabase
@@ -20,12 +24,36 @@ export async function syncFeedRtdbOnly(initiatorId: string, taggedUserIds?: stri
       .select('user_id, is_activity_muted')
       .eq('connection_id', initiatorId);
 
-    const connectionIds = (conns || [])
+    let connectionIds = (conns || [])
       .filter(c => c.is_activity_muted !== true)
       .map(c => c.user_id)
       .filter(Boolean) as string[];
 
-    const allTargets = Array.from(new Set([...connectionIds, ...(taggedUserIds || [])])).filter(uid => uid && uid !== initiatorId);
+    let validTaggedIds = (taggedUserIds || []).filter(uid => uid && uid !== initiatorId);
+
+    // If post_id is provided, enforce post visibility rules for client RTDB feed updates
+    if (postId) {
+      const { data: postData } = await supabase
+        .from('posts')
+        .select('visibility_mode, audience')
+        .eq('id', postId)
+        .maybeSingle();
+
+      if (postData) {
+        const mode = postData.visibility_mode || 'all_connections';
+        const audience = Array.isArray(postData.audience) ? postData.audience : [];
+
+        if (mode === 'allowed_list') {
+          connectionIds = connectionIds.filter(uid => audience.includes(uid));
+          validTaggedIds = validTaggedIds.filter(uid => audience.includes(uid));
+        } else if (mode === 'except_list') {
+          connectionIds = connectionIds.filter(uid => !audience.includes(uid));
+          validTaggedIds = validTaggedIds.filter(uid => !audience.includes(uid));
+        }
+      }
+    }
+
+    const allTargets = Array.from(new Set([...connectionIds, ...validTaggedIds])).filter(uid => uid && uid !== initiatorId);
 
     if (allTargets.length > 0) {
       await Promise.all(
@@ -89,7 +117,7 @@ export async function logFeedActivity({
     // 2. Client-side Realtime Database 'feed' synchronization
     if (rtdb) {
       if (activityType === 'post' || activityType === 'profile_picture') {
-        await syncFeedRtdbOnly(initiatorId, taggedUserIds);
+        await syncFeedRtdbOnly(initiatorId, taggedUserIds, postId);
       } else {
         // Resolve recipient user ID for targeted reactions
         let recipientId = targetUserId;

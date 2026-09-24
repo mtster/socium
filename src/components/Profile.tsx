@@ -740,7 +740,7 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       <div className="mt-16 text-center px-8 pb-12">
         <p className="text-[10px] text-white/20 font-medium uppercase tracking-[0.2em] leading-relaxed">
           {isOwnProfile ? 'You' : (profile.full_name?.split(' ')[0] || profile.username)} entered Socium on<br/>
-          <span className="text-white/40">{formatDate(profile.updated_at).split(',')[0]}</span>
+          <span className="text-white/40">{formatDate(profile.created_at || profile.updated_at).split(',')[0]}</span>
         </p>
       </div>
 

@@ -78,24 +78,47 @@ export default {
           env, 
           `/rest/v1/connections?connection_id=eq.${initiator_id}&select=user_id,is_activity_muted`
         );
-        const connectionIds = (Array.isArray(connections) ? connections : [])
+        let connectionIds = (Array.isArray(connections) ? connections : [])
           .filter((c) => c && c.is_activity_muted !== true)
           .map((c) => c.user_id)
           .filter(Boolean);
 
-        if (taggedIds.length === 0) {
+        let allowedTaggedIds = taggedIds;
+
+        // Filter connectionIds and taggedIds according to post visibility rules
+        if (post_id) {
+          const postRecords = await fetchSupabase(
+            env,
+            `/rest/v1/posts?id=eq.${post_id}&select=visibility_mode,audience,user_id`
+          );
+          if (Array.isArray(postRecords) && postRecords.length > 0) {
+            const p = postRecords[0];
+            const mode = p.visibility_mode || 'all_connections';
+            const audience = Array.isArray(p.audience) ? p.audience : [];
+
+            if (mode === 'allowed_list') {
+              connectionIds = connectionIds.filter((uid) => audience.includes(uid));
+              allowedTaggedIds = allowedTaggedIds.filter((uid) => audience.includes(uid));
+            } else if (mode === 'except_list') {
+              connectionIds = connectionIds.filter((uid) => !audience.includes(uid));
+              allowedTaggedIds = allowedTaggedIds.filter((uid) => !audience.includes(uid));
+            }
+          }
+        }
+
+        if (allowedTaggedIds.length === 0) {
           // Standard post logic
           for (const uid of connectionIds) {
             recipientGroups.push({ userId: uid, body: `🌏Posted` });
           }
         } else {
-          // Send tagged notifications to tagged users
-          for (const uid of taggedIds) {
+          // Send tagged notifications to allowed tagged users
+          for (const uid of allowedTaggedIds) {
             recipientGroups.push({ userId: uid, body: `@Mentioned you in a post🌏` });
           }
-          // Send regular notifications to untagged connections
+          // Send regular notifications to untagged allowed connections
           for (const uid of connectionIds) {
-            if (!taggedIds.includes(uid)) {
+            if (!allowedTaggedIds.includes(uid)) {
               recipientGroups.push({ userId: uid, body: `🌏Posted` });
             }
           }
@@ -105,10 +128,28 @@ export default {
           env, 
           `/rest/v1/connections?connection_id=eq.${initiator_id}&select=user_id,is_activity_muted`
         );
-        const connectionIds = (Array.isArray(connections) ? connections : [])
+        let connectionIds = (Array.isArray(connections) ? connections : [])
           .filter((c) => c && c.is_activity_muted !== true)
           .map((c) => c.user_id)
           .filter(Boolean);
+
+        if (post_id) {
+          const postRecords = await fetchSupabase(
+            env,
+            `/rest/v1/posts?id=eq.${post_id}&select=visibility_mode,audience,user_id`
+          );
+          if (Array.isArray(postRecords) && postRecords.length > 0) {
+            const p = postRecords[0];
+            const mode = p.visibility_mode || 'all_connections';
+            const audience = Array.isArray(p.audience) ? p.audience : [];
+
+            if (mode === 'allowed_list') {
+              connectionIds = connectionIds.filter((uid) => audience.includes(uid));
+            } else if (mode === 'except_list') {
+              connectionIds = connectionIds.filter((uid) => !audience.includes(uid));
+            }
+          }
+        }
 
         for (const uid of connectionIds) {
           recipientGroups.push({ userId: uid, body: `👤Updated profile picture` });

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   full_name TEXT,
   avatar_url TEXT,
   bio TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -17,7 +18,14 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_hd_url TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS bio TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- Backfill created_at from auth.users for existing profiles
+UPDATE public.profiles p
+SET created_at = u.created_at
+FROM auth.users u
+WHERE p.id = u.id AND (p.created_at IS NULL);
 
 -- Posts table
 CREATE TABLE IF NOT EXISTS posts (
@@ -647,7 +655,15 @@ DROP POLICY IF EXISTS "Users can delete own connections" ON public.connections;
 CREATE POLICY "Users can delete own connections" ON public.connections FOR DELETE USING (auth.uid() = user_id OR auth.uid() = connection_id);
 
 DROP POLICY IF EXISTS "Feed activities are viewable by authenticated users" ON public.feed_activity;
-CREATE POLICY "Feed activities are viewable by authenticated users" ON public.feed_activity FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Feed activities are viewable by authorized users" ON public.feed_activity;
+CREATE POLICY "Feed activities are viewable by authorized users" ON public.feed_activity FOR SELECT TO authenticated USING (
+  initiator_id = auth.uid() OR
+  post_id IS NULL OR
+  EXISTS (
+    SELECT 1 FROM public.posts p 
+    WHERE p.id = feed_activity.post_id
+  )
+);
 
 DROP POLICY IF EXISTS "Anyone can insert feed activities" ON public.feed_activity;
 CREATE POLICY "Anyone can insert feed activities" ON public.feed_activity FOR INSERT WITH CHECK (true);
@@ -989,6 +1005,34 @@ BEGIN
     RETURN v_result;
 END;
 $$;
+
+-- Trigger to automatically create profile on signup with exact auth creation timestamp
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, full_name, avatar_url, email, created_at, updated_at)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
+    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+    NEW.raw_user_meta_data->>'avatar_url',
+    NEW.email,
+    NEW.created_at,
+    NEW.created_at
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    created_at = COALESCE(profiles.created_at, EXCLUDED.created_at);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 
 

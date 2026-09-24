@@ -26,7 +26,11 @@ export function useUserProfile(session: any, registerPush: (uid: string) => void
           full_name: user?.user_metadata?.full_name || username,
           avatar_url: user?.user_metadata?.avatar_url || null,
           email: user?.email || null,
+          created_at: user?.created_at || new Date().toISOString(),
           updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'id',
+          ignoreDuplicates: false
         })
         .select()
         .single();
