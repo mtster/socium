@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { MapPin, Phone, Video, ShieldCheck, Play } from "lucide-react";
-import { cn } from "@/src/lib/utils";
+import { cn, renderClickableAndMentionText } from "@/src/lib/utils";
+import { isPostVisibleToUser, ADMIN_ID, HUMOR_BOT_ID } from "@/src/lib/visibility";
 import { parseLocation, openInNativeMaps } from "./locationUtils";
 import { AudioPlayer } from "./AudioPlayer";
 import { Linkify } from "./Linkify";
@@ -138,6 +139,7 @@ export const MessageBubble = React.memo(
 
     const [sharedPost, setSharedPost] = useState<any>(null);
     const [loadingPost, setLoadingPost] = useState(false);
+    const [postUnavailable, setPostUnavailable] = useState(false);
 
     const videoThumbnailUrl = useMemo(() => {
       if (msg.media_type !== "video" || !msg.media_url) return null;
@@ -155,6 +157,7 @@ export const MessageBubble = React.memo(
     }, [msg.media_type, msg.media_url, msg.metadata]);
 
     useEffect(() => {
+      let isMounted = true;
       if (msg.media_type === "shared_post" && msg.metadata) {
         const meta =
           typeof msg.metadata === "string"
@@ -168,15 +171,59 @@ export const MessageBubble = React.memo(
             .select("*, profiles(*)")
             .eq("id", postId)
             .maybeSingle()
-            .then(({ data }) => {
-              if (data) {
+            .then(async ({ data, error }) => {
+              if (!isMounted) return;
+              if (error || !data) {
+                setSharedPost(null);
+                setPostUnavailable(true);
+                setLoadingPost(false);
+                return;
+              }
+
+              // Double barrier check: verify post visibility on frontend as well
+              let isConn = true;
+              const postAuthorId = data.user_id;
+              const normCurrentUserId = currentUserId ? String(currentUserId).toLowerCase().trim() : '';
+              const normAuthorId = postAuthorId ? String(postAuthorId).toLowerCase().trim() : '';
+
+              if (
+                normCurrentUserId !== normAuthorId &&
+                normCurrentUserId !== ADMIN_ID.toLowerCase() &&
+                normAuthorId !== HUMOR_BOT_ID.toLowerCase()
+              ) {
+                const { data: conn } = await supabase
+                  .from('connections')
+                  .select('user_id')
+                  .eq('user_id', postAuthorId)
+                  .eq('connection_id', currentUserId)
+                  .maybeSingle();
+                isConn = !!conn;
+              }
+
+              if (!isMounted) return;
+
+              if (!isPostVisibleToUser(data, currentUserId, isConn)) {
+                setSharedPost(null);
+                setPostUnavailable(true);
+              } else {
                 setSharedPost(data);
+                setPostUnavailable(false);
               }
               setLoadingPost(false);
+            }, () => {
+              if (!isMounted) return;
+              setSharedPost(null);
+              setPostUnavailable(true);
+              setLoadingPost(false);
             });
+        } else {
+          setPostUnavailable(true);
         }
       }
-    }, [msg.media_type, msg.metadata]);
+      return () => {
+        isMounted = false;
+      };
+    }, [msg.media_type, msg.metadata, currentUserId]);
 
     const isConsecutive =
       nextMsg?.sender_id === msg.sender_id && nextMsg?.media_type !== "system";
@@ -346,9 +393,15 @@ export const MessageBubble = React.memo(
                       <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                     </div>
                   </motion.div>
-                ) : !sharedPost ? (
-                  <div className="p-4 bg-white/5 border border-white/10 rounded-2xl text-xs text-white/30 select-none">
-                    Post unavailable or deleted
+                ) : postUnavailable || !sharedPost ? (
+                  <div 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                    className="w-56 p-4 bg-white/5 border border-white/10 rounded-[20px] text-xs text-white/40 select-none cursor-default"
+                  >
+                    This post is unavailable for you.
                   </div>
                 ) : (
                   <motion.div 
@@ -362,7 +415,11 @@ export const MessageBubble = React.memo(
                         onCloseChat?.();
                         window.dispatchEvent(new CustomEvent('openOwnProfileAndScroll', { detail: { postId: sharedPost.id } }));
                       } else {
-                        window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: sharedPost.user_id, forcePopup: true } }));
+                        if (onOpenProfile) {
+                          onOpenProfile(sharedPost.user_id);
+                        } else {
+                          window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: sharedPost.user_id, forcePopup: true } }));
+                        }
                       }
                     }}
                     className="w-56 cursor-pointer overflow-hidden rounded-[20px] bg-black border border-white/10 active:scale-98 transition-all duration-200"
@@ -400,7 +457,13 @@ export const MessageBubble = React.memo(
                     {sharedPost.caption && (
                       <div className="p-3 border-t border-white/[0.04]">
                         <p className="text-[11px] text-white/70 line-clamp-2 leading-relaxed whitespace-pre-wrap font-sans">
-                          {sharedPost.caption}
+                          {renderClickableAndMentionText(sharedPost.caption, (userId) => {
+                            if (onOpenProfile) {
+                              onOpenProfile(userId);
+                            } else {
+                              window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId, forcePopup: true } }));
+                            }
+                          })}
                         </p>
                       </div>
                     )}

@@ -23,7 +23,7 @@ export function renderClickableAndMentionText(
   if (!text) return '';
 
   // Match URL or Match Mentions: @[Name](mention:UUID)
-  const regex = /(https?:\/\/[^\s]+)|@\[([^\]]+)\]\(mention:([a-f0-9\-]+)\)/g;
+  const regex = /(https?:\/\/[^\s]+)|@\[([^\]]+)\]\((?:mention:)?([a-zA-Z0-9\-_]+)\)/gi;
 
   const parts = [];
   let lastIndex = 0;
@@ -85,11 +85,16 @@ export function renderClickableAndMentionText(
 
 export function extractMentionedUserIds(text: string): string[] {
   if (!text) return [];
-  const regex = /@\[[^\]]+\]\(mention:([a-f0-9\-]+)\)/g;
+  const regex = /@\[[^\]]+\]\((?:mention:)?([a-zA-Z0-9\-_]+)\)/gi;
   const ids: string[] = [];
   let match;
   while ((match = regex.exec(text)) !== null) {
     if (match[1]) ids.push(match[1]);
   }
   return Array.from(new Set(ids));
+}
+
+export function stripMentionSyntax(text: string): string {
+  if (!text) return '';
+  return text.replace(/@\[([^\]]+)\]\((?:mention:)?([a-zA-Z0-9\-_]+)\)/gi, '$1');
 }

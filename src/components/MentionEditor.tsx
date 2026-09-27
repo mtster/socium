@@ -380,7 +380,7 @@ export default function MentionEditor({
   // Helper to deserialize database formatting to contenteditable HTML
   function deserializeText(text: string): string {
     if (!text) return '';
-    const regex = /@\[([^\]]+)\]\(mention:([a-f0-9\-]+)\)/g;
+    const regex = /@\[([^\]]+)\]\((?:mention:)?([a-zA-Z0-9\-_]+)\)/gi;
     return text.replace(regex, (match, name, id) => {
       return `<span class="text-blue-400 font-semibold cursor-pointer mx-0.5 inline align-baseline hover:underline" contenteditable="false" data-id="${id}" data-name="${name}">${name}</span>&nbsp;`;
     });

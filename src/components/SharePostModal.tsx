@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../store/useStore';
 import { checkRecipientPresenceAndNotify } from '../lib/presence';
+import { renderClickableAndMentionText } from '../lib/utils';
 
 interface ShareTarget {
   id: string; // Profile ID for 1-on-1, or Group Chat ID for group
@@ -117,18 +118,18 @@ export default function SharePostModal() {
 
     try {
       const currentUserId = profile!.id;
-      const previewText = sharePost?.caption 
-        ? sharePost.caption.substring(0, 100) 
-        : 'Shared a post';
 
-      // Insert message into the database
+      // Insert message into the database.
+      // Guard: We store 'Shared a post' rather than the post caption in messages.content.
+      // If a recipient does not have permission to view the post, storing caption in
+      // messages.content would leak the private post data both in the DB and push notifications.
       const { data: insertedMsg, error } = await supabase
         .from('messages')
         .insert({
           sender_id: currentUserId,
           receiver_id: target.isGroup ? null : target.id,
           group_chat_id: target.isGroup ? target.id : null,
-          content: previewText,
+          content: 'Shared a post',
           media_type: 'shared_post',
           metadata: {
             shared_post_id: sharePost?.id,
@@ -209,9 +210,9 @@ export default function SharePostModal() {
                 <p className="text-xs font-bold text-white/85 tracking-normal truncate">
                   {sharePost.profiles?.full_name || sharePost.profiles?.username || 'Author'}
                 </p>
-                <p className="text-xs text-white/45 truncate mt-0.5 leading-normal">
-                  {sharePost.caption || 'No caption text'}
-                </p>
+                <div className="text-xs text-white/45 truncate mt-0.5 leading-normal">
+                  {renderClickableAndMentionText(sharePost.caption || 'No caption text')}
+                </div>
               </div>
             </div>
 
