@@ -54,8 +54,8 @@ INSTRUCTIONS:
 
 Return the final output strictly as a structured JSON object containing a "jokes" key holding an array of exactly 7 elements, where each element is an object with a single "caption" key.`;
 
-    // 5. Query Gemini (Targeting your gemini-3.5-flash model endpoint)
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // 5. Query Gemini (Targeting your gemini-3.8-flash model endpoint)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${GEMINI_API_KEY}`;
     const geminiPayload = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
@@ -112,7 +112,8 @@ Return the final output strictly as a structured JSON object containing a "jokes
         user_id: BOT_ID,
         caption: parsedJokesArray[i].caption,
         image_url: null,
-        visible_to: null,
+        visibility_mode: 'all_connections',
+        audience: null,
         created_at: futureTimestamp.toISOString(),
         updated_at: futureTimestamp.toISOString()
       });
@@ -133,7 +134,15 @@ Return the final output strictly as a structured JSON object containing a "jokes
     };
 
     const insertResponse = UrlFetchApp.fetch(supabaseInsertUrl, insertOptions);
-    Logger.log(`Successfully queued ${parsedJokesArray.length} jokes! Supabase Status: ` + insertResponse.getResponseCode());
+    const statusCode = insertResponse.getResponseCode();
+    const responseBody = insertResponse.getContentText();
+
+    if (statusCode >= 200 && statusCode < 300) {
+      Logger.log(`Successfully queued ${parsedJokesArray.length} jokes! Supabase Status: ` + statusCode);
+    } else {
+      Logger.log(`CRITICAL: Supabase insert failed with code ${statusCode}! Error body: ` + responseBody);
+      throw new Error(`Supabase insert failed (${statusCode}): ` + responseBody);
+    }
 
   } catch(e) {
     Logger.log("Execution error: " + e.toString());
