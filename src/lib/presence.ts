@@ -1,4 +1,4 @@
-import { ref, onValue, set, onDisconnect, increment, get, runTransaction } from "firebase/database";
+import { ref, onValue, set, onDisconnect, increment, get, runTransaction, serverTimestamp } from "firebase/database";
 import { rtdb } from "./firebase";
 import { supabase } from "./supabase";
 import { useStore } from "../store/useStore";
@@ -8,6 +8,7 @@ export const initPresence = (userId: string) => {
 
   const globalPresenceRef = ref(rtdb, `global_presence/${userId}`);
   const locationRef = ref(rtdb, `location/${userId}`);
+  const lastSeenRef = ref(rtdb, `last_seen/${userId}`);
   
   // Set presence to true when initialized
   set(globalPresenceRef, true).catch(e => console.error("Global presence set failed", e));
@@ -16,23 +17,25 @@ export const initPresence = (userId: string) => {
   try {
     onDisconnect(globalPresenceRef).set(false);
     onDisconnect(locationRef).set('none');
+    onDisconnect(lastSeenRef).set(serverTimestamp());
   } catch (e) { console.error("onDisconnect failed", e); }
   
   // Handle Instant presence updates on visibility change for iOS / mobile browsers
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
        set(globalPresenceRef, true).catch(console.error);
-       // Re-establish chat location if needed (this would normally be handled by the route or component, but default to 'none' if unsure)
     } else {
-       // Instantly update to offline when app goes to background
+       // Instantly update to offline and log last_seen when app goes to background
        set(globalPresenceRef, false).catch(console.error);
        set(locationRef, 'none').catch(console.error);
+       set(lastSeenRef, serverTimestamp()).catch(console.error);
     }
   };
 
   const handlePageHide = () => {
        set(globalPresenceRef, false).catch(console.error);
        set(locationRef, 'none').catch(console.error);
+       set(lastSeenRef, serverTimestamp()).catch(console.error);
   };
 
   if (typeof document !== 'undefined') {
@@ -103,6 +106,7 @@ export const initPresence = (userId: string) => {
   return () => {
     set(globalPresenceRef, false).catch(console.error);
     set(locationRef, 'none').catch(console.error);
+    set(lastSeenRef, serverTimestamp()).catch(console.error);
     unsubscribeCount();
     unsubscribeInboxes();
     unsubscribeFeed();
@@ -128,8 +132,18 @@ export const setChatLocation = (userId: string, chatId: string | null) => {
 export const markChatAsSeen = (userId: string, chatId: string) => {
   if (!rtdb) return;
   const inboxRef = ref(rtdb, `inboxes/${userId}/${chatId}`);
-  set(inboxRef, true).catch((err) => {
-    console.warn("failed to set inbox to true in markChatAsSeen:", err);
+  const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
+
+  get(inboxRef).then((snapshot) => {
+    const wasUnread = snapshot.exists() && snapshot.val() === false;
+    set(inboxRef, true).catch((err) => {
+      console.warn("failed to set inbox to true in markChatAsSeen:", err);
+    });
+    if (wasUnread) {
+      runTransaction(countRef, (val) => Math.max(0, (val || 0) - 1)).catch(console.warn);
+    }
+  }).catch(() => {
+    set(inboxRef, true).catch(console.warn);
   });
 };
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { rtdb } from '../lib/firebase';
-import { ref, set, onValue } from 'firebase/database';
+import { ref, set, onValue, runTransaction } from 'firebase/database';
 import { useStore } from '../store/useStore';
 import { initPresence } from '../lib/presence';
 import { playVibeSound, playMessageSound } from '../lib/audio';
@@ -42,14 +42,9 @@ export function useRealtimeSync({
     try {
       await set(ref(rtdb, `feed/${userId}`), "");
       
-      // Decrease unseen chat count when clearing feed if we navigated to feed
+      // Decrease unseen chat count atomically when clearing feed if we navigated to feed
       const countRef = ref(rtdb, `unseen_chat_count/${userId}`);
-      onValue(countRef, (snap) => {
-        const val = snap.val();
-        if (typeof val === 'number' && val > 0) {
-           set(countRef, val - 1);
-        }
-      }, { onlyOnce: true });
+      runTransaction(countRef, (val) => Math.max(0, (val || 0) - 1)).catch(console.warn);
     } catch (e) {
       console.warn('Failed to clear active vibe RTDB node:', e);
     }

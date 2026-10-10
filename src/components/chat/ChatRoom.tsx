@@ -7,6 +7,7 @@ import { MessageBubble } from './MessageBubble';
 import { AudioPlayer } from './AudioPlayer';
 import { FullscreenVideoPlayer } from './FullscreenVideoPlayer';
 import { useChatRoom } from './useChatRoom';
+import { usePeerPresence } from './usePeerPresence';
 import { ChatListItemType } from '@/src/types/chat';
 import { videoLog } from '@/src/lib/videoLogger';
 
@@ -21,6 +22,11 @@ interface ChatRoomProps {
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
+  const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
+    activeChat.id,
+    activeChat.isGroup
+  );
+
   const {
     messages,
     loadingMessages,
@@ -105,7 +111,17 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                   activeChat.avatar_url ? <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>
                 )}
               </div>
-              <span className="font-bold text-sm text-white/90 truncate flex-1">{activeChat.name}</span>
+              <div className="flex flex-col min-w-0 flex-1 justify-center">
+                <span className="font-bold text-sm text-white/90 truncate leading-tight">{activeChat.name}</span>
+                {!activeChat.isGroup && peerStatusText && (
+                  <span className={cn(
+                    "text-[11px] truncate leading-tight mt-0.5",
+                    isPeerOnline ? "text-emerald-400 font-medium" : "text-white/40"
+                  )}>
+                    {peerStatusText}
+                  </span>
+                )}
+              </div>
            </div>
 
            {/* Call Controls */}
