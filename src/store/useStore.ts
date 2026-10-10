@@ -410,11 +410,13 @@ export const useStore = create<AppState>((set, get) => ({
 
       const seenIds = new Set((seenData || []).map((s: any) => s.activity_id));
 
-      const { data: conns } = await supabase
-        .from('connections')
-        .select('connection_id')
-        .eq('user_id', userId);
+      const [connsRes, myPostsRes, myRequestsRes] = await Promise.all([
+        supabase.from('connections').select('connection_id').eq('user_id', userId),
+        supabase.from('posts').select('id').eq('user_id', userId),
+        supabase.from('connection_requests').select('id').eq('receiver_id', userId)
+      ]);
 
+      const conns = connsRes.data;
       const connectionIds = [
         userId,
         '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', // Admin
@@ -426,36 +428,93 @@ export const useStore = create<AppState>((set, get) => ({
         });
       }
 
-      // Query latest activities
-      const { data: featsFromConnections, error: err1 } = await supabase
-        .from('feed_activity')
-        .select('*, post:posts(user_id, visibility_mode, audience, visible_to)')
-        .in('initiator_id', connectionIds)
-        .order('created_at', { ascending: false })
-        .limit(15);
-        
-      let feats: any[] = [];
-      if (featsFromConnections) {
-        feats = featsFromConnections.filter((act: any) => {
-          if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
-            const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
-            if (!postObj || !isPostVisibleToUser(postObj, userId, true)) {
-              return false;
-            }
-          }
-          return true;
-        });
+      const myPostIds = (myPostsRes.data || []).map(p => p.id);
+      const myRequestIds = (myRequestsRes.data || []).map(r => r.id);
+
+      const queries = [];
+
+      // 1. Likes/comments on my posts
+      if (myPostIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('id, activity_type, initiator_id, created_at, post_id')
+            .in('activity_type', ['like', 'comment'])
+            .in('post_id', myPostIds)
+            .order('created_at', { ascending: false })
+            .limit(15)
+        );
       }
 
-      if (feats.length > 0) {
-        const unseen = feats.filter((act: any) => {
-          if (act.initiator_id === userId) return false;
-          const isOlderThanBase = act.created_at <= baseTimestamp;
-          const isSeen = seenIds.has(act.id);
-          return !isOlderThanBase && !isSeen;
-        });
-        set({ feedUnseenCount: unseen.length });
+      // 2. Tagged/mentioned activities for user
+      queries.push(
+        supabase
+          .from('feed_activity')
+          .select('id, activity_type, initiator_id, created_at, post_id, tagged_user_ids, post:posts(user_id, visibility_mode, audience)')
+          .contains('tagged_user_ids', [userId])
+          .order('created_at', { ascending: false })
+          .limit(15)
+      );
+
+      // 3. Connection requests meant for user
+      if (myRequestIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('id, activity_type, initiator_id, created_at, connection_request_id')
+            .eq('activity_type', 'connection_request')
+            .in('connection_request_id', myRequestIds)
+            .order('created_at', { ascending: false })
+            .limit(15)
+        );
       }
+
+      // 4. Posts created by connections (without legacy visible_to column)
+      if (connectionIds.length > 0) {
+        queries.push(
+          supabase
+            .from('feed_activity')
+            .select('id, activity_type, initiator_id, created_at, post_id, post:posts(user_id, visibility_mode, audience)')
+            .in('activity_type', ['post', 'profile_picture'])
+            .in('initiator_id', connectionIds)
+            .order('created_at', { ascending: false })
+            .limit(15)
+        );
+      }
+
+      const results = await Promise.all(queries);
+
+      const allActivities: any[] = [];
+      const seenActivityIds = new Set<string>();
+
+      results.forEach(res => {
+        if (res.data) {
+          res.data.forEach((act: any) => {
+            if (act.activity_type === 'profile_picture' && !act.post_id) {
+              return;
+            }
+            if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
+              const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
+              if (!postObj || !isPostVisibleToUser(postObj, userId, true)) {
+                return;
+              }
+            }
+            if (!seenActivityIds.has(act.id)) {
+              seenActivityIds.add(act.id);
+              allActivities.push(act);
+            }
+          });
+        }
+      });
+
+      const unseen = allActivities.filter((act: any) => {
+        if (act.initiator_id === userId) return false;
+        const isOlderThanBase = act.created_at <= baseTimestamp;
+        const isSeen = seenIds.has(act.id);
+        return !isOlderThanBase && !isSeen;
+      });
+
+      set({ feedUnseenCount: unseen.length });
     } catch (err) {
       console.warn("Error fetching feed unseen count:", err);
     }

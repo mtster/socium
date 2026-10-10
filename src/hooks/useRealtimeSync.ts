@@ -213,6 +213,7 @@ export function useRealtimeSync({
           const req: any = payload.new || payload.old;
           if (req && (req.requester_id === userId || req.receiver_id === userId)) {
             getPending();
+            fetchFeedUnseenCount(userId);
             window.dispatchEvent(new CustomEvent('connectionsChanged'));
           }
         })
@@ -221,8 +222,15 @@ export function useRealtimeSync({
           if (conn && (conn.user_id === userId || conn.connection_id === userId)) {
             window.dispatchEvent(new CustomEvent('connectionsChanged'));
             getUnread();
+            fetchFeedUnseenCount(userId);
             window.dispatchEvent(new CustomEvent('refreshChatList'));
           }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_activity' }, () => {
+          fetchFeedUnseenCount(userId);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'seen_activities' }, () => {
+          fetchFeedUnseenCount(userId);
         })
         .subscribe();
         

@@ -163,6 +163,7 @@ export const checkRecipientPresenceAndNotify = async (
   const isAlreadyInFlight = inFlightMails.has(mailKey);
   inFlightMails.add(mailKey);
   
+  let pushInvoked = false;
   try {
     const inboxRef = ref(rtdb, `inboxes/${receiverId}/${chatId}`);
     
@@ -214,6 +215,7 @@ export const checkRecipientPresenceAndNotify = async (
       }
       
       // Since the receiver is offline, trigger push notification
+      pushInvoked = true;
       supabase.functions.invoke('send-push', {
         body: {
            ...messageData,
@@ -225,10 +227,12 @@ export const checkRecipientPresenceAndNotify = async (
 
   } catch (dbError) {
     console.error("RTDB error for user", receiverId, dbError);
-    // Fallback: assume offline and just send push
-    supabase.functions.invoke('send-push', {
-       body: { ...messageData, chatUrl: 'https://sociumx.vercel.app' }
-    }).catch(console.error);
+    // Fallback: assume offline and just send push if not already invoked
+    if (!pushInvoked) {
+      supabase.functions.invoke('send-push', {
+         body: { ...messageData, chatUrl: 'https://sociumx.vercel.app' }
+      }).catch(console.error);
+    }
   } finally {
     setTimeout(() => {
       inFlightMails.delete(mailKey);

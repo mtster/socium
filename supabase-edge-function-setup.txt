@@ -161,6 +161,8 @@ serve(async (req) => {
       }
     }
 
+    const collapseTag = message.id ? String(message.id) : `msg-${message.sender_id}`;
+
     const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
       const fcmToken = sub.endpoint;
 
@@ -171,11 +173,26 @@ serve(async (req) => {
           body: bodyText
         },
         webpush: {
+          headers: {
+            Urgency: 'high'
+          },
+          notification: {
+            tag: collapseTag,
+            renotify: true
+          },
           fcm_options: {
             link: `/?chat_with=${message.sender_id}`
           }
         },
+        android: {
+          priority: 'high',
+          collapseKey: collapseTag
+        },
         apns: {
+          headers: {
+            'apns-collapse-id': collapseTag,
+            'apns-priority': '10'
+          },
           payload: {
             aps: {
               badge: badgeCount,
