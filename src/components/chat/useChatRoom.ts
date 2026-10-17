@@ -546,7 +546,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         const totalElapsed = ((performance.now() - pipelineStart) / 1000).toFixed(2);
         videoLog.success(`🎉 [PIPELINE COMPLETE] Video sent successfully in ${totalElapsed}s!`);
       } else {
-        const uploadType = type === 'audio' ? 'video' : 'image';
+        const uploadType = type;
         setUploadProgress(10);
         setUploadStatusText(`Uploading ${type}...`);
         const url = await uploadToCloudinary(file, uploadType, {
