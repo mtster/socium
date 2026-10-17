@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Trash2, Play, Pause, Mic, Image, Shield, ShieldX, ShieldCheck, ShieldPlus } from 'lucide-react';
+import { ArrowLeft, Trash2, Play, Pause, Mic, Image, Video, Shield, ShieldX, ShieldCheck, ShieldPlus } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { cn } from '@/src/lib/utils';
 import { ProfileImageViewer } from '../profile/ProfileImageViewer';
@@ -41,6 +41,59 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
 
   // Zoomable full screen view for tapped image insidequote modal
   const [viewingFullscreenImage, setViewingFullscreenImage] = useState<string | null>(null);
+
+  // Video playing state inside Quote view
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const vaultVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  const stopVideo = () => {
+    if (vaultVideoRef.current) {
+      try {
+        vaultVideoRef.current.pause();
+        vaultVideoRef.current.currentTime = 0;
+      } catch (e) {}
+    }
+    setIsVideoPlaying(false);
+  };
+
+  const togglePlayVideo = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const v = vaultVideoRef.current;
+    if (!v) return;
+
+    if (isVideoPlaying) {
+      v.pause();
+      setIsVideoPlaying(false);
+    } else {
+      v.play()
+        .then(() => setIsVideoPlaying(true))
+        .catch((err) => {
+          console.error("Video play error in vault:", err);
+          setIsVideoPlaying(false);
+        });
+    }
+  };
+
+  const handleCloseQuote = () => {
+    stopAudio();
+    stopVideo();
+    setSelectedQuote(null);
+  };
+
+  const getVideoPoster = (msg: any) => {
+    if (!msg) return undefined;
+    if (msg.metadata) {
+      try {
+        const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+        if (parsed?.thumbnail_url) return parsed.thumbnail_url;
+        if (parsed?.thumbnail) return parsed.thumbnail;
+      } catch (e) {}
+    }
+    if (msg.media_url && typeof msg.media_url === 'string' && msg.media_url.includes('res.cloudinary.com')) {
+      return msg.media_url.replace(/\.[^/.]+$/, ".jpg");
+    }
+    return undefined;
+  };
 
   // Audio playing state inside Quote view using Web Audio API to prevent triggering iOS native Lock screen / Dynamic Island
   const [isPlaying, setIsPlaying] = useState(false);
@@ -131,6 +184,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
           content,
           media_url,
           media_type,
+          metadata,
           created_at,
           sender_id,
           receiver_id,
@@ -173,6 +227,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
               content: msg.content,
               media_url: msg.media_url,
               media_type: msg.media_type,
+              metadata: msg.metadata,
               created_at: msg.created_at,
               sender_id: msg.sender_id,
               receiver_id: msg.receiver_id,
@@ -415,8 +470,25 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
         } catch (e) {}
       }
       clearInterval(audioProgressIntervalRef.current);
+      if (vaultVideoRef.current) {
+        try {
+          vaultVideoRef.current.pause();
+        } catch (e) {}
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      stopAudio();
+      stopVideo();
+      setSelectedQuote(null);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    setIsVideoPlaying(false);
+  }, [selectedQuote]);
 
   return (
     <>
@@ -468,7 +540,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
                   </div>
                   <h3 className="text-lg font-bold text-white/90 mb-2">Vault is completely empty</h3>
                   <p className="text-xs text-white/40 max-w-xs leading-relaxed">
-                    Long press any text, image, or audio message inside the chat room and tap <b>Add to Vault</b> to save your most memorable moments here.
+                    Long press any text, image, video, or audio message inside the chat room and tap <b>Add to Vault</b> to save your most memorable moments here.
                   </p>
                 </div>
               ) : (
@@ -541,6 +613,11 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
                               <Image size={13} className="text-white/40" />
                               <span className="text-xs text-white/40 font-medium italic">Image</span>
                             </div>
+                          ) : message.media_type === 'video' ? (
+                            <div className="flex items-center gap-2 mt-0.5 select-none">
+                              <Video size={13} className="text-white/40" />
+                              <span className="text-xs text-white/40 font-medium italic">Video</span>
+                            </div>
                           ) : message.media_type === 'audio' ? (
                             <div className="flex items-center gap-2 mt-0.5 select-none">
                               <Mic size={13} className="text-white/40" />
@@ -610,10 +687,7 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            onClick={() => {
-              stopAudio();
-              setSelectedQuote(null);
-            }}
+            onClick={handleCloseQuote}
             className="fixed inset-0 z-[300] bg-black flex flex-col justify-between items-center py-20 px-8 touch-none cursor-pointer"
           >
             {/* Absolute Centered Content Wrapper */}
@@ -655,6 +729,42 @@ export function VaultModal({ isOpen, onClose, activeChat, currentUserId }: Vault
                         className="max-h-[40vh] w-auto h-auto object-contain rounded-3xl" 
                         alt="Vault visual item"
                       />
+                    </div>
+                  ) : selectedQuote.item.messages.media_type === 'video' ? (
+                    <div 
+                      onClick={togglePlayVideo}
+                      className="rounded-3xl overflow-hidden border border-white/5 max-h-[40vh] w-auto h-auto shadow-2xl relative flex items-center justify-center cursor-pointer select-none bg-black/40 hover:scale-[1.01] active:scale-98 transition-transform"
+                    >
+                      <video 
+                        ref={vaultVideoRef}
+                        src={selectedQuote.item.messages.media_url} 
+                        poster={getVideoPoster(selectedQuote.item.messages)}
+                        playsInline
+                        preload="metadata"
+                        className="max-h-[40vh] w-auto h-auto object-contain rounded-3xl block pointer-events-none" 
+                        onEnded={() => {
+                          setIsVideoPlaying(false);
+                          if (vaultVideoRef.current) {
+                            vaultVideoRef.current.currentTime = 0;
+                          }
+                        }}
+                      />
+
+                      {/* Center Play Button Overlay when paused */}
+                      <AnimatePresence>
+                        {!isVideoPlaying && (
+                          <motion.button
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.8, opacity: 0 }}
+                            transition={{ duration: 0.15 }}
+                            onClick={togglePlayVideo}
+                            className="absolute z-10 w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-90 hover:scale-105 transition-transform"
+                          >
+                            <Play size={28} className="fill-white ml-0.5" />
+                          </motion.button>
+                        )}
+                      </AnimatePresence>
                     </div>
                   ) : selectedQuote.item.messages.media_type === 'audio' ? (
                     /* Audio player sitting directly on page background per request */
