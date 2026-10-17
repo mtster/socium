@@ -499,15 +499,20 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
           }
         });
 
-        // Apply Cloudinary 480p 30fps optimal delivery transformation to URL (if needed)
-        const finalVideoUrl = analysis.transformationString
+        // If a dedicated video upload preset is configured (with incoming transformation),
+        // Cloudinary already permanently compressed and saved the file at ingest time.
+        // We serve rawVideoUrl directly so fetching the video consumes ZERO transformation credits.
+        const isPresetHandlingEncoding = Boolean(import.meta.env.VITE_CLOUDINARY_VIDEO_UPLOAD_PRESET);
+        const finalVideoUrl = (!isPresetHandlingEncoding && analysis.transformationString)
           ? applyCloudinaryVideoTransformation(rawVideoUrl, analysis.transformationString)
           : rawVideoUrl;
 
         videoLog.success('🎬 [Cloudinary Video Ready]', {
           rawVideoUrl,
           finalVideoUrl,
-          mode: analysis.transformationString ? 'Transformed (480p 30fps optimized)' : 'Original Preserved (already optimal)'
+          mode: isPresetHandlingEncoding
+            ? 'Incoming Preset Encoded (0 runtime transformation cost on fetch)'
+            : (analysis.transformationString ? 'URL Transformed (480p 30fps optimized)' : 'Original Preserved')
         });
 
         // 3. Video upload and transformation succeeded!
