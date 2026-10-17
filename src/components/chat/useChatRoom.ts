@@ -501,8 +501,11 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
         // If a dedicated video upload preset is configured (with incoming transformation),
         // Cloudinary already permanently compressed and saved the file at ingest time.
-        // We serve rawVideoUrl directly so fetching the video consumes ZERO transformation credits.
-        const isPresetHandlingEncoding = Boolean(import.meta.env.VITE_CLOUDINARY_VIDEO_UPLOAD_PRESET);
+        // We serve rawVideoUrl directly so fetching the video consumes ZERO transformation credits and generates ZERO derived assets.
+        const isPresetHandlingEncoding = Boolean(
+          import.meta.env.VITE_CLOUDINARY_VIDEO_UPLOAD_PRESET ||
+          import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET === 'chat_video_preset'
+        );
         const finalVideoUrl = (!isPresetHandlingEncoding && analysis.transformationString)
           ? applyCloudinaryVideoTransformation(rawVideoUrl, analysis.transformationString)
           : rawVideoUrl;
