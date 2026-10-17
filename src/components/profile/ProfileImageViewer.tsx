@@ -14,36 +14,31 @@ export function ProfileImageViewer({ viewingImage, setViewingImage }: ProfileIma
   const saveToDevice = async (url: string, filename: string) => {
     try {
       const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
-      const file = new File([blob], `${filename}.jpg`, { type: blob.type });
+      const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg';
+      const file = new File([blob], `${filename}.${ext}`, { type: blob.type || 'image/jpeg' });
       
-      const blobUrl = window.URL.createObjectURL(blob);
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
-          await navigator.share({ files: [file], title: filename });
+          await navigator.share({ files: [file] });
+          return;
         } catch (shareErr: any) {
           if (shareErr.name === 'AbortError' || shareErr.message?.toLowerCase().includes('cancel')) {
-            window.URL.revokeObjectURL(blobUrl);
             return;
           }
-          // Same-origin fallback download
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = `${filename}.jpg`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
         }
-      } else {
-        // Same-origin fallback download
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = `${filename}.jpg`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
       }
-      window.URL.revokeObjectURL(blobUrl);
+
+      // Same-origin fallback download
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${filename}.${ext}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
     } catch (e) {
       console.error("Profile picture download error:", e);
     }

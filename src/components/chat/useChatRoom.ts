@@ -617,16 +617,14 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
 
   const saveToDevice = async (url: string, filename: string, mediaType?: string) => {
     try {
-      let fetchUrl = url;
-      // Strip any transformation segments in Cloudinary URLs to always fetch the raw original asset
-      if (fetchUrl.includes('cloudinary.com') && fetchUrl.includes('/upload/')) {
-        fetchUrl = fetchUrl.replace(/\/upload\/(?:[a-zA-Z0-9_,:-]+\/)+/, '/upload/');
+      // Fetch the actual media asset directly without corrupting folder paths
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Failed to download media: ${res.statusText || res.status}`);
       }
-
-      const res = await fetch(fetchUrl);
       const blob = await res.blob();
       
-      let fileExt = 'webp';
+      let fileExt = 'mp4';
       if (mediaType === 'video' || blob.type.startsWith('video/')) {
         fileExt = blob.type.includes('webm') ? 'webm' : 'mp4';
       } else if (mediaType === 'audio' || blob.type.startsWith('audio/')) {
@@ -635,42 +633,59 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         fileExt = 'png';
       } else if (blob.type === 'image/jpeg' || blob.type === 'image/jpg') {
         fileExt = 'jpg';
-      } else {
+      } else if (blob.type === 'image/webp') {
         fileExt = 'webp';
+      } else {
+        const urlMatch = url.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+        fileExt = urlMatch ? urlMatch[1].toLowerCase() : (mediaType === 'video' ? 'mp4' : 'jpg');
       }
 
-      const mimeType = fileExt === 'webp' ? 'image/webp' : fileExt === 'mp4' ? 'video/mp4' : blob.type || 'application/octet-stream';
+      const mimeType = blob.type && blob.type !== 'application/octet-stream'
+        ? blob.type
+        : (fileExt === 'mp4' ? 'video/mp4' : fileExt === 'webm' ? 'video/webm' : fileExt === 'webp' ? 'image/webp' : fileExt === 'jpg' ? 'image/jpeg' : 'video/mp4');
+      
       const file = new File([blob], `${filename}.${fileExt}`, { type: mimeType });
       
-      const blobUrl = window.URL.createObjectURL(blob);
+      // On iOS Safari / WebKit Web Share API:
+      // Passing ONLY { files: [file] } ensures iOS presents the native "Save Video" / "Save Image" action
+      // that directly writes the media to the device's Camera Roll / Photos app.
+      // If title or text is passed alongside files, iOS treats them as multiple items and creates
+      // an unwanted text file containing the title string!
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
-          await navigator.share({ files: [file], title: filename });
+          await navigator.share({ files: [file] });
+          return;
         } catch (shareErr: any) {
           if (shareErr.name === 'AbortError' || shareErr.message?.toLowerCase().includes('cancel')) {
-            window.URL.revokeObjectURL(blobUrl);
             return;
           }
-          // Same-origin safe fallback to prevent page redirects
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = `${filename}.${fileExt}`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
         }
-      } else {
-        // Same-origin safe fallback
+      }
+
+      // Fallback for browsers without Web Share file support
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${filename}.${fileExt}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
+    } catch (e) {
+      console.error("Save to device error:", e);
+      // Fallback direct link download if fetch was blocked or failed
+      try {
         const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = `${filename}.${fileExt}`;
+        link.href = url;
+        link.download = `${filename}.${mediaType === 'video' ? 'mp4' : 'jpg'}`;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+      } catch (fallbackErr) {
+        console.error("Direct download fallback failed:", fallbackErr);
       }
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (e) {
-      console.error("Save to device error:", e);
     }
   };
 
