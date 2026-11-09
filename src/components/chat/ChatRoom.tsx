@@ -23,9 +23,12 @@ interface ChatRoomProps {
 
 function useVisualViewport() {
   const [keyboardHeight, setKeyboardHeight] = React.useState(0);
+  const screenFullHeightRef = React.useRef<number>(0);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
+
+    screenFullHeightRef.current = Math.max(window.screen.height, window.innerHeight);
 
     const updateViewport = () => {
       if (window.scrollY !== 0) {
@@ -34,8 +37,23 @@ function useVisualViewport() {
 
       if (window.visualViewport) {
         const vv = window.visualViewport;
-        const kh = window.innerHeight - vv.height - vv.offsetTop;
-        setKeyboardHeight(Math.max(0, Math.round(kh)));
+        const isInputFocused = document.activeElement && (
+          document.activeElement.tagName === 'INPUT' ||
+          document.activeElement.tagName === 'TEXTAREA'
+        );
+
+        if (isInputFocused) {
+          const baseHeight = screenFullHeightRef.current || window.innerHeight;
+          const diff = baseHeight - vv.height;
+          if (diff > 80) {
+            setKeyboardHeight(Math.round(diff));
+          } else {
+            setKeyboardHeight(0);
+          }
+        } else {
+          screenFullHeightRef.current = Math.max(screenFullHeightRef.current, window.innerHeight);
+          setKeyboardHeight(0);
+        }
       }
     };
 
@@ -46,6 +64,19 @@ function useVisualViewport() {
       window.visualViewport.addEventListener('scroll', updateViewport);
     }
     window.addEventListener('scroll', updateViewport);
+
+    const handleFocusOut = () => {
+      setTimeout(() => {
+        const isInputFocused = document.activeElement && (
+          document.activeElement.tagName === 'INPUT' ||
+          document.activeElement.tagName === 'TEXTAREA'
+        );
+        if (!isInputFocused) {
+          setKeyboardHeight(0);
+        }
+      }, 50);
+    };
+    window.addEventListener('focusout', handleFocusOut);
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -64,6 +95,7 @@ function useVisualViewport() {
         window.visualViewport.removeEventListener('scroll', updateViewport);
       }
       window.removeEventListener('scroll', updateViewport);
+      window.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, []);
@@ -249,7 +281,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              </AnimatePresence>
           </div>
 
-          <form onSubmit={handleSendMessage} className="p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10">
+          <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10">
              <div className="flex items-center gap-3">
                <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
                <div className="relative flex-1 flex items-center">
