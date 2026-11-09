@@ -81,12 +81,14 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
   const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
+  const mountTimeRef = React.useRef<number>(Date.now());
+  const maxScreenHeightRef = React.useRef<number>(typeof window !== 'undefined' ? window.innerHeight : 800);
 
   React.useEffect(() => {
     setIsVideoTooLong(false);
   }, [pendingMedia?.dataUrl]);
 
-  // Pre-seed seen message IDs when messages load or change
+  // Pre-seed seen message IDs when messages load
   React.useEffect(() => {
     if (messages && messages.length > 0) {
       messages.forEach(msg => {
@@ -118,11 +120,18 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     const updateViewport = () => {
       if (!isInputFocused() || !vv) {
         setKeyboardHeight(0);
+        if (!isInputFocused() && window.innerHeight > maxScreenHeightRef.current) {
+          maxScreenHeightRef.current = window.innerHeight;
+        }
         return;
       }
 
-      const kh = Math.max(0, Math.round(window.innerHeight - vv.height));
-      setKeyboardHeight(kh > 30 ? kh : 0);
+      // Track max screen height when unfocused
+      const baseHeight = Math.max(maxScreenHeightRef.current, window.screen?.height || 0, window.innerHeight);
+      const currentVh = vv.height;
+      const kh = Math.max(0, Math.round(baseHeight - currentVh));
+      
+      setKeyboardHeight(kh > 40 ? kh : 0);
 
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
@@ -143,6 +152,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       vv.addEventListener('resize', updateViewport);
       vv.addEventListener('scroll', updateViewport);
     }
+    window.addEventListener('resize', updateViewport);
     window.addEventListener('blur', handleReset);
     window.addEventListener('pagehide', handleReset);
     document.addEventListener('visibilitychange', () => {
@@ -155,6 +165,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
     return () => {
       window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', updateViewport);
       window.removeEventListener('blur', handleReset);
       window.removeEventListener('pagehide', handleReset);
       if (vv) {
@@ -324,8 +335,10 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                 <AnimatePresence initial={false}>
                 {messages.slice().reverse().map((msg, idx, arr) => {
                    const msgKey = (msg as any)._clientId || msg.id;
-                   const isOld = msg.created_at && (Date.now() - new Date(msg.created_at).getTime() > 4000);
-                   const isNew = !isOld && !seenMessageIdsRef.current.has(msgKey);
+                   const createdAtMs = msg.created_at ? new Date(msg.created_at).getTime() : 0;
+                   const isHistorical = createdAtMs > 0 && createdAtMs < (mountTimeRef.current - 1000);
+                   const isAlreadySeen = seenMessageIdsRef.current.has(msgKey);
+                   const isNew = !isHistorical && !isAlreadySeen;
                    if (isNew) {
                      seenMessageIdsRef.current.add(msgKey);
                    }
@@ -382,8 +395,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      setTimeout(() => {
                        if (window.visualViewport) {
                          const vv = window.visualViewport;
-                         const kh = Math.max(0, Math.round(window.innerHeight - vv.height));
-                         if (kh > 30) {
+                         const baseHeight = Math.max(maxScreenHeightRef.current, window.screen?.height || 0, window.innerHeight);
+                         const kh = Math.max(0, Math.round(baseHeight - vv.height));
+                         if (kh > 40) {
                            setKeyboardHeight(kh);
                          }
                        }
