@@ -21,7 +21,47 @@ interface ChatRoomProps {
   openSettings: () => void;
 }
 
+function useVisualViewport() {
+  const [viewportStyle, setViewportStyle] = React.useState<{ height?: string; top?: string }>({});
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const updateViewport = () => {
+      if (window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+
+      if (window.visualViewport) {
+        setViewportStyle({
+          height: `${window.visualViewport.height}px`,
+          top: `${window.visualViewport.offsetTop}px`,
+        });
+      }
+    };
+
+    updateViewport();
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateViewport);
+      window.visualViewport.addEventListener('scroll', updateViewport);
+    }
+    window.addEventListener('scroll', updateViewport);
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', updateViewport);
+        window.visualViewport.removeEventListener('scroll', updateViewport);
+      }
+      window.removeEventListener('scroll', updateViewport);
+    };
+  }, []);
+
+  return viewportStyle;
+}
+
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
+  const viewportStyle = useVisualViewport();
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
     activeChat.isGroup
@@ -89,7 +129,11 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
-         className="fixed inset-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         style={{
+           height: viewportStyle.height || '100%',
+           top: viewportStyle.top || '0px',
+         }}
+         className="fixed left-0 right-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
         <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
@@ -189,7 +233,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            <div className="flex items-center gap-3">
              <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
              <div className="relative flex-1 flex items-center">
-               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => setShowFeatures(false)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
+               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => { setShowFeatures(false); if (typeof window !== 'undefined') window.scrollTo(0, 0); setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 150); }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
                <button type="submit"
                   disabled={!newMessage.trim()}
                   onMouseDown={(e) => {
