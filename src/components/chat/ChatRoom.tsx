@@ -76,14 +76,25 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
   const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
-  const [viewportHeight, setViewportHeight] = React.useState<number | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = React.useState(0);
   const headerRef = React.useRef<HTMLDivElement | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
+  const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
     setIsVideoTooLong(false);
   }, [pendingMedia?.dataUrl]);
+
+  // Pre-seed seen message IDs when messages load
+  React.useEffect(() => {
+    if (messages && messages.length > 0) {
+      messages.forEach(msg => {
+        const id = (msg as any)._clientId || msg.id;
+        if (id) seenMessageIdsRef.current.add(id);
+      });
+    }
+  }, [messages.length === 0]);
 
   React.useEffect(() => {
     // Keep window strictly at (0, 0) so header cannot scroll offscreen
@@ -106,17 +117,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
     const updateViewport = () => {
       if (!isInputFocused() || !vv) {
-        setViewportHeight(null);
+        setKeyboardHeight(0);
         return;
       }
 
-      // Check if virtual keyboard is genuinely open
-      const isKeyboardUp = vv.height < (window.innerHeight - 30) || (window.screen?.height && vv.height < window.screen.height - 120);
-      if (isKeyboardUp) {
-        setViewportHeight(vv.height);
-      } else {
-        setViewportHeight(null);
-      }
+      const kh = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+      setKeyboardHeight(kh > 30 ? kh : 0);
 
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
@@ -128,7 +134,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
     // When backgrounding or leaving the app, immediately reset to full screen
     const handleReset = () => {
-      setViewportHeight(null);
+      setKeyboardHeight(0);
       textareaRef.current?.blur();
       (document.activeElement as HTMLElement)?.blur();
     };
@@ -164,7 +170,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     handleSendMessage(e);
     // Keep keyboard open and active on mobile after sending
     setTimeout(() => {
-      textareaRef.current?.focus();
+      textareaRef.current?.focus({ preventScroll: true });
     }, 10);
   };
 
@@ -190,11 +196,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       const deltaY = e.touches[0].clientY - touchStartRef.current.y;
       const elapsedTime = Date.now() - touchStartRef.current.time;
       const isKeyboardOpen = document.activeElement === textareaRef.current || document.activeElement?.tagName === 'TEXTAREA';
+      const isAtBottom = e.currentTarget.scrollTop <= 10;
 
       // Excessive / intentional swipe down gesture to dismiss keyboard (like iOS iMessage)
-      // Only triggers on large downward drag (> 55px) or fast downward flick (> 30px in < 220ms)
-      // Regular scrolling (moving upwards or gentle scrolling) does NOT trigger it
-      if (isKeyboardOpen && (deltaY > 55 || (deltaY > 30 && elapsedTime < 220))) {
+      // Only triggers when user is at the bottom of the list (scrollTop <= 10) AND pulls down deliberately
+      // Regular scrolling through message history does NOT trigger keyboard dismissal
+      if (isKeyboardOpen && isAtBottom && (deltaY > 60 || (deltaY > 40 && elapsedTime < 200))) {
         textareaRef.current?.blur();
         (document.activeElement as HTMLElement)?.blur();
         touchStartRef.current = null;
@@ -234,7 +241,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
           className="p-4 pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 z-30"
           style={{
             paddingTop: 'clamp(4px, calc(env(safe-area-inset-top, 0px) - 10px), 40px)',
-            paddingBottom: '12px'
+            paddingBottom: '12px',
+            transform: 'translateZ(0)',
+            willChange: 'transform',
           }}
         >
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform">
@@ -296,13 +305,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        {/* CONTENT AREA: Messages + Footer strictly moving together */}
+        {/* CONTENT AREA: Messages + Footer strictly moving together with smooth padding-bottom */}
         <div 
           className="w-full flex-1 min-h-0 flex flex-col bg-black overflow-hidden relative"
           style={{
-            height: viewportHeight ? `${viewportHeight - (headerRef.current?.offsetHeight || 60)}px` : undefined,
-            flex: viewportHeight ? 'none' : '1 1 0%',
-            transition: 'height 0.26s cubic-bezier(0.17, 0.59, 0.4, 0.77)',
+            paddingBottom: `${keyboardHeight}px`,
+            transition: 'padding-bottom 0.28s cubic-bezier(0.17, 0.59, 0.4, 0.77)',
           }}
         >
           <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
@@ -314,24 +322,34 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              <div ref={messagesEndRef} className="h-0 shrink-0" />
              <div className="flex flex-col-reverse">
                 <AnimatePresence initial={false}>
-                {messages.slice().reverse().map((msg, idx, arr) => (
-                   <motion.div 
-                     key={(msg as any)._clientId || msg.id} 
-                     initial={{ opacity: 0, scale: 0.88, y: 22 }} 
-                     animate={{ opacity: 1, scale: 1, y: 0 }} 
-                     transition={{ 
-                       opacity: { duration: 0.22, ease: 'easeOut' },
-                       scale: { duration: 0.26, ease: [0.22, 1, 0.36, 1] },
-                       y: { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
-                     }}
-                     style={{ 
-                       transformOrigin: msg.sender_id === currentUserId ? 'bottom right' : 'bottom left',
-                       willChange: 'transform, opacity'
-                     }}
-                   >
-                      <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
-                   </motion.div>
-                 ))}
+                {messages.slice().reverse().map((msg, idx, arr) => {
+                   const msgKey = (msg as any)._clientId || msg.id;
+                   const isNew = !seenMessageIdsRef.current.has(msgKey);
+                   if (isNew) {
+                     seenMessageIdsRef.current.add(msgKey);
+                   }
+
+                   return (
+                     <motion.div 
+                       key={msgKey} 
+                       layout="position"
+                       initial={isNew ? { opacity: 0, scale: 0.88, y: 22 } : false} 
+                       animate={{ opacity: 1, scale: 1, y: 0 }} 
+                       transition={{ 
+                         layout: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] },
+                         opacity: { duration: 0.2, ease: 'easeOut' },
+                         scale: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] },
+                         y: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] }
+                       }}
+                       style={{ 
+                         transformOrigin: msg.sender_id === currentUserId ? 'bottom right' : 'bottom left',
+                         willChange: 'transform, opacity'
+                       }}
+                     >
+                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
+                     </motion.div>
+                   );
+                })}
                 </AnimatePresence>
               </div>
              
@@ -363,8 +381,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      setTimeout(() => {
                        if (window.visualViewport) {
                          const vv = window.visualViewport;
-                         if (vv.height < window.innerHeight - 30 || (window.screen?.height && vv.height < window.screen.height - 120)) {
-                           setViewportHeight(vv.height);
+                         const kh = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+                         if (kh > 30) {
+                           setKeyboardHeight(kh);
                          }
                        }
                      }, 50);
@@ -373,7 +392,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      setTimeout(() => {
                        const active = document.activeElement;
                        if (active !== textareaRef.current && active?.tagName !== 'TEXTAREA') {
-                         setViewportHeight(null);
+                         setKeyboardHeight(0);
                        }
                      }, 100);
                    }}
