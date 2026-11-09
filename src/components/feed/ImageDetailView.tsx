@@ -13,6 +13,7 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
   const [dragY, setDragY] = useState(0);
   const [dragX, setDragX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [showControls, setShowControls] = useState(true);
 
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
   const touchStateRef = useRef<{
@@ -72,15 +73,13 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
       return;
     }
 
-    if (scale <= 1.01) {
-      const touch = e.touches[0];
-      touchStateRef.current = {
-        startX: touch.clientX,
-        startY: touch.clientY,
-        startTime: Date.now(),
-        mode: 'none'
-      };
-    }
+    const touch = e.touches[0];
+    touchStateRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startTime: Date.now(),
+      mode: 'none'
+    };
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -117,8 +116,16 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
   };
 
   const handleTouchEnd = () => {
+    const elapsed = Date.now() - touchStateRef.current.startTime;
+
+    // Single tap detection to toggle controls visibility (matches chat video viewer)
+    if (touchStateRef.current.mode === 'none' && !isDragging && elapsed < 260 && Math.abs(dragY) < 5 && Math.abs(dragX) < 5) {
+      setShowControls(prev => !prev);
+      touchStateRef.current.mode = 'none';
+      return;
+    }
+
     if (touchStateRef.current.mode === 'vertical') {
-      const elapsed = Date.now() - touchStateRef.current.startTime;
       const velocityY = Math.abs(dragY) / Math.max(elapsed, 1);
       
       // Dismiss if pulled down/up sufficiently or flicked
@@ -128,7 +135,6 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
       }
       setDragY(0);
     } else if (touchStateRef.current.mode === 'horizontal') {
-      const elapsed = Date.now() - touchStateRef.current.startTime;
       const velocityX = Math.abs(dragX) / Math.max(elapsed, 1);
 
       if ((dragX < -50 || (dragX < -25 && velocityX > 0.35)) && currentIndex < images.length - 1) {
@@ -141,6 +147,11 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
 
     touchStateRef.current.mode = 'none';
     setIsDragging(false);
+  };
+
+  const handleScreenClick = (e: React.MouseEvent) => {
+    if (Math.abs(dragY) > 5 || Math.abs(dragX) > 5) return;
+    setShowControls(prev => !prev);
   };
 
   const backdropOpacity = Math.max(0.35, 1 - Math.abs(dragY) / 450);
@@ -184,13 +195,24 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
         backgroundColor: `rgba(0, 0, 0, ${0.95 * backdropOpacity})`
       }}
       className="fixed inset-0 z-[500] backdrop-blur-3xl flex flex-col items-center justify-center p-0 select-none overflow-hidden touch-none"
+      onClick={handleScreenClick}
     >
-      <button 
-        className="absolute top-10 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
-        onClick={onClose}
+      {/* Top action bar with fade controls matching FullscreenVideoPlayer */}
+      <div 
+        className="absolute top-0 right-0 z-[600] p-6 pt-safe pointer-events-none transition-opacity duration-300"
+        style={{ opacity: showControls ? 1 : 0 }}
       >
-        <X size={24} />
-      </button>
+        <button 
+          className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl pointer-events-auto"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          title="Close"
+        >
+          <X size={24} />
+        </button>
+      </div>
 
       <div 
         className="relative w-full h-full flex items-center justify-center overflow-hidden"
@@ -211,8 +233,14 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
               transform: `translate3d(${dragX}px, ${dragY}px, 0)`,
               transition: isDragging ? 'none' : 'transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1)'
             }}
-            className="w-full h-full flex items-center justify-center"
+            className="w-full h-full flex items-center justify-center relative"
           >
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+
             <TransformWrapper
               ref={transformRef}
               initialScale={1}
@@ -253,27 +281,24 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
                   justifyContent: "center" 
                 }}
               >
-                <div className="relative w-full h-full flex items-center justify-center">
-                  {loading && (
-                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                      <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                    </div>
-                  )}
-                  <img 
-                    src={images[currentIndex]} 
-                    alt="" 
-                    className="max-w-full max-h-full object-contain pointer-events-auto select-none"
-                    onLoad={() => setLoading(false)}
-                    draggable={false}
-                  />
-                </div>
+                <img 
+                  src={images[currentIndex]} 
+                  alt="" 
+                  className="max-w-full max-h-full object-contain pointer-events-none select-none"
+                  onLoad={() => setLoading(false)}
+                  draggable={false}
+                />
               </TransformComponent>
             </TransformWrapper>
           </motion.div>
         </AnimatePresence>
 
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center z-[550] pointer-events-none">
-          <span className="text-white/60 text-[11px] font-black tracking-[0.2em] uppercase mb-4 drop-shadow-md">
+        {/* Bottom indicator with fade controls matching FullscreenVideoPlayer */}
+        <div 
+          className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center z-[550] pointer-events-none transition-opacity duration-300"
+          style={{ opacity: showControls ? 1 : 0 }}
+        >
+          <span className="text-white/60 text-[11px] font-black tracking-[0.2em] uppercase mb-4 drop-shadow-md select-none">
             {currentIndex + 1} / {images.length}
           </span>
           <div className="flex space-x-1.5 p-2 bg-white/5 backdrop-blur-xl rounded-full border border-white/10">
