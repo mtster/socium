@@ -252,7 +252,7 @@ export default function App() {
       {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (
         <header 
           onClick={handleHeaderClick}
-          className="shrink-0 h-14 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none] cursor-pointer"
+          className="shrink-0 h-12 flex items-center justify-between px-4 glass border-b border-white/10 relative z-40 bg-black/90 [touch-action:none] cursor-pointer"
         >
           <h1 className="text-xl font-bold tracking-tighter uppercase italic select-none">Socium</h1>
           <div className="flex space-x-4">
