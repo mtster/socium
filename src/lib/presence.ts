@@ -53,10 +53,8 @@ export const initPresence = (userId: string) => {
 
   const unsubscribeCount = onValue(countRef, (snapshot) => {
     const count = snapshot.val() || 0;
-    
-    // Sync to Zustand global store so BottomNav red dot updates in absolute real-time!
-    useStore.getState().setTotalUnread(count);
 
+    // Set OS App icon badge with combined count (chats + feed activity)
     if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator) {
       if (count > 0) {
         (navigator as any).setAppBadge(count).catch(console.error);
@@ -88,6 +86,9 @@ export const initPresence = (userId: string) => {
 
     const hasFeedValue = lastFeedValue && lastFeedValue !== "";
     const totalCount = actualFalseCount + (hasFeedValue ? 1 : 0);
+
+    // Sync only actual unread chats to Zustand so BottomNav Chat tab red dot is 100% accurate!
+    useStore.getState().setTotalUnread(actualFalseCount);
 
     const uCountRef = ref(rtdb, `unseen_chat_count/${userId}`);
     set(uCountRef, totalCount).catch(console.error);
