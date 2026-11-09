@@ -54,6 +54,11 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      rollupOptions: {
+        external: (id: string) => id.startsWith('data:application/wasm'),
+      },
+    },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
     },
