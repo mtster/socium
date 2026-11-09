@@ -344,11 +344,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    return (
                      <motion.div 
                        key={msgKey} 
-                       layout="position"
                        initial={isNew ? { opacity: 0, scale: 0.88, y: 22 } : false} 
                        animate={{ opacity: 1, scale: 1, y: 0 }} 
                        transition={{ 
-                         layout: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] },
                          opacity: { duration: 0.2, ease: 'easeOut' },
                          scale: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] },
                          y: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] }
