@@ -86,7 +86,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     setIsVideoTooLong(false);
   }, [pendingMedia?.dataUrl]);
 
-  // Pre-seed seen message IDs when messages load
+  // Pre-seed seen message IDs when messages load or change
   React.useEffect(() => {
     if (messages && messages.length > 0) {
       messages.forEach(msg => {
@@ -94,7 +94,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
         if (id) seenMessageIdsRef.current.add(id);
       });
     }
-  }, [messages.length === 0]);
+  }, [messages]);
 
   React.useEffect(() => {
     // Keep window strictly at (0, 0) so header cannot scroll offscreen
@@ -121,7 +121,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
         return;
       }
 
-      const kh = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+      const kh = Math.max(0, Math.round(window.innerHeight - vv.height));
       setKeyboardHeight(kh > 30 ? kh : 0);
 
       if (window.scrollY !== 0) {
@@ -324,7 +324,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                 <AnimatePresence initial={false}>
                 {messages.slice().reverse().map((msg, idx, arr) => {
                    const msgKey = (msg as any)._clientId || msg.id;
-                   const isNew = !seenMessageIdsRef.current.has(msgKey);
+                   const isOld = msg.created_at && (Date.now() - new Date(msg.created_at).getTime() > 4000);
+                   const isNew = !isOld && !seenMessageIdsRef.current.has(msgKey);
                    if (isNew) {
                      seenMessageIdsRef.current.add(msgKey);
                    }
@@ -381,12 +382,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      setTimeout(() => {
                        if (window.visualViewport) {
                          const vv = window.visualViewport;
-                         const kh = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+                         const kh = Math.max(0, Math.round(window.innerHeight - vv.height));
                          if (kh > 30) {
                            setKeyboardHeight(kh);
                          }
                        }
-                     }, 50);
+                     }, 30);
                    }} 
                    onBlur={() => {
                      setTimeout(() => {
