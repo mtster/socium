@@ -82,7 +82,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
   const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
   const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
   const mountTimeRef = React.useRef<number>(Date.now());
-  const maxScreenHeightRef = React.useRef<number>(typeof window !== 'undefined' ? window.innerHeight : 800);
 
   React.useEffect(() => {
     setIsVideoTooLong(false);
@@ -120,18 +119,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     const updateViewport = () => {
       if (!isInputFocused() || !vv) {
         setKeyboardHeight(0);
-        if (!isInputFocused() && window.innerHeight > maxScreenHeightRef.current) {
-          maxScreenHeightRef.current = window.innerHeight;
-        }
         return;
       }
 
-      // Track max screen height when unfocused
-      const baseHeight = Math.max(maxScreenHeightRef.current, window.screen?.height || 0, window.innerHeight);
-      const currentVh = vv.height;
-      const kh = Math.max(0, Math.round(baseHeight - currentVh));
-      
-      setKeyboardHeight(kh > 40 ? kh : 0);
+      // Exact visible height above keyboard relative to layout viewport window.innerHeight
+      const kh = Math.max(0, Math.round(window.innerHeight - vv.height));
+      setKeyboardHeight(kh > 30 ? kh : 0);
 
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
@@ -152,7 +145,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       vv.addEventListener('resize', updateViewport);
       vv.addEventListener('scroll', updateViewport);
     }
-    window.addEventListener('resize', updateViewport);
     window.addEventListener('blur', handleReset);
     window.addEventListener('pagehide', handleReset);
     document.addEventListener('visibilitychange', () => {
@@ -165,7 +157,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
     return () => {
       window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', updateViewport);
       window.removeEventListener('blur', handleReset);
       window.removeEventListener('pagehide', handleReset);
       if (vv) {
@@ -395,9 +386,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      setTimeout(() => {
                        if (window.visualViewport) {
                          const vv = window.visualViewport;
-                         const baseHeight = Math.max(maxScreenHeightRef.current, window.screen?.height || 0, window.innerHeight);
-                         const kh = Math.max(0, Math.round(baseHeight - vv.height));
-                         if (kh > 40) {
+                         const kh = Math.max(0, Math.round(window.innerHeight - vv.height));
+                         if (kh > 30) {
                            setKeyboardHeight(kh);
                          }
                        }
