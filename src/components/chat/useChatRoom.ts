@@ -140,11 +140,16 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   };
 
   const markMessagesAsRead = async () => {
-    window.dispatchEvent(new CustomEvent('forceGetUnread'));
-    if (activeChat.isGroup) {
-      await supabase.from('group_chat_participants').update({ last_read_at: new Date().toISOString() }).eq('chat_id', activeChat.id).eq('user_id', currentUserId);
-    } else {
-      await supabase.from('messages').update({ read_at: new Date().toISOString() }).eq('sender_id', activeChat.id).eq('receiver_id', currentUserId).is('read_at', null);
+    try {
+      if (activeChat.isGroup) {
+        await supabase.from('group_chat_participants').update({ last_read_at: new Date().toISOString() }).eq('chat_id', activeChat.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('messages').update({ read_at: new Date().toISOString() }).eq('sender_id', activeChat.id).eq('receiver_id', currentUserId).is('read_at', null);
+      }
+    } catch (err) {
+      console.warn('markMessagesAsRead error:', err);
+    } finally {
+      window.dispatchEvent(new CustomEvent('forceGetUnread'));
     }
   };
 

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
-import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { cn } from '@/src/lib/utils';
 
 export function ImageDetailView({ images, initialIndex, onClose }: { images: string[], initialIndex: number, onClose: () => void }) {
@@ -10,7 +10,22 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
   const [loading, setLoading] = useState(true);
   const [direction, setDirection] = useState(0);
   const [scale, setScale] = useState(1);
-  const [isMultiTouch, setIsMultiTouch] = useState(false);
+  const [dragY, setDragY] = useState(0);
+  const [dragX, setDragX] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const touchStateRef = useRef<{
+    startX: number;
+    startY: number;
+    startTime: number;
+    mode: 'none' | 'vertical' | 'horizontal' | 'pinch';
+  }>({
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    mode: 'none'
+  });
 
   // Preload all images
   useEffect(() => {
@@ -19,6 +34,17 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
       img.src = src;
     });
   }, [images]);
+
+  // Reset zoom scale and transform on image slide change
+  useEffect(() => {
+    if (transformRef.current) {
+      transformRef.current.resetTransform(0);
+    }
+    setScale(1);
+    setDragY(0);
+    setDragX(0);
+    setIsDragging(false);
+  }, [currentIndex]);
 
   const next = () => {
     if (currentIndex < images.length - 1) {
@@ -36,9 +62,92 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
     }
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length > 1) {
+      // 2 or more fingers -> pinch to zoom gesture
+      touchStateRef.current.mode = 'pinch';
+      setDragY(0);
+      setDragX(0);
+      setIsDragging(false);
+      return;
+    }
+
+    if (scale <= 1.01) {
+      const touch = e.touches[0];
+      touchStateRef.current = {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        startTime: Date.now(),
+        mode: 'none'
+      };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    // While zoomed in or pinching, let TransformWrapper handle 100% of gestures
+    if (scale > 1.01 || touchStateRef.current.mode === 'pinch' || e.touches.length > 1) {
+      return;
+    }
+
+    const touch = e.touches[0];
+    const dx = touch.clientX - touchStateRef.current.startX;
+    const dy = touch.clientY - touchStateRef.current.startY;
+
+    if (touchStateRef.current.mode === 'none') {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absY > 8 && absY > absX) {
+        touchStateRef.current.mode = 'vertical';
+        setIsDragging(true);
+      } else if (absX > 8 && absX > absY) {
+        touchStateRef.current.mode = 'horizontal';
+        setIsDragging(true);
+      }
+    }
+
+    if (touchStateRef.current.mode === 'vertical') {
+      setDragY(dy);
+    } else if (touchStateRef.current.mode === 'horizontal') {
+      // Elastic resistance if at edges
+      const isAtLeftEdge = currentIndex === 0 && dx > 0;
+      const isAtRightEdge = currentIndex === images.length - 1 && dx < 0;
+      const factor = isAtLeftEdge || isAtRightEdge ? 0.25 : 0.8;
+      setDragX(dx * factor);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStateRef.current.mode === 'vertical') {
+      const elapsed = Date.now() - touchStateRef.current.startTime;
+      const velocityY = Math.abs(dragY) / Math.max(elapsed, 1);
+      
+      // Dismiss if pulled down/up sufficiently or flicked
+      if (Math.abs(dragY) > 90 || (Math.abs(dragY) > 40 && velocityY > 0.45)) {
+        onClose();
+        return;
+      }
+      setDragY(0);
+    } else if (touchStateRef.current.mode === 'horizontal') {
+      const elapsed = Date.now() - touchStateRef.current.startTime;
+      const velocityX = Math.abs(dragX) / Math.max(elapsed, 1);
+
+      if ((dragX < -50 || (dragX < -25 && velocityX > 0.35)) && currentIndex < images.length - 1) {
+        next();
+      } else if ((dragX > 50 || (dragX > 25 && velocityX > 0.35)) && currentIndex > 0) {
+        prev();
+      }
+      setDragX(0);
+    }
+
+    touchStateRef.current.mode = 'none';
+    setIsDragging(false);
+  };
+
+  const backdropOpacity = Math.max(0.35, 1 - Math.abs(dragY) / 450);
+
   const variants = {
-    enter: (direction: number) => ({
-      x: direction > 0 ? '100%' : '-100%',
+    enter: (dir: number) => ({
+      x: dir > 0 ? '100%' : '-100%',
       opacity: 0,
       scale: 0.95
     }),
@@ -53,9 +162,9 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
         scale: { duration: 0.3 }
       }
     },
-    exit: (direction: number) => ({
+    exit: (dir: number) => ({
       zIndex: 0,
-      x: direction < 0 ? '100%' : '-100%',
+      x: dir < 0 ? '100%' : '-100%',
       opacity: 0,
       scale: 0.95,
       transition: {
@@ -71,7 +180,10 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[500] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-0"
+      style={{
+        backgroundColor: `rgba(0, 0, 0, ${0.95 * backdropOpacity})`
+      }}
+      className="fixed inset-0 z-[500] backdrop-blur-3xl flex flex-col items-center justify-center p-0 select-none overflow-hidden touch-none"
     >
       <button 
         className="absolute top-10 right-6 z-[600] p-3 bg-white/10 rounded-full text-white active:scale-90 transition-all backdrop-blur-md border border-white/10 shadow-2xl"
@@ -80,7 +192,13 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
         <X size={24} />
       </button>
 
-      <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+      <div 
+        className="relative w-full h-full flex items-center justify-center overflow-hidden"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+      >
         <AnimatePresence initial={false} custom={direction} mode="popLayout">
           <motion.div
             key={currentIndex}
@@ -89,54 +207,62 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
             initial="enter"
             animate="center"
             exit="exit"
-            className="w-full h-full flex items-center justify-center touch-none"
-            drag={scale <= 1.01 ? "both" : false}
-            dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-            dragElastic={0.15}
-            dragDirectionLock
-            onTouchStart={(e) => {
-              if (e.touches.length > 1) {
-                setIsMultiTouch(true);
-              }
+            style={{
+              transform: `translate3d(${dragX}px, ${dragY}px, 0)`,
+              transition: isDragging ? 'none' : 'transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1)'
             }}
-            onTouchEnd={(e) => {
-              if (e.touches.length === 0) {
-                setTimeout(() => setIsMultiTouch(false), 200);
-              }
-            }}
-            onDragEnd={(_, info) => {
-              if (scale > 1.01 || isMultiTouch) return;
-              const xThreshold = 60;
-              const yThreshold = 100;
-              
-              if (Math.abs(info.offset.y) > yThreshold && Math.abs(info.offset.y) > Math.abs(info.offset.x) * 1.5) {
-                  onClose();
-              } else if (info.offset.x > xThreshold) {
-                  prev();
-              } else if (info.offset.x < -xThreshold) {
-                  next();
-              }
-            }}
+            className="w-full h-full flex items-center justify-center"
           >
             <TransformWrapper
+              ref={transformRef}
               initialScale={1}
               minScale={1}
-              maxScale={4}
+              maxScale={5}
               centerOnInit={true}
-              panning={{ disabled: scale <= 1.01, velocityDisabled: false }}
+              doubleClick={{
+                disabled: false,
+                mode: "toggle",
+                step: 2.5,
+                animationTime: 220,
+              }}
+              pinch={{
+                disabled: false,
+                step: 5,
+              }}
+              panning={{
+                disabled: scale <= 1.01,
+                velocityDisabled: false,
+                limitToBounds: true,
+              }}
+              alignmentAnimation={{
+                animationTime: 200,
+              }}
+              velocityAnimation={{
+                sensitivityTouch: 1,
+                animationTime: 220,
+              }}
               onTransformed={(ref) => setScale(ref.state.scale)}
             >
-              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
+              <TransformComponent 
+                wrapperStyle={{ width: "100%", height: "100%" }} 
+                contentStyle={{ 
+                  width: "100%", 
+                  height: "100%", 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center" 
+                }}
+              >
                 <div className="relative w-full h-full flex items-center justify-center">
-                   {loading && (
-                    <div className="absolute inset-0 flex items-center justify-center z-10">
+                  {loading && (
+                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
                       <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                     </div>
                   )}
                   <img 
                     src={images[currentIndex]} 
                     alt="" 
-                    className="max-w-full max-h-full object-contain pointer-events-auto"
+                    className="max-w-full max-h-full object-contain pointer-events-auto select-none"
                     onLoad={() => setLoading(false)}
                     draggable={false}
                   />
@@ -146,7 +272,7 @@ export function ImageDetailView({ images, initialIndex, onClose }: { images: str
           </motion.div>
         </AnimatePresence>
 
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center z-[550]">
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center z-[550] pointer-events-none">
           <span className="text-white/60 text-[11px] font-black tracking-[0.2em] uppercase mb-4 drop-shadow-md">
             {currentIndex + 1} / {images.length}
           </span>
