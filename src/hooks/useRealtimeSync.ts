@@ -73,13 +73,13 @@ export function useRealtimeSync({
         if (data) {
           setVibeInitiatorProfile(data);
           playVibeSound();
+          // Auto-clear after 4s to match chat bubble behavior
+          setTimeout(() => {
+            if (rtdb && userId) {
+              set(ref(rtdb, `feed/${userId}`), "").catch(() => {});
+            }
+          }, 4000);
         }
-        // Auto-clear after 4s to match chat bubble behavior and prevent sticky badge counts
-        setTimeout(() => {
-          if (rtdb && userId) {
-            set(ref(rtdb, `feed/${userId}`), "").catch(() => {});
-          }
-        }, 4000);
 
         fetchFeedUnseenCount(userId);
       } else {
