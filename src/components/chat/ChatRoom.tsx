@@ -76,9 +76,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
   const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
-  const [viewportHeight, setViewportHeight] = React.useState<number | null>(null);
-  const [viewportTop, setViewportTop] = React.useState<number>(0);
-  const headerRef = React.useRef<HTMLDivElement | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
   const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
@@ -110,68 +107,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
 
-    const vv = window.visualViewport;
-
-    const isInputFocused = () => {
-      const el = document.activeElement;
-      return (el === textareaRef.current || el?.tagName === 'TEXTAREA' || el?.tagName === 'INPUT') && !document.hidden;
-    };
-
-    const updateViewport = () => {
-      if (!isInputFocused() || !vv) {
-        setViewportHeight(null);
-        setViewportTop(0);
-        return;
-      }
-
-      // Check if virtual keyboard is genuinely open
-      const isKeyboardUp = vv.height < (window.innerHeight - 30) || (window.screen?.height && vv.height < window.screen.height - 120);
-      if (isKeyboardUp) {
-        setViewportHeight(vv.height);
-        setViewportTop(vv.offsetTop || 0);
-      } else {
-        setViewportHeight(null);
-        setViewportTop(0);
-      }
-
-      if (window.scrollY !== 0) {
-        window.scrollTo(0, 0);
-      }
-      if (document.body.scrollTop !== 0) {
-        document.body.scrollTop = 0;
-      }
-    };
-
-    // When backgrounding or leaving the app, immediately reset to full screen
-    const handleReset = () => {
-      setViewportHeight(null);
-      setViewportTop(0);
-      textareaRef.current?.blur();
-      (document.activeElement as HTMLElement)?.blur();
-    };
-
-    if (vv) {
-      vv.addEventListener('resize', updateViewport);
-      vv.addEventListener('scroll', updateViewport);
-    }
-    window.addEventListener('blur', handleReset);
-    window.addEventListener('pagehide', handleReset);
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        handleReset();
-      } else {
-        updateViewport();
-      }
-    });
-
     return () => {
       window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('blur', handleReset);
-      window.removeEventListener('pagehide', handleReset);
-      if (vv) {
-        vv.removeEventListener('resize', updateViewport);
-        vv.removeEventListener('scroll', updateViewport);
-      }
     };
   }, []);
 
@@ -243,91 +180,82 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
-         className="fixed inset-0 z-[60] bg-black w-full h-full overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed inset-0 z-[60] flex flex-col bg-black w-full h-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
          style={{ top: 0, left: 0, right: 0, bottom: 0, height: '100%', width: '100%' }}
       >
+        {/* HEADER */}
         <div 
-          className="w-full flex flex-col bg-black overflow-hidden relative"
+          className="p-4 pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 z-30"
           style={{
-            height: viewportHeight ? `${viewportHeight}px` : '100%',
-            maxHeight: viewportHeight ? `${viewportHeight}px` : '100%',
-            top: viewportTop ? `${viewportTop}px` : 0,
-            transition: 'height 0.22s cubic-bezier(0.17, 0.59, 0.4, 0.77)',
+            paddingTop: 'clamp(4px, calc(env(safe-area-inset-top, 0px) - 10px), 40px)',
+            paddingBottom: '12px'
           }}
         >
-          {/* HEADER */}
-          <div 
-            ref={headerRef}
-            className="p-4 pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 z-30"
-            style={{
-              paddingTop: 'clamp(4px, calc(env(safe-area-inset-top, 0px) - 10px), 40px)',
-              paddingBottom: '12px'
-            }}
-          >
-             <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform">
-               <ArrowLeft size={24} />
-             </button>
-             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
-                <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
-                  {activeChat.isGroup ? (
-                     <div className="w-full h-full relative">
-                       {activeChat.avatar_url ? (
-                         <img src={activeChat.avatar_url} className="w-full h-full object-cover" />
-                       ) : activeChat.participants && activeChat.participants.length > 0 ? (
-                         activeChat.participants.slice(0,3).map((p, i, arr) => (
-                           <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-6 h-6" : "bottom-0 right-0 w-6 h-6") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-5 h-5 z-20" : i === 1 ? "bottom-0 left-0 w-5 h-5 z-10" : "bottom-0 right-0 w-5 h-5 z-10"))}>
-                             {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[8px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
-                           </div>
-                         ))
-                       ) : <div className="text-xs w-full h-full flex items-center justify-center">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>}
-                     </div>
-                  ) : (
-                    activeChat.avatar_url ? <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>
-                  )}
-                </div>
-                <div className="flex flex-col min-w-0 flex-1 justify-center">
-                  <span className="font-bold text-sm text-white/90 truncate leading-tight">{activeChat.name}</span>
-                  {!activeChat.isGroup && peerStatusText && (
-                    <span className={cn(
-                      "text-[11px] truncate leading-tight mt-0.5",
-                      isPeerOnline ? "text-emerald-400 font-medium" : "text-white/40"
-                    )}>
-                      {peerStatusText}
-                    </span>
-                  )}
-                </div>
-             </div>
+           <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform">
+             <ArrowLeft size={24} />
+           </button>
+           <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
+              <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
+                {activeChat.isGroup ? (
+                   <div className="w-full h-full relative">
+                     {activeChat.avatar_url ? (
+                       <img src={activeChat.avatar_url} className="w-full h-full object-cover" />
+                     ) : activeChat.participants && activeChat.participants.length > 0 ? (
+                       activeChat.participants.slice(0,3).map((p, i, arr) => (
+                         <div key={i} className={cn("absolute rounded-full border border-black overflow-hidden bg-white/20", arr.length === 1 ? "inset-0" : arr.length === 2 ? (i === 0 ? "top-0 left-0 w-6 h-6" : "bottom-0 right-0 w-6 h-6") : (i === 0 ? "top-0 left-1/2 -translate-x-1/2 w-5 h-5 z-20" : i === 1 ? "bottom-0 left-0 w-5 h-5 z-10" : "bottom-0 right-0 w-5 h-5 z-10"))}>
+                           {p?.avatar_url ? <img src={p.avatar_url} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/20 flex items-center justify-center font-bold text-[8px] text-white/70">{(p?.full_name?.charAt(0) || p?.username?.charAt(0) || '?').toUpperCase()}</div>}
+                         </div>
+                       ))
+                     ) : <div className="text-xs w-full h-full flex items-center justify-center">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>}
+                   </div>
+                ) : (
+                  activeChat.avatar_url ? <img src={activeChat.avatar_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-medium text-white/50">{(activeChat.name?.charAt(0) || '?').toUpperCase()}</div>
+                )}
+              </div>
+              <div className="flex flex-col min-w-0 flex-1 justify-center">
+                <span className="font-bold text-sm text-white/90 truncate leading-tight">{activeChat.name}</span>
+                {!activeChat.isGroup && peerStatusText && (
+                  <span className={cn(
+                    "text-[11px] truncate leading-tight mt-0.5",
+                    isPeerOnline ? "text-emerald-400 font-medium" : "text-white/40"
+                  )}>
+                    {peerStatusText}
+                  </span>
+                )}
+              </div>
+           </div>
 
-             {/* Call Controls */}
-             <div className="flex items-center gap-1 shrink-0 pr-1">
-               <button 
-                 onClick={(e) => {
-                   e.stopPropagation();
-                   window.dispatchEvent(new CustomEvent('initiateCall', { detail: { chat: activeChat, type: 'audio' } }));
-                 }} 
-                 className="p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full"
-                 title="Audio Call"
-               >
-                 <Phone size={20} />
-               </button>
-               <button 
-                 onClick={(e) => {
-                   e.stopPropagation();
-                   window.dispatchEvent(new CustomEvent('initiateCall', { detail: { chat: activeChat, type: 'video' } }));
-                 }} 
-                 className="p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full"
-                 title="Video Call"
-               >
-                 <Video size={20} />
-               </button>
-             </div>
-          </div>
-          <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
-            onClick={handleContainerClick}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-          >
+           {/* Call Controls */}
+           <div className="flex items-center gap-1 shrink-0 pr-1">
+             <button 
+               onClick={(e) => {
+                 e.stopPropagation();
+                 window.dispatchEvent(new CustomEvent('initiateCall', { detail: { chat: activeChat, type: 'audio' } }));
+               }} 
+               className="p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full"
+               title="Audio Call"
+             >
+               <Phone size={20} />
+             </button>
+             <button 
+               onClick={(e) => {
+                 e.stopPropagation();
+                 window.dispatchEvent(new CustomEvent('initiateCall', { detail: { chat: activeChat, type: 'video' } }));
+               }} 
+               className="p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full"
+               title="Video Call"
+             >
+               <Video size={20} />
+             </button>
+           </div>
+        </div>
+
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+          onClick={handleContainerClick}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
              <div ref={messagesEndRef} className="h-0 shrink-0" />
              <div className="flex flex-col-reverse">
                 <AnimatePresence initial={false}>
@@ -388,21 +316,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    onFocus={() => { 
                      setShowFeatures(false); 
                      window.scrollTo(0, 0); 
-                     if (window.visualViewport) {
-                       const vv = window.visualViewport;
-                       if (vv.height < window.innerHeight - 30 || (window.screen?.height && vv.height < window.screen.height - 120)) {
-                         setViewportHeight(vv.height);
-                         setViewportTop(vv.offsetTop || 0);
-                       }
-                     }
                    }} 
-                   onBlur={() => {
-                     const active = document.activeElement;
-                     if (active !== textareaRef.current && active?.tagName !== 'TEXTAREA') {
-                       setViewportHeight(null);
-                       setViewportTop(0);
-                     }
-                   }}
+                   onBlur={() => {}}
                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSendMessage(e); } }} 
                    className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" 
                    rows={1} 
@@ -480,7 +395,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                 e.target.value = ''; 
               }} />
            </form>
-         </div>
       </motion.div>
 
       <AnimatePresence>
