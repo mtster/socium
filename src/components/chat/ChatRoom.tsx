@@ -76,101 +76,10 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
   const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
-  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
-  const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
-  const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
-  const mountTimeRef = React.useRef<number>(Date.now());
 
   React.useEffect(() => {
     setIsVideoTooLong(false);
   }, [pendingMedia?.dataUrl]);
-
-  // Pre-seed seen message IDs when messages load
-  React.useEffect(() => {
-    if (messages && messages.length > 0) {
-      messages.forEach(msg => {
-        const id = (msg as any)._clientId || msg.id;
-        if (id) seenMessageIdsRef.current.add(id);
-      });
-    }
-  }, [messages]);
-
-  React.useEffect(() => {
-    // Keep window strictly at (0, 0) so header cannot scroll offscreen
-    const handleScroll = () => {
-      if (window.scrollY !== 0) {
-        window.scrollTo(0, 0);
-      }
-      if (document.body.scrollTop !== 0) {
-        document.body.scrollTop = 0;
-      }
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-    };
-  }, []);
-
-  const onSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
-    handleSendMessage(e);
-    // Keep keyboard open and active on mobile after sending
-    setTimeout(() => {
-      textareaRef.current?.focus({ preventScroll: true });
-    }, 10);
-  };
-
-  const handleContainerClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget || (e.target as HTMLElement).id === 'chat-messages-container') {
-      textareaRef.current?.blur();
-      (document.activeElement as HTMLElement)?.blur();
-    }
-  };
-
-  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 1) {
-      touchStartRef.current = {
-        y: e.touches[0].clientY,
-        time: Date.now()
-      };
-    }
-    if (e.currentTarget.scrollTop <= 5) setIsPulling(true);
-  };
-
-  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (touchStartRef.current && e.touches.length === 1) {
-      const deltaY = e.touches[0].clientY - touchStartRef.current.y;
-      const elapsedTime = Date.now() - touchStartRef.current.time;
-      const isKeyboardOpen = document.activeElement === textareaRef.current || document.activeElement?.tagName === 'TEXTAREA';
-      const isAtBottom = e.currentTarget.scrollTop <= 10;
-
-      // Excessive / intentional swipe down gesture to dismiss keyboard (like iOS iMessage)
-      // Only triggers when user is at the bottom of the list (scrollTop <= 10) AND pulls down deliberately
-      // Regular scrolling through message history does NOT trigger keyboard dismissal
-      if (isKeyboardOpen && isAtBottom && (deltaY > 60 || (deltaY > 40 && elapsedTime < 200))) {
-        textareaRef.current?.blur();
-        (document.activeElement as HTMLElement)?.blur();
-        touchStartRef.current = null;
-      }
-    }
-
-    if (!isPulling || !hasMoreMessages || loadingMessages) return;
-    const touch = e.touches[0];
-    const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
-    if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
-    const diff = touch.clientY - startY;
-    if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-    touchStartRef.current = null;
-    if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
-    setIsPulling(false);
-    setPullProgress(0);
-    (e.currentTarget as any)._pullStartY = null;
-  };
 
   return (
     <>
@@ -180,20 +89,10 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
-         className="fixed inset-0 z-[60] flex flex-col bg-black w-full h-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
-         style={{ top: 0, left: 0, right: 0, bottom: 0, height: '100%', width: '100%' }}
+         className="fixed inset-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
-        {/* HEADER */}
-        <div 
-          className="p-4 pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 z-30"
-          style={{
-            paddingTop: 'clamp(4px, calc(env(safe-area-inset-top, 0px) - 10px), 40px)',
-            paddingBottom: '12px'
-          }}
-        >
-           <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform">
-             <ArrowLeft size={24} />
-           </button>
+        <div className="p-4 pt-safe flex items-center gap-4 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
+           <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
                 {activeChat.isGroup ? (
@@ -250,151 +149,119 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
-          onClick={handleContainerClick}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+          onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
+          onTouchMove={(e) => {
+            if (!isPulling || !hasMoreMessages || loadingMessages) return;
+            const touch = e.touches[0];
+            const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
+            if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
+            const diff = touch.clientY - startY;
+            if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
+          }}
+          onTouchEnd={(e) => {
+            if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
+            setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
+          }}
         >
-             <div ref={messagesEndRef} className="h-0 shrink-0" />
-             <div className="flex flex-col-reverse">
-                <AnimatePresence initial={false}>
-                {messages.slice().reverse().map((msg, idx, arr) => {
-                   const msgKey = (msg as any)._clientId || msg.id;
-                   const createdAtMs = msg.created_at ? new Date(msg.created_at).getTime() : 0;
-                   const isHistorical = createdAtMs > 0 && createdAtMs < (mountTimeRef.current - 1000);
-                   const isAlreadySeen = seenMessageIdsRef.current.has(msgKey);
-                   const isNew = !isHistorical && !isAlreadySeen;
-                   if (isNew) {
-                     seenMessageIdsRef.current.add(msgKey);
-                   }
-
-                   return (
-                     <motion.div 
-                       key={msgKey} 
-                       initial={isNew ? { opacity: 0, scale: 0.88, y: 22 } : false} 
-                       animate={{ opacity: 1, scale: 1, y: 0 }} 
-                       transition={{ 
-                         opacity: { duration: 0.2, ease: 'easeOut' },
-                         scale: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] },
-                         y: { duration: 0.28, ease: [0.17, 0.59, 0.4, 0.77] }
-                       }}
-                       style={{ 
-                         transformOrigin: msg.sender_id === currentUserId ? 'bottom right' : 'bottom left',
-                         willChange: 'transform, opacity'
-                       }}
-                     >
-                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
-                     </motion.div>
-                   );
-                })}
-                </AnimatePresence>
+           <div ref={messagesEndRef} className="h-1 shrink-0" />
+           <div className="flex flex-col-reverse">
+              <AnimatePresence initial={false}>
+              {messages.slice().reverse().map((msg, idx, arr) => (
+                 <motion.div key={msg.id} initial={{ opacity: 0, scale: 0.95, y: 15 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 400, damping: 30 }}>
+                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
+                 </motion.div>
+               ))}
+              </AnimatePresence>
+            </div>
+           
+           {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
+           <AnimatePresence>
+            {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
+              <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
+                {pullProgress >= 1 ? "Release to load" : "Pull for history"}
               </div>
-             
-             {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
-             <AnimatePresence>
-              {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
-                <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
-                  {pullProgress >= 1 ? "Release to load" : "Pull for history"}
-                </div>
-              </motion.div>}
-             </AnimatePresence>
-          </div>
+            </motion.div>}
+           </AnimatePresence>
+        </div>
 
-          <form 
-            onSubmit={onSendMessage} 
-            className="px-4 pt-2.5 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 z-10"
-          >
-             <div className="flex items-center gap-3">
-               <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
-               <div className="relative flex-1 flex items-center">
-                 <textarea 
-                   ref={textareaRef} 
-                   placeholder="Message..." 
-                   value={newMessage} 
-                   onChange={e => setNewMessage(e.target.value)} 
-                   onFocus={() => { 
-                     setShowFeatures(false); 
-                     window.scrollTo(0, 0); 
-                   }} 
-                   onBlur={() => {}}
-                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSendMessage(e); } }} 
-                   className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" 
-                   rows={1} 
-                   style={{ height: newMessage ? 'auto' : '44px' }} 
-                 />
-                 <button type="submit"
-                    disabled={!newMessage.trim()}
-                    onMouseDown={(e) => {
+        <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0">
+           <div className="flex items-center gap-3">
+             <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
+             <div className="relative flex-1 flex items-center">
+               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => setShowFeatures(false)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
+               <button type="submit"
+                  disabled={!newMessage.trim()}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                  }}
+                  onTouchStart={(e) => {
+                    if (newMessage.trim()) {
                       e.preventDefault();
-                    }}
-                    onTouchStart={(e) => {
-                      if (newMessage.trim()) {
-                        e.preventDefault();
-                        onSendMessage(e);
-                      }
-                    }}
-                    className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"
-                  >
-                    <SendHorizonal size={18} />
-                  </button>
-               </div>
+                      handleSendMessage(e);
+                    }
+                  }}
+                  className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"
+                >
+                  <SendHorizonal size={18} />
+                </button>
              </div>
-             <AnimatePresence>
-               {showFeatures && (
-                  <motion.div 
-                    initial={{ height: 0, opacity: 0, scale: 0.95 }} 
-                    animate={{ height: 'auto', opacity: 1, scale: 1 }} 
-                    exit={{ height: 0, opacity: 0, scale: 0.95 }} 
-                    transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                    className="overflow-hidden mt-4 px-2 pb-2 origin-top"
-                  >
-                    <div className="grid grid-cols-4 gap-4">
-                      <button type="button" className="flex flex-col items-center gap-2" onClick={() => cameraInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><Camera size={22} /></div><span className="text-[10px] text-white/50">Camera</span></button>
-                      <button type="button" className="flex flex-col items-center gap-2" onClick={() => fileInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><ImageIcon size={22} /></div><span className="text-[10px] text-white/50">Photos</span></button>
-                      <button type="button" className="flex flex-col items-center gap-2" onClick={isRecording ? stopRecording : startRecording}><div className={cn("w-12 h-12 rounded-full border flex items-center justify-center", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>{isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}</div><span className={cn("text-[10px]", isRecording ? "text-red-500" : "text-white/50")}>{isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}</span></button>
-                      <button type="button" className="flex flex-col items-center gap-2" onClick={handleLocationShare}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><MapPin size={22} /></div><span className="text-[10px] text-white/50">Location</span></button>
-                    </div>
-                  </motion.div>
-               )}
-             </AnimatePresence>
-             {uploadingMedia && (
-               <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center gap-1.5 z-50 rounded-t-3xl backdrop-blur-xs">
-                 <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                 <span className="text-[11px] text-white/90 font-medium tracking-wide">
-                   {uploadStatusText || (uploadProgress !== null && uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Sending media...')}
-                 </span>
-               </div>
+           </div>
+           <AnimatePresence>
+             {showFeatures && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0, scale: 0.95 }} 
+                  animate={{ height: 'auto', opacity: 1, scale: 1 }} 
+                  exit={{ height: 0, opacity: 0, scale: 0.95 }} 
+                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                  className="overflow-hidden mt-4 px-2 pb-2 origin-top"
+                >
+                  <div className="grid grid-cols-4 gap-4">
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={() => cameraInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><Camera size={22} /></div><span className="text-[10px] text-white/50">Camera</span></button>
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={() => fileInputRef.current?.click()}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><ImageIcon size={22} /></div><span className="text-[10px] text-white/50">Photos</span></button>
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={isRecording ? stopRecording : startRecording}><div className={cn("w-12 h-12 rounded-full border flex items-center justify-center", isRecording ? "bg-red-500/20 border-red-500/50 text-red-500" : "bg-white/10 border-white/10")}>{isRecording ? <div className="w-4 h-4 bg-red-500 rounded-sm" /> : <Mic size={22} />}</div><span className={cn("text-[10px]", isRecording ? "text-red-500" : "text-white/50")}>{isRecording ? `0:${recordingDuration.toString().padStart(2, '0')}` : 'Audio'}</span></button>
+                    <button type="button" className="flex flex-col items-center gap-2" onClick={handleLocationShare}><div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center"><MapPin size={22} /></div><span className="text-[10px] text-white/50">Location</span></button>
+                  </div>
+                </motion.div>
              )}
-              <input type="file" ref={fileInputRef} accept="image/*,video/*" className="hidden" onChange={(e) => { 
-                const file = e.target.files?.[0]; 
-                if (file) { 
-                  const isVideo = file.type.startsWith('video/'); 
-                  videoLog.info(`📂 [File Picker] Selected ${isVideo ? 'video' : 'image'}`, {
-                    name: file.name,
-                    sizeMb: (file.size / (1024 * 1024)).toFixed(2),
-                    type: file.type
-                  });
-                  setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); 
-                  setShowFeatures(false); 
-                } 
-                e.target.value = ''; 
-              }} />
-              <input type="file" ref={cameraInputRef} accept="image/*,video/*" capture="environment" className="hidden" onChange={(e) => { 
-                const file = e.target.files?.[0]; 
-                if (file) { 
-                  const isVideo = file.type.startsWith('video/'); 
-                  videoLog.info(`📷 [Camera Picker] Captured ${isVideo ? 'video' : 'image'}`, {
-                    name: file.name,
-                    sizeMb: (file.size / (1024 * 1024)).toFixed(2),
-                    type: file.type
-                  });
-                  setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); 
-                  setShowFeatures(false); 
-                } 
-                e.target.value = ''; 
-              }} />
-           </form>
+           </AnimatePresence>
+           {uploadingMedia && (
+             <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center gap-1.5 z-50 rounded-t-3xl backdrop-blur-xs">
+               <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+               <span className="text-[11px] text-white/90 font-medium tracking-wide">
+                 {uploadStatusText || (uploadProgress !== null && uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Sending media...')}
+               </span>
+             </div>
+           )}
+            <input type="file" ref={fileInputRef} accept="image/*,video/*" className="hidden" onChange={(e) => { 
+              const file = e.target.files?.[0]; 
+              if (file) { 
+                const isVideo = file.type.startsWith('video/'); 
+                videoLog.info(`📂 [File Picker] Selected ${isVideo ? 'video' : 'image'}`, {
+                  name: file.name,
+                  sizeMb: (file.size / (1024 * 1024)).toFixed(2),
+                  type: file.type
+                });
+                setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); 
+                setShowFeatures(false); 
+              } 
+              e.target.value = ''; 
+            }} />
+            <input type="file" ref={cameraInputRef} accept="image/*,video/*" capture="environment" className="hidden" onChange={(e) => { 
+              const file = e.target.files?.[0]; 
+              if (file) { 
+                const isVideo = file.type.startsWith('video/'); 
+                videoLog.info(`📷 [Camera Picker] Captured ${isVideo ? 'video' : 'image'}`, {
+                  name: file.name,
+                  sizeMb: (file.size / (1024 * 1024)).toFixed(2),
+                  type: file.type
+                });
+                setPendingMedia({ file, type: isVideo ? 'video' : 'image', dataUrl: URL.createObjectURL(file) }); 
+                setShowFeatures(false); 
+              } 
+              e.target.value = ''; 
+            }} />
+         </form>
       </motion.div>
 
       <AnimatePresence>
