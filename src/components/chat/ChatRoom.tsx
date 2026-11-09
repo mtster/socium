@@ -388,24 +388,20 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    onFocus={() => { 
                      setShowFeatures(false); 
                      window.scrollTo(0, 0); 
-                     setTimeout(() => {
-                       if (window.visualViewport) {
-                         const vv = window.visualViewport;
-                         if (vv.height < window.innerHeight - 30 || (window.screen?.height && vv.height < window.screen.height - 120)) {
-                           setViewportHeight(vv.height);
-                           setViewportTop(vv.offsetTop || 0);
-                         }
+                     if (window.visualViewport) {
+                       const vv = window.visualViewport;
+                       if (vv.height < window.innerHeight - 30 || (window.screen?.height && vv.height < window.screen.height - 120)) {
+                         setViewportHeight(vv.height);
+                         setViewportTop(vv.offsetTop || 0);
                        }
-                     }, 50);
+                     }
                    }} 
                    onBlur={() => {
-                     setTimeout(() => {
-                       const active = document.activeElement;
-                       if (active !== textareaRef.current && active?.tagName !== 'TEXTAREA') {
-                         setViewportHeight(null);
-                         setViewportTop(0);
-                       }
-                     }, 100);
+                     const active = document.activeElement;
+                     if (active !== textareaRef.current && active?.tagName !== 'TEXTAREA') {
+                       setViewportHeight(null);
+                       setViewportTop(0);
+                     }
                    }}
                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSendMessage(e); } }} 
                    className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" 
