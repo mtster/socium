@@ -22,13 +22,10 @@ interface ChatRoomProps {
 }
 
 function useVisualViewport() {
-  const [keyboardHeight, setKeyboardHeight] = React.useState(0);
-  const screenFullHeightRef = React.useRef<number>(0);
+  const [viewportStyle, setViewportStyle] = React.useState<{ height?: string; top?: string }>({});
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-
-    screenFullHeightRef.current = Math.max(window.screen.height, window.innerHeight);
 
     const updateViewport = () => {
       if (window.scrollY !== 0) {
@@ -36,24 +33,10 @@ function useVisualViewport() {
       }
 
       if (window.visualViewport) {
-        const vv = window.visualViewport;
-        const isInputFocused = document.activeElement && (
-          document.activeElement.tagName === 'INPUT' ||
-          document.activeElement.tagName === 'TEXTAREA'
-        );
-
-        if (isInputFocused) {
-          const baseHeight = screenFullHeightRef.current || window.innerHeight;
-          const diff = baseHeight - vv.height;
-          if (diff > 80) {
-            setKeyboardHeight(Math.round(diff));
-          } else {
-            setKeyboardHeight(0);
-          }
-        } else {
-          screenFullHeightRef.current = Math.max(screenFullHeightRef.current, window.innerHeight);
-          setKeyboardHeight(0);
-        }
+        setViewportStyle({
+          height: `${window.visualViewport.height}px`,
+          top: `${window.visualViewport.offsetTop}px`,
+        });
       }
     };
 
@@ -65,46 +48,20 @@ function useVisualViewport() {
     }
     window.addEventListener('scroll', updateViewport);
 
-    const handleFocusOut = () => {
-      setTimeout(() => {
-        const isInputFocused = document.activeElement && (
-          document.activeElement.tagName === 'INPUT' ||
-          document.activeElement.tagName === 'TEXTAREA'
-        );
-        if (!isInputFocused) {
-          setKeyboardHeight(0);
-        }
-      }, 50);
-    };
-    window.addEventListener('focusout', handleFocusOut);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-        }
-        setKeyboardHeight(0);
-        if (window.scrollY !== 0) window.scrollTo(0, 0);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
     return () => {
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', updateViewport);
         window.visualViewport.removeEventListener('scroll', updateViewport);
       }
       window.removeEventListener('scroll', updateViewport);
-      window.removeEventListener('focusout', handleFocusOut);
-      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, []);
 
-  return keyboardHeight;
+  return viewportStyle;
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
-  const keyboardHeight = useVisualViewport();
+  const viewportStyle = useVisualViewport();
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
     activeChat.isGroup
@@ -172,9 +129,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'spring', stiffness: 320, damping: 32 }} 
-         className="fixed inset-0 z-[60] flex flex-col bg-black w-full h-full overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         style={{
+           height: viewportStyle.height || '100%',
+           top: viewportStyle.top || '0px',
+         }}
+         className="fixed left-0 right-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
-        {/* Header - Fixed & Stationary (Never moves) */}
         <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 relative z-20">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
@@ -233,55 +193,48 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        {/* Dynamic Body Content wrapper: stays above software keyboard smoothly */}
-        <div 
-          className="flex-1 flex flex-col min-h-0 overflow-hidden relative transition-[padding-bottom] duration-200 ease-out"
-          style={{ paddingBottom: `${keyboardHeight}px` }}
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+          onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
+          onTouchMove={(e) => {
+            if (!isPulling || !hasMoreMessages || loadingMessages) return;
+            const touch = e.touches[0];
+            const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
+            if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
+            const diff = touch.clientY - startY;
+            if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
+          }}
+          onTouchEnd={(e) => {
+            if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
+            setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
+          }}
         >
-          <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
-            onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
-            onTouchMove={(e) => {
-              if (!isPulling || !hasMoreMessages || loadingMessages) return;
-              const touch = e.touches[0];
-              const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
-              if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
-              const diff = touch.clientY - startY;
-              if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
-            }}
-            onTouchEnd={(e) => {
-              if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
-              setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
-            }}
-          >
-             <div ref={messagesEndRef} className="h-1 shrink-0" />
-             <div className="flex flex-col-reverse">
-                <AnimatePresence initial={false}>
-                {messages.slice().reverse().map((msg, idx, arr) => (
-                   <motion.div 
-                     key={msg._clientId || msg.id} 
-                     layout
-                     initial={{ opacity: 0, scale: 0.88, y: 20 }} 
-                     animate={{ opacity: 1, scale: 1, y: 0 }} 
-                     exit={{ opacity: 0, scale: 0.88 }} 
-                     transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-                   >
-                      <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
-                   </motion.div>
-                 ))}
-                </AnimatePresence>
+           <div ref={messagesEndRef} className="h-1 shrink-0" />
+           <div className="flex flex-col-reverse">
+              <AnimatePresence initial={false}>
+              {messages.slice().reverse().map((msg, idx, arr) => (
+                 <motion.div 
+                   key={msg._clientId || msg.id} 
+                   initial={{ opacity: 0, scale: 0.95, y: 15 }} 
+                   animate={{ opacity: 1, scale: 1, y: 0 }} 
+                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                 >
+                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
+                 </motion.div>
+               ))}
+              </AnimatePresence>
+            </div>
+           
+           {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
+           <AnimatePresence>
+            {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
+              <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
+                {pullProgress >= 1 ? "Release to load" : "Pull for history"}
               </div>
-             
-             {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
-             <AnimatePresence>
-              {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
-                <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
-                  {pullProgress >= 1 ? "Release to load" : "Pull for history"}
-                </div>
-              </motion.div>}
-             </AnimatePresence>
-          </div>
+            </motion.div>}
+           </AnimatePresence>
+        </div>
 
-          <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10">
+        <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10">
              <div className="flex items-center gap-3">
                <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
                <div className="relative flex-1 flex items-center">
@@ -370,7 +323,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               e.target.value = ''; 
             }} />
          </form>
-        </div>
       </motion.div>
 
       <AnimatePresence>
