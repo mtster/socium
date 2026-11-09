@@ -129,12 +129,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'spring', stiffness: 320, damping: 32 }} 
-         style={{
-           height: viewportStyle.height || '100%',
-           top: viewportStyle.top || '0px',
-         }}
-         className="fixed left-0 right-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed inset-0 z-[60] flex flex-col bg-black w-full h-full overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
+        {/* Stationary Header (Never moves) */}
         <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 relative z-20">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
@@ -192,6 +189,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
              </button>
            </div>
         </div>
+
+        {/* Inner Content Area: Sized to visualViewport height above keyboard */}
+        <div 
+          className="flex-1 flex flex-col min-h-0 overflow-hidden relative"
+          style={{
+            height: viewportStyle.height ? `calc(${viewportStyle.height} - 3.5rem)` : undefined,
+            maxHeight: viewportStyle.height ? `calc(${viewportStyle.height} - 3.5rem)` : undefined
+          }}
+        >
 
         <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
           onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
@@ -322,7 +328,8 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               } 
               e.target.value = ''; 
             }} />
-         </form>
+          </form>
+        </div>
       </motion.div>
 
       <AnimatePresence>
