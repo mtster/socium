@@ -76,7 +76,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
   const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
-  const [viewportHeight, setViewportHeight] = React.useState<number | null>(null);
+  const [viewportState, setViewportState] = React.useState<{ height: number; top: number } | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
 
   React.useEffect(() => {
     setIsVideoTooLong(false);
@@ -88,17 +90,26 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
       }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
+      }
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
 
-    // Handle visualViewport resize for iOS virtual keyboard
+    // Handle visualViewport resize and offset for iOS virtual keyboard
     const vv = window.visualViewport;
     const updateViewport = () => {
       if (vv) {
-        setViewportHeight(vv.height);
+        setViewportState({
+          height: vv.height,
+          top: vv.offsetTop
+        });
       }
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
+      }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
       }
     };
 
@@ -117,6 +128,65 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     };
   }, []);
 
+  const onSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim()) return;
+    handleSendMessage(e);
+    // Keep keyboard open and active on mobile after sending
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 10);
+  };
+
+  const handleContainerClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget || (e.target as HTMLElement).id === 'chat-messages-container') {
+      textareaRef.current?.blur();
+      (document.activeElement as HTMLElement)?.blur();
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 1) {
+      touchStartRef.current = {
+        y: e.touches[0].clientY,
+        time: Date.now()
+      };
+    }
+    if (e.currentTarget.scrollTop <= 5) setIsPulling(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (touchStartRef.current && e.touches.length === 1) {
+      const deltaY = e.touches[0].clientY - touchStartRef.current.y;
+      const elapsedTime = Date.now() - touchStartRef.current.time;
+      const isKeyboardOpen = document.activeElement === textareaRef.current || document.activeElement?.tagName === 'TEXTAREA';
+
+      // Excessive / intentional swipe down gesture to dismiss keyboard (like iOS iMessage)
+      // Only triggers on large downward drag (> 55px) or fast downward flick (> 30px in < 220ms)
+      // Regular scrolling (moving upwards or gentle scrolling) does NOT trigger it
+      if (isKeyboardOpen && (deltaY > 55 || (deltaY > 30 && elapsedTime < 220))) {
+        textareaRef.current?.blur();
+        (document.activeElement as HTMLElement)?.blur();
+        touchStartRef.current = null;
+      }
+    }
+
+    if (!isPulling || !hasMoreMessages || loadingMessages) return;
+    const touch = e.touches[0];
+    const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
+    if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
+    const diff = touch.clientY - startY;
+    if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    touchStartRef.current = null;
+    if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
+    setIsPulling(false);
+    setPullProgress(0);
+    (e.currentTarget as any)._pullStartY = null;
+  };
+
   return (
     <>
       <motion.div 
@@ -126,16 +196,17 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
          style={{
-           height: viewportHeight ? `${viewportHeight}px` : '100dvh',
-           maxHeight: viewportHeight ? `${viewportHeight}px` : '100dvh',
-           top: 0
+           height: viewportState ? `${viewportState.height}px` : '100dvh',
+           maxHeight: viewportState ? `${viewportState.height}px` : '100dvh',
+           top: viewportState ? `${viewportState.top}px` : 0,
          }}
-         className="fixed inset-x-0 top-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed inset-x-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
         <div 
-          className="px-3.5 pb-2 flex items-center gap-3 border-b border-white/10 bg-black/90 backdrop-blur-xl shrink-0 z-20"
+          className="px-3 pb-2 flex items-center gap-2.5 border-b border-white/10 bg-black/90 backdrop-blur-xl shrink-0 z-20"
           style={{
-            paddingTop: 'max(calc(env(safe-area-inset-top, 0px) + 2px), 8px)'
+            paddingTop: 'clamp(6px, calc(env(safe-area-inset-top, 0px) - 8px), 46px)',
+            paddingBottom: '8px'
           }}
         >
            <button onClick={onClose} className="p-1.5 -ml-1 text-white/80 active:scale-90 transition-transform">
@@ -197,27 +268,13 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-3.5 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              (document.activeElement as HTMLElement)?.blur();
-            }
-          }}
-          onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
-          onTouchMove={(e) => {
-            if (!isPulling || !hasMoreMessages || loadingMessages) return;
-            const touch = e.touches[0];
-            const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
-            if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
-            const diff = touch.clientY - startY;
-            if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
-          }}
-          onTouchEnd={(e) => {
-            if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
-            setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
-          }}
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-3 pb-0.5 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+          onClick={handleContainerClick}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         >
-           <div ref={messagesEndRef} className="h-0.5 shrink-0" />
+           <div ref={messagesEndRef} className="h-0 shrink-0" />
            <div className="flex flex-col-reverse">
               <AnimatePresence initial={false}>
               {messages.slice().reverse().map((msg, idx, arr) => (
@@ -247,11 +304,11 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </AnimatePresence>
         </div>
 
-        <form onSubmit={handleSendMessage} className="px-3.5 pt-2 pb-2.5 pb-safe border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 z-10">
+        <form onSubmit={onSendMessage} className="px-3 pt-1.5 pb-2 pb-safe border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 z-10">
            <div className="flex items-center gap-2.5">
              <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={22} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
              <div className="relative flex-1 flex items-center">
-               <textarea placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => { setShowFeatures(false); window.scrollTo(0, 0); }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
+               <textarea ref={textareaRef} placeholder="Message..." value={newMessage} onChange={e => setNewMessage(e.target.value)} onFocus={() => { setShowFeatures(false); window.scrollTo(0, 0); }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSendMessage(e); } }} className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" rows={1} style={{ height: newMessage ? 'auto' : '44px' }} />
                <button type="submit"
                   disabled={!newMessage.trim()}
                   onMouseDown={(e) => {
@@ -260,7 +317,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                   onTouchStart={(e) => {
                     if (newMessage.trim()) {
                       e.preventDefault();
-                      handleSendMessage(e);
+                      onSendMessage(e);
                     }
                   }}
                   className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"

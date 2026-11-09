@@ -134,9 +134,16 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     return () => { window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: false } })); };
   }, [viewingImage]);
 
-  const scrollToBottom = (smooth = true) => {
-    if (smooth) setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    else messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+  const scrollToBottom = (smooth = false) => {
+    if (scrollContainerRef.current) {
+      if (smooth) {
+        scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+    } else if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    }
   };
 
   const markMessagesAsRead = async () => {
