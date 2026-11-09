@@ -76,7 +76,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
   const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
-  const [viewportState, setViewportState] = React.useState<{ height: number; top: number } | null>(null);
+  const [keyboardOffset, setKeyboardOffset] = React.useState(0);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const touchStartRef = React.useRef<{ y: number; time: number } | null>(null);
 
@@ -96,14 +96,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
 
-    // Handle visualViewport resize and offset for iOS virtual keyboard
+    // Handle visualViewport resize and keyboard offset smoothly
     const vv = window.visualViewport;
     const updateViewport = () => {
       if (vv) {
-        setViewportState({
-          height: vv.height,
-          top: vv.offsetTop
-        });
+        const offset = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+        // Avoid micro-jitter
+        setKeyboardOffset(offset > 20 ? offset : 0);
+      } else {
+        setKeyboardOffset(0);
       }
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
@@ -113,14 +114,25 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
       }
     };
 
+    // When backgrounding/resuming the app, reset keyboard offset immediately to prevent flashing underlying view
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setKeyboardOffset(0);
+        textareaRef.current?.blur();
+        (document.activeElement as HTMLElement)?.blur();
+      }
+    };
+
     if (vv) {
       vv.addEventListener('resize', updateViewport);
       vv.addEventListener('scroll', updateViewport);
       updateViewport();
     }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.removeEventListener('scroll', handleScroll);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (vv) {
         vv.removeEventListener('resize', updateViewport);
         vv.removeEventListener('scroll', updateViewport);
@@ -195,18 +207,14 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }} 
-         style={{
-           height: viewportState ? `${viewportState.height}px` : '100dvh',
-           maxHeight: viewportState ? `${viewportState.height}px` : '100dvh',
-           top: viewportState ? `${viewportState.top}px` : 0,
-         }}
-         className="fixed inset-x-0 z-[60] flex flex-col bg-black w-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed inset-0 z-[60] flex flex-col bg-black w-full h-full border-white/5 overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         style={{ top: 0, left: 0, right: 0, bottom: 0, height: '100%' }}
       >
         <div 
-          className="p-4 pb-3 flex items-center gap-4 border-b border-white/10 bg-black/90 backdrop-blur-xl shrink-0 z-20"
+          className="p-4 pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/90 backdrop-blur-xl shrink-0 z-20"
           style={{
-            paddingTop: 'clamp(8px, calc(env(safe-area-inset-top, 0px) - 4px), 50px)',
-            paddingBottom: '14px'
+            paddingTop: 'clamp(4px, calc(env(safe-area-inset-top, 0px) - 10px), 40px)',
+            paddingBottom: '12px'
           }}
         >
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform">
@@ -268,11 +276,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-2 px-4 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
           onClick={handleContainerClick}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
+          style={{
+            paddingBottom: keyboardOffset > 0 ? `${keyboardOffset + 4}px` : '4px',
+            transition: 'padding-bottom 0.28s cubic-bezier(0.17, 0.59, 0.4, 0.77)'
+          }}
         >
            <div ref={messagesEndRef} className="h-0 shrink-0" />
            <div className="flex flex-col-reverse">
@@ -280,9 +292,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               {messages.slice().reverse().map((msg, idx, arr) => (
                  <motion.div 
                    key={(msg as any)._clientId || msg.id} 
-                   initial={{ opacity: 0, scale: 0.9, y: 18 }} 
+                   layout="position"
+                   initial={{ opacity: 0, scale: 0.88, y: 22 }} 
                    animate={{ opacity: 1, scale: 1, y: 0 }} 
-                   transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+                   transition={{ 
+                     layout: { duration: 0.32, ease: [0.22, 1, 0.36, 1] },
+                     opacity: { duration: 0.22, ease: 'easeOut' },
+                     scale: { duration: 0.3, ease: [0.22, 1, 0.36, 1] },
+                     y: { duration: 0.3, ease: [0.22, 1, 0.36, 1] }
+                   }}
                    style={{ 
                      transformOrigin: msg.sender_id === currentUserId ? 'bottom right' : 'bottom left',
                      willChange: 'transform, opacity'
@@ -304,7 +322,14 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </AnimatePresence>
         </div>
 
-        <form onSubmit={onSendMessage} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 z-10">
+        <form 
+          onSubmit={onSendMessage} 
+          className="px-4 pt-2.5 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 z-10"
+          style={{
+            transform: keyboardOffset > 0 ? `translateY(-${keyboardOffset}px)` : undefined,
+            transition: 'transform 0.28s cubic-bezier(0.17, 0.59, 0.4, 0.77)'
+          }}
+        >
            <div className="flex items-center gap-3">
              <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
              <div className="relative flex-1 flex items-center">
