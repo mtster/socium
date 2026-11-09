@@ -254,7 +254,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     metadata: any = null
   ) => {
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
-    const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType, metadata: metadata, created_at: new Date().toISOString() };
+    const temp = { id: msgId, _clientId: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: contentStr, media_url: mediaUrl, media_type: mediaType, metadata: metadata, created_at: new Date().toISOString() };
     setMessages(prev => [...prev, temp]);
     scrollToBottom();
     try {
@@ -268,7 +268,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         metadata: metadata
       }).select().single();
       if (error) throw error;
-      setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
+      setMessages(prev => prev.map(m => m.id === temp.id ? { ...data, _clientId: (m as any)._clientId || temp.id } : m));
       if (!activeChat.isGroup) {
         checkRecipientPresenceAndNotify(currentUserId, activeChat.id, currentUserId, data);
       } else {
@@ -286,10 +286,9 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || isSendingRef.current) return;
-    (document.activeElement as HTMLElement)?.blur();
     isSendingRef.current = true;
     const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
-    const temp = { id: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: newMessage.trim(), created_at: new Date().toISOString() };
+    const temp = { id: msgId, _clientId: msgId, sender_id: currentUserId, receiver_id: activeChat.isGroup ? null : activeChat.id, group_chat_id: activeChat.isGroup ? activeChat.id : null, content: newMessage.trim(), created_at: new Date().toISOString() };
     setMessages(prev => [...prev, temp]);
     const storedContent = newMessage.trim();
     setNewMessage('');
@@ -300,7 +299,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
         console.error("handleSendMessage error:", error);
         throw error;
       }
-      setMessages(prev => prev.map(m => m.id === temp.id ? data : m));
+      setMessages(prev => prev.map(m => m.id === temp.id ? { ...data, _clientId: (m as any)._clientId || temp.id } : m));
       // Trigger notification for 1-on-1 chats
       if (!activeChat.isGroup) {
         checkRecipientPresenceAndNotify(currentUserId, activeChat.id, currentUserId, data);

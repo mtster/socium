@@ -17,7 +17,10 @@ async function fetchChatsViaRpc(userId: string, limit: number, offset: number): 
     });
 
     if (!error && Array.isArray(data)) {
-      return data as ChatListItemType[];
+      return (data as any[]).map(item => ({
+        ...item,
+        unreadCount: Number(item.unreadCount ?? item.unread_count ?? 0)
+      })) as ChatListItemType[];
     }
     if (error) {
       console.warn('[useChatList] RPC get_user_chats notice:', error.message);
@@ -211,12 +214,12 @@ async function syncRtdbInboxes(userId: string, chatItems: ChatListItemType[]) {
     const updates: Record<string, boolean> = {};
     let needsUpdate = false;
 
+    // ONLY populate missing unread flags if database reports unread messages and RTDB has no record.
+    // NEVER overwrite currentVal === false back to true simply because the chat list was queried!
+    // A chat must ONLY be marked as seen when the user explicitly opens that conversation.
     for (const chat of chatItems) {
       const currentVal = inboxes[chat.id];
-      if (chat.unreadCount === 0 && currentVal === false) {
-        updates[chat.id] = true;
-        needsUpdate = true;
-      } else if (chat.unreadCount > 0 && currentVal === undefined) {
+      if ((chat.unreadCount || 0) > 0 && currentVal === undefined) {
         updates[chat.id] = false;
         needsUpdate = true;
       }
