@@ -199,7 +199,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
           }}
         >
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-2 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
           onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
           onTouchMove={(e) => {
             if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -214,7 +214,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
             setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
           }}
         >
-           <div ref={messagesEndRef} className="h-1 shrink-0" />
+           <div ref={messagesEndRef} className="h-0.5 shrink-0" />
            <div className="flex flex-col-reverse">
               <AnimatePresence initial={false}>
               {messages.slice().reverse().map((msg, idx, arr) => (

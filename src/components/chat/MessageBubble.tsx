@@ -261,10 +261,22 @@ export const MessageBubble = React.memo(
       ((msg.media_type === "image" || msg.media_type === "video" || isLoc || msg.media_type === "audio") &&
         (!msg.content || (locMatch && msg.content === locMatch[0])));
 
+    const isLatestInChat = !nextMsg;
+
+    const isHourGap = useMemo(() => {
+      if (!prevMsg || !prevMsg.created_at || !msg.created_at) return false;
+      const msgTime = new Date(msg.created_at).getTime();
+      const prevTime = new Date(prevMsg.created_at).getTime();
+      if (isNaN(msgTime) || isNaN(prevTime)) return false;
+      return (msgTime - prevTime) >= 3600000; // 1 hour = 3600000ms
+    }, [msg.created_at, prevMsg?.created_at]);
+
+    const shouldShowDate = showDate || isHourGap;
+
     return (
       <div className="flex flex-col w-full">
         <AnimatePresence>
-          {showDate && (
+          {shouldShowDate && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={
@@ -277,8 +289,8 @@ export const MessageBubble = React.memo(
               className="flex justify-center w-full overflow-hidden select-none pointer-events-none relative"
               style={{ originY: 1, willChange: "height, opacity" }}
             >
-              <div className="pt-2 pb-1 block">
-                <span className="text-[11px] font-sans font-medium text-white/40 tracking-wide text-center">
+              <div className="pt-2 pb-1.5 flex justify-center">
+                <span className="text-[11px] font-sans font-medium text-white/40 tracking-wide text-center bg-white/[0.04] border border-white/[0.06] px-3 py-0.5 rounded-full">
                   {formatMessageDate(msg.created_at)}
                 </span>
               </div>
@@ -289,11 +301,13 @@ export const MessageBubble = React.memo(
           className={cn(
             "flex w-full gap-2 relative",
             isMine ? "justify-end" : "justify-start",
-            isConsecutive
-              ? "mb-[2px]"
-              : !isMine && !isPrevConsecutive && activeChat.isGroup
-                ? "mb-4"
-                : "mb-3",
+            isLatestInChat
+              ? "mb-1"
+              : isConsecutive
+                ? "mb-[2px]"
+                : !isMine && !isPrevConsecutive && activeChat.isGroup
+                  ? "mb-3.5"
+                  : "mb-2.5",
           )}
         >
         {!isMine && (
