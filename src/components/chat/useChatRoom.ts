@@ -157,7 +157,9 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     } else {
       await supabase.from('messages').update({ read_at: new Date().toISOString() }).eq('sender_id', activeChat.id).eq('receiver_id', currentUserId).is('read_at', null);
     }
-    window.dispatchEvent(new CustomEvent('forceGetUnread'));
+    window.dispatchEvent(new CustomEvent('forceGetUnread', {
+      detail: { scope: activeChat.isGroup ? 'group' : 'dm' }
+    }));
   };
 
   const fetchMessages = async (loadOld = false, currentOffset = 0, force = false) => {

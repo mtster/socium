@@ -13,8 +13,12 @@ const inFlightProfile = new Map<string, Promise<void>>();
 const inFlightUserPosts = new Map<string, Promise<void>>();
 let lastUserPostsFetch: { key: string; fetchedAt: number } | null = null;
 
+type UnreadScope = 'all' | 'dm' | 'group';
+
 const inFlightUnread = new Map<string, Promise<void>>();
-const pendingUnreadRerun = new Set<string>();
+const pendingUnreadRerun = new Map<string, UnreadScope>();
+const cachedUnreadDms = new Map<string, number>();
+const cachedUnreadGroups = new Map<string, number>();
 
 const inFlightFeedUnseen = new Map<string, Promise<void>>();
 const pendingFeedUnseenRerun = new Set<string>();
@@ -69,7 +73,7 @@ interface AppState {
   fetchMoreUserPosts: (userId: string, currentUserId: string) => Promise<void>;
   fetchFeedPosts: (currentUserId: string, refresh?: boolean) => Promise<void>;
   fetchMoreFeedPosts: (currentUserId: string) => Promise<void>;
-  fetchUnreadCount: (userId: string) => Promise<void>;
+  fetchUnreadCount: (userId: string, scope?: UnreadScope) => Promise<void>;
   fetchPendingRequestsCount: (userId: string) => Promise<void>;
   markPendingRequestsAsSeen: (userId: string) => Promise<void>;
   fetchFeedUnseenCount: (userId: string) => Promise<void>;
@@ -479,53 +483,114 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  fetchUnreadCount: async (userId) => {
+  fetchUnreadCount: async (userId, scope: UnreadScope = 'all') => {
     const existing = inFlightUnread.get(userId);
     if (existing) {
-      pendingUnreadRerun.add(userId);
+      const prevPending = pendingUnreadRerun.get(userId);
+      const merged: UnreadScope = !prevPending
+        ? scope
+        : prevPending === scope
+          ? scope
+          : 'all';
+      pendingUnreadRerun.set(userId, merged);
       return existing;
     }
 
+    const effectiveScope: UnreadScope =
+      (scope === 'dm' && !cachedUnreadGroups.has(userId)) ||
+      (scope === 'group' && !cachedUnreadDms.has(userId))
+        ? 'all'
+        : scope;
+
+    const fetchDm = effectiveScope === 'all' || effectiveScope === 'dm';
+    const fetchGroup = effectiveScope === 'all' || effectiveScope === 'group';
+
     const task = (async () => {
       try {
-        // 1. Unread 1-on-1 direct messages & 2. Group chat participants in parallel
-        const [{ data: dms }, { data: participants }] = await Promise.all([
-          supabase
-            .from('messages')
-            .select('sender_id')
-            .eq('receiver_id', userId)
-            .is('read_at', null),
-          supabase
-            .from('group_chat_participants')
-            .select('chat_id, last_read_at')
-            .eq('user_id', userId)
+        const [dmRes, partRes] = await Promise.all([
+          fetchDm
+            ? supabase
+                .from('messages')
+                .select('sender_id')
+                .eq('receiver_id', userId)
+                .is('read_at', null)
+            : Promise.resolve(null),
+          fetchGroup
+            ? supabase
+                .from('group_chat_participants')
+                .select('chat_id, last_read_at')
+                .eq('user_id', userId)
+            : Promise.resolve(null)
         ]);
 
-        const unreadDMs = new Set(dms?.map(d => d.sender_id) || []).size;
-
-        let unreadGroups = 0;
-        if (participants && participants.length > 0) {
-          const promises = participants.map(async (part) => {
-            if (!part.last_read_at) return 0;
-            const { count } = await supabase
-              .from('messages')
-              .select('*', { count: 'exact', head: true })
-              .eq('group_chat_id', part.chat_id)
-              .neq('sender_id', userId)
-              .gt('created_at', part.last_read_at);
-            return (count && count > 0) ? 1 : 0;
-          });
-          const results = await Promise.all(promises);
-          unreadGroups = results.reduce((acc, val) => acc + val, 0);
+        if (dmRes && !dmRes.error) {
+          const unreadDMs = new Set((dmRes.data || []).map((d: any) => d.sender_id)).size;
+          cachedUnreadDms.set(userId, unreadDMs);
         }
 
-        set({ totalUnread: unreadDMs + unreadGroups });
+        if (partRes && !partRes.error) {
+          const validParts = (partRes.data || []).filter((p: any) => !!p.last_read_at);
+          let unreadGroups = 0;
+
+          if (validParts.length > 0 && validParts.length <= 15) {
+            const orFilter = validParts
+              .map((p: any) => {
+                const iso = new Date(p.last_read_at).toISOString();
+                return `and(group_chat_id.eq.${p.chat_id},created_at.gt.${iso})`;
+              })
+              .join(',');
+
+            const { data: unreadGroupMsgs, error: groupMsgErr } = await supabase
+              .from('messages')
+              .select('group_chat_id')
+              .neq('sender_id', userId)
+              .or(orFilter);
+
+            if (!groupMsgErr && unreadGroupMsgs && unreadGroupMsgs.length < 1000) {
+              unreadGroups = new Set(unreadGroupMsgs.map((m: any) => m.group_chat_id)).size;
+            } else {
+              const results = await Promise.all(
+                validParts.map(async (part: any) => {
+                  const { count } = await supabase
+                    .from('messages')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('group_chat_id', part.chat_id)
+                    .neq('sender_id', userId)
+                    .gt('created_at', part.last_read_at);
+                  return count && count > 0 ? 1 : 0;
+                })
+              );
+              unreadGroups = results.reduce((acc, val) => acc + val, 0);
+            }
+          } else if (validParts.length > 15) {
+            const results = await Promise.all(
+              validParts.map(async (part: any) => {
+                const { count } = await supabase
+                  .from('messages')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('group_chat_id', part.chat_id)
+                  .neq('sender_id', userId)
+                  .gt('created_at', part.last_read_at);
+                return count && count > 0 ? 1 : 0;
+              })
+            );
+            unreadGroups = results.reduce((acc, val) => acc + val, 0);
+          }
+
+          cachedUnreadGroups.set(userId, unreadGroups);
+        }
+
+        const totalDms = cachedUnreadDms.get(userId) ?? 0;
+        const totalGroups = cachedUnreadGroups.get(userId) ?? 0;
+        set({ totalUnread: totalDms + totalGroups });
       } catch (e) {
         console.warn("Error fetching unread count from Supabase:", e);
       } finally {
         inFlightUnread.delete(userId);
-        if (pendingUnreadRerun.delete(userId)) {
-          get().fetchUnreadCount(userId);
+        const nextScope = pendingUnreadRerun.get(userId);
+        pendingUnreadRerun.delete(userId);
+        if (nextScope) {
+          get().fetchUnreadCount(userId, nextScope);
         }
       }
     })();
@@ -571,21 +636,19 @@ export const useStore = create<AppState>((set, get) => ({
 
     const task = (async () => {
       try {
-        // Reuse cached profile.base_timestamp if already fetched for this user
+        // Reuse cached/in-flight profile fetch so startup shares one profiles?select=* query
         const cachedProfile = get().profile;
-        let baseTimestamp = cachedProfile?.id === userId ? cachedProfile.base_timestamp : undefined;
+        const needsProfile = cachedProfile?.id !== userId;
 
-        const [profileRes, seenRes, connIds, myPostsRes, myRequestsRes] = await Promise.all([
-          baseTimestamp !== undefined
-            ? Promise.resolve({ data: { base_timestamp: baseTimestamp } })
-            : supabase.from('profiles').select('base_timestamp').eq('id', userId).maybeSingle(),
+        const [, seenRes, connIds, myPostsRes, myRequestsRes] = await Promise.all([
+          needsProfile ? get().fetchProfile(userId) : Promise.resolve(),
           supabase.from('seen_activities').select('activity_id').eq('user_id', userId),
           get().fetchConnectionIds(userId),
           supabase.from('posts').select('id').eq('user_id', userId),
           supabase.from('connection_requests').select('id').eq('receiver_id', userId)
         ]);
 
-        baseTimestamp = profileRes.data?.base_timestamp || new Date(0).toISOString();
+        const baseTimestamp = get().profile?.base_timestamp || new Date(0).toISOString();
         const seenIds = new Set((seenRes.data || []).map((s: any) => s.activity_id));
 
         const connectionIds = Array.from(new Set([

@@ -140,18 +140,21 @@ export function useRealtimeSync({
     let forceGetUnreadHandler: any = null;
 
     if (userId) {
-      const getUnread = async () => {
-        await fetchUnreadCount(userId);
+      const getUnread = async (scope: 'all' | 'dm' | 'group' = 'all') => {
+        await fetchUnreadCount(userId, scope);
       };
       
       const getPending = async () => {
         await fetchPendingRequestsCount(userId);
       };
 
-      forceGetUnreadHandler = () => getUnread();
+      forceGetUnreadHandler = (e?: Event) => {
+        const scope = (e as CustomEvent<{ scope?: 'all' | 'dm' | 'group' }>)?.detail?.scope || 'all';
+        getUnread(scope);
+      };
       window.addEventListener('forceGetUnread', forceGetUnreadHandler);
 
-      getUnread();
+      getUnread('all');
       getPending();
 
       globalUnreadChannel = supabase.channel('global_unread')
@@ -165,14 +168,35 @@ export function useRealtimeSync({
            if (msg.sender_id === userId || !isForUs || (window as any).currentChatUserId === (msg.group_chat_id || msg.sender_id)) return;
            
            playMessageSound();
-           getUnread();
+           getUnread(msg.group_chat_id ? 'group' : 'dm');
            
            const senderId = msg.sender_id;
            const groupChatId = msg.group_chat_id;
            const chatId = groupChatId || senderId;
-           
-           if ((window as any).currentChatUserId !== chatId) {
-             let chatRefProfile: any = null;
+
+           if ((window as any).currentActiveTab === 'chat') {
+             return;
+           }
+
+           const cachedChat = useStore.getState().chats.find((c) => c.id === chatId);
+           let chatRefProfile: any = null;
+
+           if (cachedChat) {
+             if (cachedChat.isGroup && cachedChat.groupChat) {
+               chatRefProfile = {
+                 id: cachedChat.groupChat.id,
+                 username: cachedChat.groupChat.name || 'Group Chat',
+                 full_name: cachedChat.groupChat.name || 'Group Chat',
+                 avatar_url: cachedChat.groupChat.avatar_url || null,
+                 isGroup: true,
+                 participants: cachedChat.participants || []
+               };
+             } else if (cachedChat.profile) {
+               chatRefProfile = cachedChat.profile;
+             }
+           }
+
+           if (!chatRefProfile) {
              if (groupChatId) {
                const { data: gc } = await supabase.from('group_chats').select('*, group_chat_participants(profiles(*))').eq('id', groupChatId).single();
                if (gc) {
@@ -190,22 +214,19 @@ export function useRealtimeSync({
                const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
                chatRefProfile = senderProfile;
              }
-             
-             if (chatRefProfile) {
-               const currentPathOpen = (window as any).currentActiveTab;
-               if (currentPathOpen !== 'chat') {
-                 setFloatingAvatar(chatRefProfile);
-                 setTimeout(() => setFloatingAvatar(null), 4000);
-               }
-             }
+           }
+           
+           if (chatRefProfile && (window as any).currentActiveTab !== 'chat') {
+             setFloatingAvatar(chatRefProfile);
+             setTimeout(() => setFloatingAvatar(null), 4000);
            }
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
-           if (payload.new.receiver_id === userId || payload.new.group_chat_id !== null || payload.new.sender_id === userId) {
-              getUnread();
-              const msg = payload.new;
-              const chatId = msg.group_chat_id || (msg.sender_id === userId ? msg.receiver_id : msg.sender_id);
+           const msg = payload.new;
+           if (msg.receiver_id === userId || (msg.group_chat_id !== null && msg.sender_id !== userId)) {
+              const chatId = msg.group_chat_id || msg.sender_id;
               if (chatId !== (window as any).currentChatUserId) {
+                getUnread(msg.group_chat_id ? 'group' : 'dm');
                 window.dispatchEvent(new CustomEvent('refreshChatList'));
               }
            }
