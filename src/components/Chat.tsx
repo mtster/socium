@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '@/src/store/useStore';
 import { Profile } from '@/src/types';
@@ -194,21 +195,24 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
         </div>
       </div>
 
-      <AnimatePresence>
-        {activeChat && (
-          <ChatRoom 
-            currentUserId={currentUserId} 
-            activeChat={activeChat} 
-            onClose={() => { 
-                markChatAsSeenOptimistically(activeChat.id);
-                setActiveChat(null); 
-                onCloseChat?.(); 
-            }} 
-            onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id, forcePopup: true } }))}
-            openSettings={() => setIsGroupSettingsOpen(true)}
-          />
-        )}
-      </AnimatePresence>
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {activeChat && (
+            <ChatRoom 
+              currentUserId={currentUserId} 
+              activeChat={activeChat} 
+              onClose={() => { 
+                  markChatAsSeenOptimistically(activeChat.id);
+                  setActiveChat(null); 
+                  onCloseChat?.(); 
+              }} 
+              onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id, forcePopup: true } }))}
+              openSettings={() => setIsGroupSettingsOpen(true)}
+            />
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {isCreatingGroup && (
         <CreateGroupModal 
