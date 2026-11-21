@@ -196,21 +196,50 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
       </div>
 
       {typeof document !== 'undefined' && createPortal(
-        <AnimatePresence>
-          {activeChat && (
-            <ChatRoom 
-              currentUserId={currentUserId} 
-              activeChat={activeChat} 
-              onClose={() => { 
-                  markChatAsSeenOptimistically(activeChat.id);
-                  setActiveChat(null); 
-                  onCloseChat?.(); 
-              }} 
-              onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id, forcePopup: true } }))}
-              openSettings={() => setIsGroupSettingsOpen(true)}
-            />
-          )}
-        </AnimatePresence>,
+        <>
+          <AnimatePresence>
+            {activeChat && (
+              <ChatRoom 
+                currentUserId={currentUserId} 
+                activeChat={activeChat} 
+                onClose={() => { 
+                    markChatAsSeenOptimistically(activeChat.id);
+                    setActiveChat(null); 
+                    onCloseChat?.(); 
+                }} 
+                onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id, forcePopup: true } }))}
+                openSettings={() => setIsGroupSettingsOpen(true)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {isGroupSettingsOpen && activeChat && (
+              activeChat.isGroup ? (
+                <GroupChatSettings
+                  currentUserId={currentUserId}
+                  activeChat={activeChat}
+                  onClose={() => setIsGroupSettingsOpen(false)}
+                  onUpdate={(updatedChat) => {
+                    setActiveChat(updatedChat);
+                    updateChatList(prev => prev.map(c => c.id === updatedChat.id ? updatedChat : c));
+                  }}
+                  onLeave={() => {
+                    setIsGroupSettingsOpen(false);
+                    setActiveChat(null);
+                    updateChatList(prev => prev.filter(c => c.id !== activeChat.id));
+                  }}
+                />
+              ) : (
+                <PrivateChatSettings
+                  currentUserId={currentUserId}
+                  activeChat={activeChat}
+                  onClose={() => setIsGroupSettingsOpen(false)}
+                />
+              )
+            )}
+          </AnimatePresence>
+        </>,
         document.body
       )}
 
@@ -226,33 +255,6 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
           }}
         />
       )}
-
-      <AnimatePresence>
-      {isGroupSettingsOpen && activeChat && (
-        activeChat.isGroup ? (
-          <GroupChatSettings
-            currentUserId={currentUserId}
-            activeChat={activeChat}
-            onClose={() => setIsGroupSettingsOpen(false)}
-            onUpdate={(updatedChat) => {
-              setActiveChat(updatedChat);
-              updateChatList(prev => prev.map(c => c.id === updatedChat.id ? updatedChat : c));
-            }}
-            onLeave={() => {
-              setIsGroupSettingsOpen(false);
-              setActiveChat(null);
-              updateChatList(prev => prev.filter(c => c.id !== activeChat.id));
-            }}
-          />
-        ) : (
-          <PrivateChatSettings
-            currentUserId={currentUserId}
-            activeChat={activeChat}
-            onClose={() => setIsGroupSettingsOpen(false)}
-          />
-        )
-      )}
-      </AnimatePresence>
     </div>
   );
 }

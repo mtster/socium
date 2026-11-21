@@ -55,6 +55,12 @@ function useVisualViewport(
       if (window.scrollY !== 0 || window.scrollX !== 0) {
         window.scrollTo(0, 0);
       }
+      if (document.documentElement.scrollTop !== 0) {
+        document.documentElement.scrollTop = 0;
+      }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
+      }
 
       const el = containerRef.current;
       if (!el) return;
@@ -84,12 +90,13 @@ function useVisualViewport(
           lastKeyboardHeightRef.current = Math.max(220, baseH - measuredHeight);
         }
 
+        const preFitHeight = Math.max(240, baseH - Math.max(lastKeyboardHeightRef.current, 360));
         const isPreFocusing =
           performance.now() < preFocusUntilRef.current &&
-          Math.abs(measuredHeight - baseH) < 2;
+          measuredHeight > preFitHeight + 2;
 
         if (isPreFocusing) {
-          nextHeight = `${Math.max(240, baseH - lastKeyboardHeightRef.current)}px`;
+          nextHeight = `${preFitHeight}px`;
           nextTransform =
             offsetTop === 0 ? 'none' : `translate3d(0px, ${offsetTop}px, 0px)`;
         } else {
@@ -437,6 +444,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      if (window.scrollY !== 0) {
                        window.scrollTo(0, 0);
                      }
+                     if (document.documentElement.scrollTop !== 0) {
+                       document.documentElement.scrollTop = 0;
+                     }
+                     if (document.body.scrollTop !== 0) {
+                       document.body.scrollTop = 0;
+                     }
                      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
                      const isTouchDevice =
                        typeof window !== 'undefined' &&
@@ -446,7 +459,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                        const baseH = Math.max(baseViewportHeightRef.current, vvH);
                        if (vvH >= baseH - 2) {
                          preFocusUntilRef.current = performance.now() + 450;
-                         viewportContainerRef.current.style.height = `${Math.max(240, baseH - lastKeyboardHeightRef.current)}px`;
+                         viewportContainerRef.current.style.height = `${Math.max(240, baseH - Math.max(lastKeyboardHeightRef.current, 360))}px`;
                          void viewportContainerRef.current.offsetHeight;
                        }
                      }
