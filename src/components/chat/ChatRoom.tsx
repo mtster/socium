@@ -28,18 +28,32 @@ function useVisualViewport(
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    const KB_STORAGE_KEY = 'socium_qwerty_kb_h';
+    let learnedQwertyHeight = 345;
+    try {
+      const saved = Number(window.localStorage.getItem(KB_STORAGE_KEY));
+      if (Number.isFinite(saved) && saved >= 220 && saved <= 380) {
+        learnedQwertyHeight = saved;
+      }
+    } catch {}
+
     let rafId: number | null = null;
     let watchIntervalId: number | null = null;
     const timeoutIds = new Set<number>();
     let lastHeight = '';
+    let preFocusUntil = 0;
     baseViewportHeightRef.current = Math.max(
       window.innerHeight,
       window.visualViewport?.height ?? 0
     );
     let lastVvHeight = window.visualViewport?.height ?? window.innerHeight;
 
+    const isTouchDevice =
+      window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
     const resetWindowScroll = () => {
-      if (window.scrollY !== 0 || window.scrollX !== 0) {
+      const vvOffsetTop = window.visualViewport?.offsetTop ?? 0;
+      if (window.scrollY !== 0 || window.scrollX !== 0 || vvOffsetTop > 0.5) {
         window.scrollTo(0, 0);
       }
       if (document.documentElement.scrollTop !== 0) {
@@ -72,8 +86,24 @@ function useVisualViewport(
       }
 
       const baseH = baseViewportHeightRef.current;
-      const isKeyboardOpen = baseH - viewportHeight > 80;
-      const nextHeight = isKeyboardOpen ? `${viewportHeight}px` : '100%';
+      const kbDelta = baseH - viewportHeight;
+      const isKeyboardOpen = kbDelta > 80;
+
+      let nextHeight = '100%';
+      if (isKeyboardOpen) {
+        preFocusUntil = 0;
+        nextHeight = `${viewportHeight}px`;
+        if (kbDelta >= 220 && kbDelta <= 380 && kbDelta !== learnedQwertyHeight) {
+          learnedQwertyHeight = Math.round(kbDelta);
+          try {
+            window.localStorage.setItem(KB_STORAGE_KEY, String(learnedQwertyHeight));
+          } catch {}
+        }
+      } else if (preFocusUntil > 0 && performance.now() < preFocusUntil) {
+        nextHeight = `${Math.max(240, baseH - learnedQwertyHeight)}px`;
+      } else {
+        preFocusUntil = 0;
+      }
 
       if (nextHeight !== lastHeight) {
         el.style.height = nextHeight;
@@ -116,9 +146,12 @@ function useVisualViewport(
       watchIntervalId = window.setInterval(() => {
         const vv = window.visualViewport;
         const currentVvHeight = vv ? vv.height : window.innerHeight;
+        const vvOffsetTop = vv?.offsetTop ?? 0;
         if (
           window.scrollY !== 0 ||
-          Math.abs(currentVvHeight - lastVvHeight) >= 0.5
+          vvOffsetTop > 0.5 ||
+          Math.abs(currentVvHeight - lastVvHeight) >= 0.5 ||
+          (preFocusUntil > 0 && performance.now() >= preFocusUntil)
         ) {
           scheduleSync([65, 180]);
         }
@@ -128,6 +161,7 @@ function useVisualViewport(
     const handleResize = () => scheduleSync([65, 180]);
     const handleScroll = () => scheduleSync([65, 180]);
     const handleOrientation = () => {
+      preFocusUntil = 0;
       baseViewportHeightRef.current = Math.max(
         window.innerHeight,
         window.visualViewport?.height ?? 0
@@ -137,15 +171,26 @@ function useVisualViewport(
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
+        const vv = window.visualViewport;
+        const viewportHeight = vv ? vv.height : window.innerHeight;
+        if (isTouchDevice && baseViewportHeightRef.current - viewportHeight <= 80) {
+          preFocusUntil = performance.now() + 350;
+          syncViewport();
+          if (containerRef.current) {
+            void containerRef.current.offsetHeight;
+          }
+        }
         startWatcher();
-        scheduleSync([60, 180, 300]);
+        scheduleSync([60, 180, 360]);
       }
     };
     const handleFocusOut = () => {
+      preFocusUntil = 0;
       scheduleSync([65, 180]);
     };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
+        preFocusUntil = 0;
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
