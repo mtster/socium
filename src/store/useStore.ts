@@ -28,6 +28,9 @@ if (typeof window !== 'undefined') {
 interface AppState {
   profile: Profile | null;
   userPosts: Post[];
+  hasMoreUserPosts: boolean;
+  isFetchingMoreUserPosts: boolean;
+  userPostsCursor: string | null;
   feedPosts: Post[];
   feedScrollPos: number;
   hasMoreFeedPosts: boolean;
@@ -63,6 +66,7 @@ interface AppState {
   fetchConnectionIds: (userId: string, force?: boolean) => Promise<string[]>;
   fetchProfile: (userId: string, force?: boolean) => Promise<void>;
   fetchUserPosts: (userId: string, currentUserId: string, force?: boolean) => Promise<void>;
+  fetchMoreUserPosts: (userId: string, currentUserId: string) => Promise<void>;
   fetchFeedPosts: (currentUserId: string, refresh?: boolean) => Promise<void>;
   fetchMoreFeedPosts: (currentUserId: string) => Promise<void>;
   fetchUnreadCount: (userId: string) => Promise<void>;
@@ -74,6 +78,9 @@ interface AppState {
 export const useStore = create<AppState>((set, get) => ({
   profile: null,
   userPosts: [],
+  hasMoreUserPosts: true,
+  isFetchingMoreUserPosts: false,
+  userPostsCursor: null,
   feedPosts: [],
   feedScrollPos: 0,
   hasMoreFeedPosts: true,
@@ -228,6 +235,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     const task = (async () => {
       try {
+        const PAGE_SIZE = 5;
         let query = supabase
           .from('posts')
           .select('*, profiles(*), likes(user_id), comments(id)')
@@ -237,7 +245,9 @@ export const useStore = create<AppState>((set, get) => ({
           query = query.lte('created_at', new Date().toISOString());
         }
 
-        const { data } = await query.order('created_at', { ascending: false });
+        const { data } = await query
+          .order('created_at', { ascending: false })
+          .limit(PAGE_SIZE);
 
         if (data) {
           const viewerId = currentUserId;
@@ -259,7 +269,11 @@ export const useStore = create<AppState>((set, get) => ({
             const isConnection = !!conn;
             processed = processed.filter(post => isPostVisibleToUser(post, viewerId, isConnection));
           }
-          set({ userPosts: processed as any });
+          set({
+            userPosts: processed as any,
+            hasMoreUserPosts: data.length === PAGE_SIZE,
+            userPostsCursor: data.length > 0 ? data[data.length - 1].created_at : null
+          });
           lastUserPostsFetch = { key, fetchedAt: Date.now() };
         }
       } finally {
@@ -269,6 +283,66 @@ export const useStore = create<AppState>((set, get) => ({
 
     inFlightUserPosts.set(key, task);
     return task;
+  },
+
+  fetchMoreUserPosts: async (userId, currentUserId) => {
+    const { hasMoreUserPosts, isFetchingMoreUserPosts, userPostsCursor, userPosts } = get();
+    if (!hasMoreUserPosts || isFetchingMoreUserPosts || !userPostsCursor || userPosts.length === 0) return;
+
+    set({ isFetchingMoreUserPosts: true });
+    try {
+      const PAGE_SIZE = 5;
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, profiles(*), likes(user_id), comments(id)')
+        .eq('user_id', userId)
+        .lt('created_at', userPostsCursor)
+        .order('created_at', { ascending: false })
+        .limit(PAGE_SIZE);
+
+      if (error) {
+        console.error('Error fetching more user posts:', error);
+        set({ isFetchingMoreUserPosts: false });
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const viewerId = currentUserId;
+        let processed = data.map((p: any) => ({
+          ...p,
+          likes_count: p.likes?.length || 0,
+          has_liked: p.likes?.some((l: any) => l.user_id === viewerId),
+          comments_count: p.comments?.length || 0
+        }));
+
+        if (viewerId !== userId && viewerId !== ADMIN_ID && userId !== HUMOR_BOT_ID) {
+          const { data: conn } = await supabase
+            .from('connections')
+            .select('connection_id')
+            .eq('user_id', userId)
+            .eq('connection_id', viewerId)
+            .maybeSingle();
+
+          const isConnection = !!conn;
+          processed = processed.filter(post => isPostVisibleToUser(post, viewerId, isConnection));
+        }
+
+        const existingIds = new Set(get().userPosts.map(p => p.id));
+        const uniqueNew = processed.filter(p => !existingIds.has(p.id));
+
+        set({
+          userPosts: [...get().userPosts, ...uniqueNew] as any,
+          hasMoreUserPosts: data.length === PAGE_SIZE,
+          userPostsCursor: data[data.length - 1].created_at,
+          isFetchingMoreUserPosts: false
+        });
+      } else {
+        set({ hasMoreUserPosts: false, isFetchingMoreUserPosts: false });
+      }
+    } catch (e) {
+      console.error('Error in fetchMoreUserPosts:', e);
+      set({ isFetchingMoreUserPosts: false });
+    }
   },
 
   fetchFeedPosts: async (currentUserId, refresh = false) => {

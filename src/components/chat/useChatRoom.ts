@@ -129,6 +129,10 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<any>(null);
+  const inFlightMessagesFetchRef = useRef<Promise<void> | null>(null);
+  const lastMessagesFetchAtRef = useRef<number>(0);
+  const hasCheckedInitialReadRef = useRef<boolean>(false);
+  const latestGroupMsgAtRef = useRef<string | null>(null);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('viewerState', { detail: { isOpen: !!viewingImage } }));
@@ -156,70 +160,122 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     window.dispatchEvent(new CustomEvent('forceGetUnread'));
   };
 
-  const fetchMessages = async (loadOld = false, currentOffset = 0) => {
-    setLoadingMessages(true);
-    const limit = loadOld ? 15 : 20;
-    const offset = loadOld ? currentOffset : 0;
-    
-    let req = supabase.from('messages').select('*, vault_messages(id)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-    if (activeChat.isGroup) {
-      req = req.eq('group_chat_id', activeChat.id);
-    } else {
-      req = req.is('group_chat_id', null).or(`and(sender_id.eq.${activeChat.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${activeChat.id})`);
-    }
-
-    const { data, error } = await req;
-    if (error) console.error('fetchMessages error:', error);
-    
-    if (data) {
-      const orderedData = data.reverse();
-      const vaultedInBatch = orderedData
-        .filter((m: any) => Array.isArray(m.vault_messages) ? m.vault_messages.length > 0 : !!m.vault_messages)
-        .map((m: any) => m.id);
-
-      if (loadOld) {
-        setMessages(prev => {
-          const existingIds = new Set(prev.map(m => m.id));
-          const filteredNew = orderedData.filter(m => !existingIds.has(m.id));
-          return [...filteredNew, ...prev];
-        });
-        if (vaultedInBatch.length > 0) {
-          setVaultedMessageIds(prev => {
-            const next = new Set(prev);
-            vaultedInBatch.forEach((id: string) => next.add(id));
-            return next;
-          });
-        }
-        setHasMoreMessages(data.length === limit);
-      } else {
-        setMessages(orderedData);
-        setVaultedMessageIds(new Set(vaultedInBatch));
-        scrollToBottom(false);
-
-        const storeState = useStore.getState();
-        const hasUnreadHint = (activeChat.unreadCount || 0) > 0 || storeState.inboxStates[activeChat.id] === false;
-        if (activeChat.isGroup) {
-          const lastReadAt = (activeChat.groupChat as any)?.my_last_read_at;
-          const hasNewerGroupMsg = !lastReadAt
-            ? orderedData.some((m: any) => m.sender_id !== currentUserId)
-            : orderedData.some((m: any) => m.sender_id !== currentUserId && m.created_at > lastReadAt);
-          if (hasUnreadHint || hasNewerGroupMsg) {
-            markMessagesAsRead();
-          }
-        } else {
-          const hasUnreadInBatch = orderedData.some((m: any) => m.receiver_id === currentUserId && !m.read_at);
-          if (hasUnreadInBatch || hasUnreadHint) {
-            markMessagesAsRead();
-          }
-        }
-
-        setHasMoreMessages(data.length === limit);
+  const fetchMessages = async (loadOld = false, currentOffset = 0, force = false) => {
+    if (!loadOld) {
+      if (inFlightMessagesFetchRef.current) {
+        return inFlightMessagesFetchRef.current;
+      }
+      if (!force && Date.now() - lastMessagesFetchAtRef.current < 1500) {
+        return;
       }
     }
-    setLoadingMessages(false);
+
+    const run = async () => {
+      setLoadingMessages(true);
+      try {
+        const limit = loadOld ? 15 : 20;
+        const offset = loadOld ? currentOffset : 0;
+
+        let req = supabase.from('messages').select('*, vault_messages(id)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        if (activeChat.isGroup) {
+          req = req.eq('group_chat_id', activeChat.id);
+        } else {
+          req = req.is('group_chat_id', null).or(`and(sender_id.eq.${activeChat.id},receiver_id.eq.${currentUserId}),and(sender_id.eq.${currentUserId},receiver_id.eq.${activeChat.id})`);
+        }
+
+        const { data, error } = await req;
+        if (error) console.error('fetchMessages error:', error);
+
+        if (data) {
+          const orderedData = data.reverse();
+          const vaultedInBatch = orderedData
+            .filter((m: any) => Array.isArray(m.vault_messages) ? m.vault_messages.length > 0 : !!m.vault_messages)
+            .map((m: any) => m.id);
+
+          if (loadOld) {
+            setMessages(prev => {
+              const existingIds = new Set(prev.map(m => m.id));
+              const filteredNew = orderedData.filter(m => !existingIds.has(m.id));
+              return [...filteredNew, ...prev];
+            });
+            if (vaultedInBatch.length > 0) {
+              setVaultedMessageIds(prev => {
+                const next = new Set(prev);
+                vaultedInBatch.forEach((id: string) => next.add(id));
+                return next;
+              });
+            }
+            setHasMoreMessages(data.length === limit);
+          } else {
+            lastMessagesFetchAtRef.current = Date.now();
+            setMessages(orderedData);
+            setVaultedMessageIds(new Set(vaultedInBatch));
+            scrollToBottom(false);
+
+            const storeState = useStore.getState();
+            const isInboxUnread = storeState.inboxStates[activeChat.id] === false;
+            const isFirstCheck = !hasCheckedInitialReadRef.current;
+            hasCheckedInitialReadRef.current = true;
+
+            if (activeChat.isGroup) {
+              const otherMsgs = orderedData.filter((m: any) => m.sender_id !== currentUserId);
+              const newestOtherAt = otherMsgs.length > 0 ? otherMsgs[otherMsgs.length - 1].created_at : null;
+
+              let shouldMarkRead = false;
+              if (isFirstCheck) {
+                if (activeChat.unreadCount !== undefined) {
+                  shouldMarkRead = activeChat.unreadCount > 0 || isInboxUnread;
+                } else {
+                  const lastReadAt = (activeChat.groupChat as any)?.my_last_read_at;
+                  shouldMarkRead = isInboxUnread || (lastReadAt
+                    ? !!newestOtherAt && newestOtherAt > lastReadAt
+                    : !!newestOtherAt);
+                }
+              } else {
+                const prevSeenAt = latestGroupMsgAtRef.current;
+                const arrivedWhileAway = !!newestOtherAt && (!prevSeenAt || newestOtherAt > prevSeenAt);
+                shouldMarkRead = isInboxUnread || arrivedWhileAway;
+              }
+
+              if (newestOtherAt && (!latestGroupMsgAtRef.current || newestOtherAt > latestGroupMsgAtRef.current)) {
+                latestGroupMsgAtRef.current = newestOtherAt;
+              }
+              if (shouldMarkRead) {
+                markMessagesAsRead();
+              }
+            } else {
+              const hasUnreadInBatch = orderedData.some((m: any) => m.receiver_id === currentUserId && !m.read_at);
+              const hasUnreadHint = isFirstCheck && (activeChat.unreadCount || 0) > 0;
+              if (hasUnreadInBatch || isInboxUnread || hasUnreadHint) {
+                markMessagesAsRead();
+              }
+            }
+
+            setHasMoreMessages(data.length === limit);
+          }
+        }
+      } finally {
+        setLoadingMessages(false);
+      }
+    };
+
+    if (!loadOld) {
+      const promise = run().finally(() => {
+        inFlightMessagesFetchRef.current = null;
+      });
+      inFlightMessagesFetchRef.current = promise;
+      return promise;
+    }
+
+    return run();
   };
 
   useEffect(() => {
+    hasCheckedInitialReadRef.current = false;
+    latestGroupMsgAtRef.current = null;
+    inFlightMessagesFetchRef.current = null;
+    lastMessagesFetchAtRef.current = 0;
+
     setChatLocation(currentUserId, activeChat.id);
     (window as any).currentChatUserId = activeChat.id;
     

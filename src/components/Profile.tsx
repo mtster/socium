@@ -33,6 +33,9 @@ interface ProfileViewProps {
   onDeletePost?: (postId: string) => void;
   onLikePost?: (postId: string, isLiked: boolean) => void;
   onRefetch?: () => void;
+  hasMorePosts?: boolean;
+  isLoadingMorePosts?: boolean;
+  onLoadMorePosts?: () => void;
 }
 
 const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
@@ -49,8 +52,11 @@ let profileConnectionsTime: Record<string, number> = {};
 
 import { useStore } from '../store/useStore';
 
-export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch }: ProfileViewProps) {
-  const { userPosts, fetchUserPosts, hasUnseenRequest, markPendingRequestsAsSeen } = useStore();
+export default function ProfileView({ profile, posts, isOwnProfile, currentUserId, onUserClick, onDeletePost, onLikePost, onRefetch, hasMorePosts = false, isLoadingMorePosts = false, onLoadMorePosts }: ProfileViewProps) {
+  const { userPosts, hasUnseenRequest, markPendingRequestsAsSeen } = useStore();
+  const postsSentinelRef = useRef<HTMLDivElement>(null);
+  const onLoadMorePostsRef = useRef(onLoadMorePosts);
+  onLoadMorePostsRef.current = onLoadMorePosts;
   
   const isHumorBot = profile?.id === '00000000-0000-0000-0000-000000000001';
   const isAdminViewingBot = isHumorBot && currentUserId === '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
@@ -155,6 +161,27 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
       }, 150);
     }
   }, [posts]);
+
+  useEffect(() => {
+    const sentinel = postsSentinelRef.current;
+    const displayedCount = isOwnProfile ? userPosts.length : posts.length;
+    if (!sentinel || !hasMorePosts || isLoadingMorePosts || displayedCount === 0 || !onLoadMorePostsRef.current) {
+      return;
+    }
+
+    const scrollRoot = sentinel.closest('.overflow-y-auto') as HTMLElement | null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          onLoadMorePostsRef.current?.();
+        }
+      },
+      { root: scrollRoot, rootMargin: '200px', threshold: 0 }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMorePosts, isLoadingMorePosts, isOwnProfile, userPosts.length, posts.length, profile?.id]);
 
   const {
     connections,
@@ -284,7 +311,6 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
 
       // Refresh posts so the newly auto-generated post is displayed immediately
       setTimeout(() => {
-        fetchUserPosts(profile.id, currentUserId);
         onRefetch?.();
       }, 500);
 
@@ -732,6 +758,13 @@ export default function ProfileView({ profile, posts, isOwnProfile, currentUserI
           <div className="py-20 flex flex-col items-center justify-center text-white/20">
              <Camera size={32} className="mb-4 opacity-20" />
              <p className="text-xs uppercase tracking-widest font-medium">No moments captured</p>
+          </div>
+        )}
+        {hasMorePosts && (
+          <div ref={postsSentinelRef} className="h-8 w-full flex items-center justify-center">
+            {isLoadingMorePosts && (
+              <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin my-4" />
+            )}
           </div>
         )}
       </div>

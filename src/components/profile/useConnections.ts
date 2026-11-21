@@ -46,52 +46,68 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
     if (!currentUserId || !profile?.id) return;
 
     if (isOwnProfile) {
-      // 1. Fetch from connections table
-      const { data: userConns, error: userConnsErr } = await supabase
-        .from('connections')
-        .select('*, profiles!connection_id(*)')
-        .eq('user_id', profile.id);
-      
+      const [
+        { data: userConns, error: userConnsErr },
+        { data: acceptedReqs },
+        { data: pending, error: pendingErr }
+      ] = await Promise.all([
+        supabase
+          .from('connections')
+          .select('*, profiles!connection_id(*)')
+          .eq('user_id', profile.id),
+        supabase
+          .from('connection_requests')
+          .select('requester_id, receiver_id')
+          .or(`requester_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+          .eq('status', 'accepted'),
+        supabase
+          .from('connection_requests')
+          .select('*, profiles!requester_id(*)')
+          .eq('receiver_id', profile.id)
+          .eq('status', 'pending')
+      ]);
+
       if (userConnsErr) {
         console.error('[useConnections] error fetching connections:', userConnsErr);
       }
-      
+
       const directConns = (userConns?.map(c => c.profiles) || []).filter(Boolean);
-
-      // 2. Self-healing check: also check connection_requests with status = 'accepted'
-      const { data: acceptedReqs } = await supabase
-        .from('connection_requests')
-        .select('id, requester_id, receiver_id, requester:profiles!requester_id(*), receiver:profiles!receiver_id(*)')
-        .or(`requester_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
-        .eq('status', 'accepted');
-
-      const acceptedPeers: any[] = [];
+      const directIds = new Set(directConns.map((c: any) => c.id));
+      const missingPeerIds: string[] = [];
       const missingSelfHealInserts: any[] = [];
 
       if (acceptedReqs) {
         for (const req of acceptedReqs) {
-          const peerProf = req.requester_id === profile.id ? req.receiver : req.requester;
           const peerId = req.requester_id === profile.id ? req.receiver_id : req.requester_id;
-          if (peerProf && peerId && peerId !== profile.id) {
-            acceptedPeers.push(peerProf);
-            // Check if present in directConns
-            if (!directConns.some(c => c.id === peerId) && profile.id === currentUserId) {
-              missingSelfHealInserts.push({ user_id: currentUserId, connection_id: peerId });
+          if (peerId && peerId !== profile.id && !directIds.has(peerId)) {
+            if (!missingPeerIds.includes(peerId)) {
+              missingPeerIds.push(peerId);
+              if (profile.id === currentUserId) {
+                missingSelfHealInserts.push({ user_id: currentUserId, connection_id: peerId });
+              }
             }
           }
         }
       }
 
-      // Merge and deduplicate
-      const combined = Array.from(
-        new Map([...directConns, ...acceptedPeers].map(p => [p.id, p])).values()
-      );
-      
-      const adminProf = await getAdminProfile();
-      if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
-        combined.unshift(adminProf);
+      let acceptedMissingProfs: any[] = [];
+      if (missingPeerIds.length > 0) {
+        const { data: missingProfs } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('id', missingPeerIds);
+        acceptedMissingProfs = missingProfs || [];
       }
-      
+
+      const combined = Array.from(
+        new Map([...directConns, ...acceptedMissingProfs].map(p => [p.id, p])).values()
+      );
+
+      if (!combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
+        const adminProf = await getAdminProfile();
+        if (adminProf) combined.unshift(adminProf);
+      }
+
       const filteredConnections = combined.filter(c => c.id !== profile.id);
       profileConnectionsCache[profile.id] = filteredConnections;
       profileConnectionsTime[profile.id] = Date.now();
@@ -104,17 +120,11 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         }, err => console.warn('[useConnections] self-heal error:', err));
       }
 
-      const { data: pending, error: pendingErr } = await supabase
-        .from('connection_requests')
-        .select('*, profiles!requester_id(*)')
-        .eq('receiver_id', profile.id)
-        .eq('status', 'pending');
-      
       if (pendingErr) {
         console.error('[useConnections] error fetching pending requests:', pendingErr);
       } else {
         setPendingRequests(pending || []);
-        
+
         if (profile.id === currentUserId) {
           const hasUnseen = pending?.some(r => r.is_seen === false) || false;
           if (useStore.getState().setPendingRequestsCount) {
@@ -126,16 +136,32 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         }
       }
     } else {
-      const { data: rel, error: relErr } = await supabase.from('connection_requests')
-        .select('*')
-        .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`)
-        .maybeSingle();
-      
+      const [
+        { data: rel, error: relErr },
+        { data: userConns, error: userConnsErr },
+        { data: otherAcceptedReqs }
+      ] = await Promise.all([
+        supabase
+          .from('connection_requests')
+          .select('*')
+          .or(`and(requester_id.eq.${currentUserId},receiver_id.eq.${profile.id}),and(requester_id.eq.${profile.id},receiver_id.eq.${currentUserId})`)
+          .maybeSingle(),
+        supabase
+          .from('connections')
+          .select('*, profiles!connection_id(*)')
+          .eq('user_id', profile.id),
+        supabase
+          .from('connection_requests')
+          .select('requester_id, receiver_id')
+          .or(`requester_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+          .eq('status', 'accepted')
+      ]);
+
       if (relErr) {
         console.error('[useConnections] error fetching relationship:', relErr);
         return;
       }
-      
+
       if (profile.id === ADMIN_ID) {
         setConnectionStatus('accepted');
       } else if (!rel) {
@@ -151,42 +177,39 @@ export function useConnections(profile: any, isOwnProfile: boolean, currentUserI
         }
       }
 
-      const { data: userConns, error: userConnsErr } = await supabase
-        .from('connections')
-        .select('*, profiles!connection_id(*)')
-        .eq('user_id', profile.id);
-      
       if (userConnsErr) {
         console.error('[useConnections] error fetching other connections:', userConnsErr);
       }
-      
+
       const directConns = (userConns?.map(c => c.profiles) || []).filter(Boolean);
+      const directIds = new Set(directConns.map((c: any) => c.id));
+      const missingPeerIds: string[] = [];
 
-      // Also check accepted requests for other user
-      const { data: otherAcceptedReqs } = await supabase
-        .from('connection_requests')
-        .select('id, requester_id, receiver_id, requester:profiles!requester_id(*), receiver:profiles!receiver_id(*)')
-        .or(`requester_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
-        .eq('status', 'accepted');
-
-      const acceptedPeers: any[] = [];
       if (otherAcceptedReqs) {
         for (const req of otherAcceptedReqs) {
-          const peerProf = req.requester_id === profile.id ? req.receiver : req.requester;
           const peerId = req.requester_id === profile.id ? req.receiver_id : req.requester_id;
-          if (peerProf && peerId && peerId !== profile.id) {
-            acceptedPeers.push(peerProf);
+          if (peerId && peerId !== profile.id && !directIds.has(peerId) && !missingPeerIds.includes(peerId)) {
+            missingPeerIds.push(peerId);
           }
         }
       }
 
+      let acceptedMissingProfs: any[] = [];
+      if (missingPeerIds.length > 0) {
+        const { data: missingProfs } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('id', missingPeerIds);
+        acceptedMissingProfs = missingProfs || [];
+      }
+
       const combined = Array.from(
-        new Map([...directConns, ...acceptedPeers].map(p => [p.id, p])).values()
+        new Map([...directConns, ...acceptedMissingProfs].map(p => [p.id, p])).values()
       );
 
-      const adminProf = await getAdminProfile();
-      if (adminProf && !combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
-        combined.unshift(adminProf);
+      if (!combined.some(c => c.id === ADMIN_ID) && profile.id !== ADMIN_ID) {
+        const adminProf = await getAdminProfile();
+        if (adminProf) combined.unshift(adminProf);
       }
 
       const finalConns = combined.filter(c => c.id !== profile.id);

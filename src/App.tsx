@@ -30,10 +30,11 @@ import { ref, set } from 'firebase/database';
 export default function App() {
   const { 
     profile, setProfile, 
-    userPosts, setUserPosts, 
+    userPosts, setUserPosts,
+    hasMoreUserPosts, isFetchingMoreUserPosts,
     totalUnread,
     floatingAvatar, setFloatingAvatar,
-    fetchProfile, fetchUserPosts, 
+    fetchProfile, fetchUserPosts, fetchMoreUserPosts,
   } = useStore();
 
   const [session, setSession] = useState<any>(undefined);
@@ -102,7 +103,8 @@ export default function App() {
     isHeaderHidden,
     isFeedInboxOpen,
     setIsFeedInboxOpen,
-    handleUserClick
+    handleUserClick,
+    loadMoreOtherProfilePosts
   } = useAppNavigation(session, fetchProfileData, (uid) => registerPush(uid));
 
   // 4. Live Sync Multi-Source DB Managers
@@ -398,6 +400,9 @@ export default function App() {
                    onDeletePost={handleDeletePost}
                    onLikePost={handleLikeProfilePost}
                    onRefetch={() => { fetchUserPosts(session.user.id, session.user.id, true); }}
+                   hasMorePosts={hasMoreUserPosts}
+                   isLoadingMorePosts={isFetchingMoreUserPosts}
+                   onLoadMorePosts={() => fetchMoreUserPosts(session.user.id, session.user.id)}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
@@ -503,6 +508,9 @@ export default function App() {
                      } catch(e) {}
                    }}
                    onRefetch={() => handleUserClick(viewingProfileData.profile.id)}
+                   hasMorePosts={viewingProfileData.hasMorePosts}
+                   isLoadingMorePosts={viewingProfileData.isLoadingMore}
+                   onLoadMorePosts={loadMoreOtherProfilePosts}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center relative w-full h-full">

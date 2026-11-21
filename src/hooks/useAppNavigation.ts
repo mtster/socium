@@ -33,7 +33,15 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     viewingProfileIdRef.current = viewingProfileId;
   }, [viewingProfileId]);
 
-  const [viewingProfileData, setViewingProfileData] = useState<{ profile: Profile, posts: Post[] } | null>(null);
+  const [viewingProfileData, setViewingProfileData] = useState<{
+    profile: Profile;
+    posts: Post[];
+    hasMorePosts: boolean;
+    cursorCreatedAt: string | null;
+    isConnection: boolean;
+    isLoadingMore?: boolean;
+  } | null>(null);
+  const isFetchingMoreOtherRef = useRef(false);
   const [initialActiveChat, setInitialActiveChat] = useState<Profile | null>(null);
   const [isChatRoomOpen, setIsChatRoomOpen] = useState(false);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
@@ -41,6 +49,62 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
   const [hasSeenPromo, setHasSeenPromo] = useState(() => localStorage.getItem('first_time_chat_notif') !== null);
   const [isHeaderHidden, setIsHeaderHidden] = useState(false);
   const [isFeedInboxOpen, setIsFeedInboxOpen] = useState(false);
+
+  const PROFILE_POSTS_PAGE_SIZE = 5;
+
+  const fetchFilteredProfilePostsPage = async (
+    userId: string,
+    currentUserId: string | undefined,
+    isConnection: boolean,
+    initialCursor: string | null = null
+  ): Promise<{ posts: Post[]; hasMorePosts: boolean; cursorCreatedAt: string | null }> => {
+    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+    const collected: Post[] = [];
+    let cursor = initialCursor;
+    let hasMorePosts = false;
+    let guard = 0;
+
+    while (guard < 4) {
+      guard++;
+      let query = supabase
+        .from('posts')
+        .select('*, profiles(*), likes(user_id), comments(id)')
+        .eq('user_id', userId);
+
+      if (currentUserId !== ADMIN_ID) {
+        query = query.lte('created_at', new Date().toISOString());
+      }
+      if (cursor) {
+        query = query.lt('created_at', cursor);
+      }
+
+      const { data: postsData } = await query
+        .order('created_at', { ascending: false })
+        .limit(PROFILE_POSTS_PAGE_SIZE);
+
+      const rows = postsData || [];
+      cursor = rows.length > 0 ? rows[rows.length - 1].created_at : cursor;
+      hasMorePosts = rows.length === PROFILE_POSTS_PAGE_SIZE;
+
+      let mapped = rows.map((p: any) => ({
+        ...p,
+        likes_count: p.likes?.length || 0,
+        has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
+        comments_count: p.comments?.length || 0
+      }));
+
+      if (currentUserId && currentUserId !== userId && currentUserId !== ADMIN_ID && userId !== '00000000-0000-0000-0000-000000000001') {
+        mapped = mapped.filter((post: any) => isPostVisibleToUser(post, currentUserId, isConnection));
+      }
+
+      collected.push(...mapped);
+      if (collected.length > 0 || !hasMorePosts) {
+        break;
+      }
+    }
+
+    return { posts: collected, hasMorePosts, cursorCreatedAt: cursor };
+  };
 
   const handleUserClick = async (userId: string, forcePopup = false) => {
     if (!session) return;
@@ -53,62 +117,135 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
 
     setViewingProfileId(userId);
     setViewingProfileData(null); // Clear previous data so it goes back to loading state
-    
-    // Fetch other user's profile
-    const { data: pData, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    
-    if (error || !pData) {
-      console.error('Profile not found:', error);
-      setViewingProfileData({ 
-        profile: { id: userId, username: 'Unknown User', full_name: 'Unknown User', avatar_url: null, updated_at: new Date().toISOString() }, 
-        posts: [] 
-      });
-      return;
-    }
-    
+
     const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
     const currentUserId = session?.user?.id;
-    let query = supabase
+    const needsConnCheck = !!(
+      currentUserId &&
+      currentUserId !== userId &&
+      currentUserId !== ADMIN_ID &&
+      userId !== '00000000-0000-0000-0000-000000000001'
+    );
+
+    let initialQuery = supabase
       .from('posts')
       .select('*, profiles(*), likes(user_id), comments(id)')
       .eq('user_id', userId);
     if (currentUserId !== ADMIN_ID) {
-      query = query.lte('created_at', new Date().toISOString());
+      initialQuery = initialQuery.lte('created_at', new Date().toISOString());
     }
-    const { data: postsData } = await query.order('created_at', { ascending: false });
-    
-    let finalPosts = (postsData || []).map((p: any) => ({
+
+    // Fetch profile, first 5 posts, and connection status concurrently (zero waterfall)
+    const [profileRes, postsRes, connRes] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', userId).single(),
+      initialQuery.order('created_at', { ascending: false }).limit(PROFILE_POSTS_PAGE_SIZE),
+      needsConnCheck
+        ? supabase
+            .from('connections')
+            .select('connection_id')
+            .eq('user_id', userId)
+            .eq('connection_id', currentUserId)
+            .maybeSingle()
+        : Promise.resolve({ data: { connection_id: userId } })
+    ]);
+
+    const { data: pData, error } = profileRes;
+    if (error || !pData) {
+      console.error('Profile not found:', error);
+      setViewingProfileData({ 
+        profile: { id: userId, username: 'Unknown User', full_name: 'Unknown User', avatar_url: null, updated_at: new Date().toISOString() }, 
+        posts: [],
+        hasMorePosts: false,
+        cursorCreatedAt: null,
+        isConnection: false
+      });
+      return;
+    }
+
+    const isConnection = !!connRes?.data;
+    const rawRows = postsRes.data || [];
+    let cursorCreatedAt: string | null = rawRows.length > 0 ? rawRows[rawRows.length - 1].created_at : null;
+    let hasMorePosts = rawRows.length === PROFILE_POSTS_PAGE_SIZE;
+
+    let finalPosts = rawRows.map((p: any) => ({
       ...p,
       likes_count: p.likes?.length || 0,
       has_liked: p.likes?.some((l: any) => l.user_id === currentUserId),
       comments_count: p.comments?.length || 0
     }));
 
-    if (currentUserId && currentUserId !== userId && currentUserId !== ADMIN_ID && userId !== '00000000-0000-0000-0000-000000000001') {
-      const { data: conn } = await supabase
-        .from('connections')
-        .select('connection_id')
-        .eq('user_id', userId)
-        .eq('connection_id', currentUserId)
-        .maybeSingle();
-
-      const isConnection = !!conn;
+    if (needsConnCheck) {
       finalPosts = finalPosts.filter((post: any) => isPostVisibleToUser(post, currentUserId, isConnection));
     }
-    
-    setViewingProfileData({ profile: pData, posts: finalPosts });
+
+    // If all 5 initial posts were filtered out by visibility rules and more exist, pull the next page
+    if (finalPosts.length === 0 && hasMorePosts && cursorCreatedAt) {
+      const nextPage = await fetchFilteredProfilePostsPage(userId, currentUserId, isConnection, cursorCreatedAt);
+      finalPosts = nextPage.posts;
+      hasMorePosts = nextPage.hasMorePosts;
+      cursorCreatedAt = nextPage.cursorCreatedAt;
+    }
+
+    setViewingProfileData({
+      profile: pData,
+      posts: finalPosts,
+      hasMorePosts,
+      cursorCreatedAt,
+      isConnection,
+      isLoadingMore: false
+    });
+  };
+
+  const loadMoreOtherProfilePosts = async () => {
+    if (!viewingProfileData || !viewingProfileData.hasMorePosts || isFetchingMoreOtherRef.current) return;
+    if (!viewingProfileData.cursorCreatedAt) return;
+
+    const targetProfileId = viewingProfileData.profile.id;
+    isFetchingMoreOtherRef.current = true;
+    setViewingProfileData(prev => prev ? { ...prev, isLoadingMore: true } : prev);
+
+    try {
+      const nextPage = await fetchFilteredProfilePostsPage(
+        targetProfileId,
+        session?.user?.id,
+        viewingProfileData.isConnection,
+        viewingProfileData.cursorCreatedAt
+      );
+
+      setViewingProfileData(prev => {
+        if (!prev || prev.profile.id !== targetProfileId) return prev;
+        const existingIds = new Set(prev.posts.map(p => p.id));
+        const uniqueNew = nextPage.posts.filter(p => !existingIds.has(p.id));
+        return {
+          ...prev,
+          posts: [...prev.posts, ...uniqueNew],
+          hasMorePosts: nextPage.hasMorePosts,
+          cursorCreatedAt: nextPage.cursorCreatedAt,
+          isLoadingMore: false
+        };
+      });
+    } catch (e) {
+      console.error('Error loading more profile posts:', e);
+      setViewingProfileData(prev => prev ? { ...prev, isLoadingMore: false } : prev);
+    } finally {
+      isFetchingMoreOtherRef.current = false;
+    }
   };
 
   // Custom events and listeners
   useEffect(() => {
     const handleOpenChat = (e: any) => {
+      const targetChatId = e.detail.profile.id;
+      const alreadyOpen = (window as any).currentChatUserId === targetChatId;
       setFloatingAvatar(null);
       setInitialActiveChat(e.detail.profile);
       setViewingProfileId(null);
       setActiveTab('chat');
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: e.detail.profile.id } }));
-      }, 50);
+      if (alreadyOpen) {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: targetChatId } }));
+        }, 50);
+      }
     };
     
     const handleOpenProfile = (e: any) => {
@@ -196,14 +333,17 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     try {
       const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', chatWith).single();
       if (senderProfile) {
+        const alreadyOpen = (window as any).currentChatUserId === senderProfile.id;
         window.history.replaceState({}, document.title, window.location.pathname);
         setFloatingAvatar(null);
         setInitialActiveChat(senderProfile);
         setViewingProfileId(null);
         setActiveTab('chat');
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
-        }, 50);
+        if (alreadyOpen) {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
+          }, 50);
+        }
         return;
       }
     } catch (err) {
@@ -213,6 +353,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     try {
       const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', chatWith).single();
       if (groupChat) {
+        const alreadyOpen = (window as any).currentChatUserId === groupChat.id;
         window.history.replaceState({}, document.title, window.location.pathname);
         setFloatingAvatar(null);
         setInitialActiveChat({
@@ -224,9 +365,11 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         } as any);
         setViewingProfileId(null);
         setActiveTab('chat');
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
-        }, 50);
+        if (alreadyOpen) {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+          }, 50);
+        }
         return;
       }
     } catch (err) {
@@ -271,6 +414,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         if (groupChatId) {
           const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
           if (groupChat) {
+            const alreadyOpen = (window as any).currentChatUserId === groupChat.id;
             setFloatingAvatar(null);
             setInitialActiveChat({
               id: groupChat.id,
@@ -281,21 +425,26 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
             } as any);
             setViewingProfileId(null);
             setActiveTab('chat');
-            setTimeout(() => {
-              window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
-            }, 50);
+            if (alreadyOpen) {
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+              }, 50);
+            }
             return;
           }
         } else if (senderId) {
           const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
           if (senderProfile) {
+            const alreadyOpen = (window as any).currentChatUserId === senderProfile.id;
             setFloatingAvatar(null);
             setInitialActiveChat(senderProfile);
             setViewingProfileId(null);
             setActiveTab('chat');
-            setTimeout(() => {
-              window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
-            }, 50);
+            if (alreadyOpen) {
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
+              }, 50);
+            }
             return;
           }
         }
@@ -366,6 +515,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
           if (groupChatId) {
              const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', groupChatId).single();
              if (groupChat) {
+               const alreadyOpen = (window as any).currentChatUserId === groupChat.id;
                setFloatingAvatar(null);
                setInitialActiveChat({
                  id: groupChat.id,
@@ -376,23 +526,29 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
                } as any);
                setViewingProfileId(null);
                setActiveTab('chat');
-               setTimeout(() => {
-                 window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
-               }, 50);
+               if (alreadyOpen) {
+                 setTimeout(() => {
+                   window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+                 }, 50);
+               }
              }
           } else if (senderId) {
             const { data: senderProfile } = await supabase.from('profiles').select('*').eq('id', senderId).single();
             if (senderProfile) {
+               const alreadyOpen = (window as any).currentChatUserId === senderProfile.id;
                setFloatingAvatar(null);
                setInitialActiveChat(senderProfile);
                setViewingProfileId(null);
                setActiveTab('chat');
-               setTimeout(() => {
-                 window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
-               }, 50);
+               if (alreadyOpen) {
+                 setTimeout(() => {
+                   window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: senderProfile.id } }));
+                 }, 50);
+               }
             } else {
                const { data: groupChat } = await supabase.from('group_chats').select('*').eq('id', senderId).single();
                if (groupChat) {
+                 const alreadyOpen = (window as any).currentChatUserId === groupChat.id;
                  setFloatingAvatar(null);
                  setInitialActiveChat({
                    id: groupChat.id,
@@ -403,9 +559,11 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
                  } as any);
                  setViewingProfileId(null);
                  setActiveTab('chat');
-                 setTimeout(() => {
-                   window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
-                 }, 50);
+                 if (alreadyOpen) {
+                   setTimeout(() => {
+                     window.dispatchEvent(new CustomEvent('refreshActiveChat', { detail: { chatId: groupChat.id } }));
+                   }, 50);
+                 }
                }
             }
           }
@@ -455,6 +613,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     setIsHeaderHidden,
     isFeedInboxOpen,
     setIsFeedInboxOpen,
-    handleUserClick
+    handleUserClick,
+    loadMoreOtherProfilePosts
   };
 }
