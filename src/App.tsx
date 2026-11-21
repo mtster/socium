@@ -244,7 +244,7 @@ export default function App() {
   }
 
   return (
-    <div className="fixed inset-0 h-full bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
+    <div className="fixed top-0 left-0 right-0 h-[var(--app-height,100dvh)] bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
       <Toaster />
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-30"></div>
       

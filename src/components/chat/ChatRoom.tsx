@@ -23,7 +23,8 @@ interface ChatRoomProps {
 
 function useVisualViewport(
   containerRef: React.RefObject<HTMLDivElement | null>,
-  baseViewportHeightRef: React.MutableRefObject<number>
+  baseViewportHeightRef: React.MutableRefObject<number>,
+  triggerPreFocusRef: React.MutableRefObject<(() => void) | null>
 ) {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -41,6 +42,7 @@ function useVisualViewport(
     let watchIntervalId: number | null = null;
     const timeoutIds = new Set<number>();
     let lastHeight = '';
+    let lastAppHeight = '';
     let preFocusUntil = 0;
     baseViewportHeightRef.current = Math.max(
       window.innerHeight,
@@ -71,6 +73,17 @@ function useVisualViewport(
       }
     };
 
+    const applyAppHeight = (value: string | null) => {
+      const target = value ?? '';
+      if (target === lastAppHeight) return;
+      lastAppHeight = target;
+      if (value) {
+        document.documentElement.style.setProperty('--app-height', value);
+      } else {
+        document.documentElement.style.removeProperty('--app-height');
+      }
+    };
+
     const syncViewport = () => {
       resetWindowScroll();
 
@@ -84,16 +97,21 @@ function useVisualViewport(
       if (viewportHeight > baseViewportHeightRef.current) {
         baseViewportHeightRef.current = viewportHeight;
       }
+      if (window.innerHeight > baseViewportHeightRef.current) {
+        baseViewportHeightRef.current = window.innerHeight;
+      }
 
       const baseH = baseViewportHeightRef.current;
       const kbDelta = baseH - viewportHeight;
       const isKeyboardOpen = kbDelta > 80;
 
       let nextHeight = '100%';
+      let nextAppHeight: string | null = null;
       if (isKeyboardOpen) {
         preFocusUntil = 0;
         nextHeight = `${viewportHeight}px`;
-        if (kbDelta >= 220 && kbDelta <= 380 && kbDelta !== learnedQwertyHeight) {
+        nextAppHeight = nextHeight;
+        if (kbDelta >= 220 && kbDelta <= 380 && Math.round(kbDelta) !== learnedQwertyHeight) {
           learnedQwertyHeight = Math.round(kbDelta);
           try {
             window.localStorage.setItem(KB_STORAGE_KEY, String(learnedQwertyHeight));
@@ -101,10 +119,12 @@ function useVisualViewport(
         }
       } else if (preFocusUntil > 0 && performance.now() < preFocusUntil) {
         nextHeight = `${Math.max(240, baseH - learnedQwertyHeight)}px`;
+        nextAppHeight = nextHeight;
       } else {
         preFocusUntil = 0;
       }
 
+      applyAppHeight(nextAppHeight);
       if (nextHeight !== lastHeight) {
         el.style.height = nextHeight;
         lastHeight = nextHeight;
@@ -133,6 +153,19 @@ function useVisualViewport(
         timeoutIds.add(id);
       }
     };
+
+    const triggerPreFocus = () => {
+      const vv = window.visualViewport;
+      const viewportHeight = vv ? vv.height : window.innerHeight;
+      if (isTouchDevice && baseViewportHeightRef.current - viewportHeight <= 80) {
+        preFocusUntil = performance.now() + 350;
+        syncViewport();
+        if (containerRef.current) {
+          void containerRef.current.offsetHeight;
+        }
+      }
+    };
+    triggerPreFocusRef.current = triggerPreFocus;
 
     const stopWatcher = () => {
       if (watchIntervalId !== null) {
@@ -171,15 +204,7 @@ function useVisualViewport(
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
-        const vv = window.visualViewport;
-        const viewportHeight = vv ? vv.height : window.innerHeight;
-        if (isTouchDevice && baseViewportHeightRef.current - viewportHeight <= 80) {
-          preFocusUntil = performance.now() + 350;
-          syncViewport();
-          if (containerRef.current) {
-            void containerRef.current.offsetHeight;
-          }
-        }
+        triggerPreFocus();
         startWatcher();
         scheduleSync([60, 180, 360]);
       }
@@ -216,9 +241,11 @@ function useVisualViewport(
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      triggerPreFocusRef.current = null;
       if (rafId !== null) cancelAnimationFrame(rafId);
       clearSettledTimers();
       stopWatcher();
+      document.documentElement.style.removeProperty('--app-height');
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', handleResize);
         window.visualViewport.removeEventListener('scroll', handleScroll);
@@ -230,16 +257,17 @@ function useVisualViewport(
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [containerRef, baseViewportHeightRef]);
+  }, [containerRef, baseViewportHeightRef, triggerPreFocusRef]);
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
   const viewportContainerRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const triggerPreFocusRef = React.useRef<(() => void) | null>(null);
   const baseViewportHeightRef = React.useRef<number>(
     typeof window !== 'undefined' ? window.innerHeight : 800
   );
-  useVisualViewport(viewportContainerRef, baseViewportHeightRef);
+  useVisualViewport(viewportContainerRef, baseViewportHeightRef, triggerPreFocusRef);
 
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
@@ -313,7 +341,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'spring', stiffness: 320, damping: 32 }} 
-         className="fixed inset-0 z-[60] bg-black w-full max-w-lg mx-auto h-full overflow-hidden [overflow:clip] select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed top-0 left-0 right-0 z-[60] bg-black w-full max-w-lg mx-auto h-[var(--app-height,100dvh)] overflow-hidden [overflow:clip] select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
         {/* Top-pinned container (top always hardcoded to 0px, only shrinks height to visualViewport.height) */}
         <div
@@ -438,6 +466,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    onChange={e => setNewMessage(e.target.value)} 
                    onFocus={() => { 
                      setShowFeatures(false); 
+                     triggerPreFocusRef.current?.();
                      if (window.scrollY !== 0 || window.scrollX !== 0) {
                        window.scrollTo(0, 0);
                      }

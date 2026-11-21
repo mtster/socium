@@ -9,9 +9,12 @@
 }
 
 @layer base {
+  html {
+    background-color: #000000;
+  }
+
   html, body, #root {
-    height: 100%;
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
     overflow: hidden;
     overscroll-behavior: none;
   }
@@ -21,7 +24,6 @@
     top: 0;
     left: 0;
     right: 0;
-    bottom: 0;
     width: 100%;
     @apply bg-black text-white antialiased overflow-x-hidden;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
