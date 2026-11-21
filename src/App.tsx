@@ -244,9 +244,9 @@ export default function App() {
   }
 
   return (
-    <div className="fixed inset-0 h-[100dvh] bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
+    <div className="fixed inset-0 h-full bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
       <Toaster />
-      <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-50"></div>
+      <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-30"></div>
       
       {/* Header */}
       {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (

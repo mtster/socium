@@ -30,16 +30,12 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
     let syncUntil = 0;
     let lastHeight = '';
     let lastTransform = '';
+    let baseViewportHeight = Math.max(
+      window.innerHeight,
+      window.visualViewport?.height ?? 0
+    );
     let lastVvHeight = window.visualViewport?.height ?? window.innerHeight;
     let lastVvOffsetTop = window.visualViewport?.offsetTop ?? 0;
-
-    const isEditableFocused = () => {
-      const active = document.activeElement;
-      return (
-        active instanceof HTMLElement &&
-        (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')
-      );
-    };
 
     const syncViewport = () => {
       if (window.scrollY !== 0 || window.scrollX !== 0) {
@@ -63,8 +59,12 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
         lastVvOffsetTop = vv.offsetTop;
 
         const offsetTop = vv.offsetTop > 0.5 ? vv.offsetTop : 0;
+        if (offsetTop === 0 && vv.height > baseViewportHeight) {
+          baseViewportHeight = vv.height;
+        }
+
         const isClosed =
-          offsetTop === 0 && Math.abs(vv.height - window.innerHeight) < 2;
+          offsetTop === 0 && Math.abs(vv.height - baseViewportHeight) < 2;
 
         nextHeight = isClosed ? '100%' : `${vv.height}px`;
         nextTransform = isClosed
@@ -101,60 +101,58 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
       rafId = requestAnimationFrame(tick);
     };
 
-    const stopFocusWatcher = () => {
+    const stopWatcher = () => {
       if (watchIntervalId !== null) {
         window.clearInterval(watchIntervalId);
         watchIntervalId = null;
       }
     };
 
-    const startFocusWatcher = () => {
-      if (watchIntervalId !== null) return;
+    const startWatcher = () => {
+      if (watchIntervalId !== null || document.visibilityState !== 'visible') return;
       watchIntervalId = window.setInterval(() => {
-        if (!isEditableFocused()) {
-          stopFocusWatcher();
-          return;
-        }
         const vv = window.visualViewport;
         if (!vv) return;
         if (
           Math.abs(vv.height - lastVvHeight) >= 0.5 ||
           Math.abs(vv.offsetTop - lastVvOffsetTop) >= 0.5
         ) {
-          runSyncWindow(250);
+          runSyncWindow(300);
         }
       }, 80);
     };
 
     const handleResize = () => runSyncWindow(450);
     const handleScroll = () => syncViewport();
+    const handleOrientation = () => {
+      baseViewportHeight = Math.max(
+        window.innerHeight,
+        window.visualViewport?.height ?? 0
+      );
+      runSyncWindow(500);
+    };
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
-        startFocusWatcher();
+        startWatcher();
         runSyncWindow(550);
       }
     };
-    const handleFocusOut = () => {
-      if (!isEditableFocused()) {
-        stopFocusWatcher();
-      }
-      runSyncWindow(500);
-    };
+    const handleFocusOut = () => runSyncWindow(550);
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
-        stopFocusWatcher();
-        runSyncWindow(300);
+        startWatcher();
+        runSyncWindow(350);
+      } else {
+        stopWatcher();
       }
     };
 
     syncViewport();
-    if (isEditableFocused()) {
-      startFocusWatcher();
-    }
+    startWatcher();
 
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', handleResize);
@@ -162,19 +160,21 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
     }
     window.addEventListener('resize', handleResize);
     window.addEventListener('scroll', handleScroll);
+    window.addEventListener('orientationchange', handleOrientation);
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
-      stopFocusWatcher();
+      stopWatcher();
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', handleResize);
         window.visualViewport.removeEventListener('scroll', handleScroll);
       }
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('orientationchange', handleOrientation);
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -369,7 +369,14 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
         <form onSubmit={sendAndKeepFocus} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10 [touch-action:none]">
              <div className="flex items-center gap-3">
                <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
-               <div className="relative flex-1 flex items-center">
+               <div
+                 onClick={(e) => {
+                   if (e.target === e.currentTarget && textareaRef.current && document.activeElement !== textareaRef.current) {
+                     textareaRef.current.focus();
+                   }
+                 }}
+                 className="flex-1 flex items-center bg-white/5 border border-white/10 rounded-[24px] pr-1.5"
+               >
                  <textarea 
                    ref={textareaRef}
                    placeholder="Message..." 
@@ -383,7 +390,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
                    }} 
                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAndKeepFocus(e); } }} 
-                   className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight select-text [user-select:text] [-webkit-user-select:text]" 
+                   className="flex-1 min-w-0 bg-transparent text-white placeholder:text-white/40 pl-4 pr-2 py-2.5 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight select-text [user-select:text] [-webkit-user-select:text]" 
                    rows={1} 
                    style={{ height: newMessage ? 'auto' : '44px' }} 
                  />
@@ -395,6 +402,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                     }}
                     onTouchStart={(e) => {
                       e.preventDefault();
+                    }}
+                    onTouchEnd={(e) => {
+                      e.preventDefault();
                       sendAndKeepFocus(e);
                     }}
                     onClick={(e) => {
@@ -402,7 +412,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                       sendAndKeepFocus(e);
                     }}
                     className={cn(
-                      "absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center transition-all",
+                      "shrink-0 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center transition-all",
                       !newMessage.trim() ? "opacity-0 pointer-events-none scale-90" : "opacity-100 scale-100"
                     )}
                   >
