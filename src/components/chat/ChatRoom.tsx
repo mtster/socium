@@ -24,20 +24,20 @@ interface ChatRoomProps {
 function useVisualViewport(
   containerRef: React.RefObject<HTMLDivElement | null>,
   scrollContainerRef: React.RefObject<HTMLDivElement | null>,
+  messagesTrackRef: React.RefObject<HTMLDivElement | null>,
   formRef: React.RefObject<HTMLFormElement | null>,
   baseViewportHeightRef: React.MutableRefObject<number>,
-  triggerPreFocusRef: React.MutableRefObject<((afterShrinkFocus?: () => void) => void) | null>,
-  onKeyboardOpenChange: (open: boolean) => void
+  triggerPreFocusRef: React.MutableRefObject<((afterShrinkFocus?: () => void) => void) | null>
 ) {
-  const onKeyboardOpenChangeRef = React.useRef(onKeyboardOpenChange);
-  onKeyboardOpenChangeRef.current = onKeyboardOpenChange;
-
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const KB_STORAGE_KEY = 'socium_qwerty_kb_h';
+    // Matches iOS UIKit keyboard spring (fast initial launch, smooth asymptotic settle)
     const KEYBOARD_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
-    const ANIM_MS = 260;
+    const OPEN_ANIM_MS = 350;
+    const CLOSE_ANIM_MS = 350;
+    const SWITCH_ANIM_MS = 240;
 
     let learnedQwertyHeight = 345;
     try {
@@ -50,12 +50,20 @@ function useVisualViewport(
     let rafId: number | null = null;
     let flipRafId: number | null = null;
     let animCleanupTimerId: number | null = null;
+    let pendingOpenLaunchTimerId: number | null = null;
     const timeoutIds = new Set<number>();
     let lastHeight = '';
     let lastAppHeight = '';
-    let lastKeyboardOpen = false;
-    let isAnimatingOpen = false;
     let preFocusUntil = 0;
+
+    let pendingOpen: {
+      targetH: number;
+      formStartY: number;
+      msgEndY: number;
+      formBeforeTop: number;
+    } | null = null;
+    let isGpuAnimating = false;
+
     baseViewportHeightRef.current = Math.max(
       window.innerHeight,
       window.visualViewport?.height ?? 0
@@ -65,10 +73,26 @@ function useVisualViewport(
     const isTouchDevice =
       window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
-    const setKeyboardOpenState = (open: boolean) => {
-      if (open !== lastKeyboardOpen) {
-        lastKeyboardOpen = open;
-        onKeyboardOpenChangeRef.current(open);
+    const setFormAttributes = (open: boolean, animating: boolean) => {
+      const form = formRef.current;
+      if (!form) return;
+      form.dataset.kbOpen = open ? 'true' : 'false';
+      if (animating) {
+        form.dataset.animating = 'true';
+      } else {
+        delete form.dataset.animating;
+      }
+    };
+
+    const getCurrentTranslateY = (el: HTMLElement | null): number => {
+      if (!el) return 0;
+      const inline = el.style.transform;
+      if (!inline || inline === 'none') return 0;
+      try {
+        const matrix = new DOMMatrix(window.getComputedStyle(el).transform);
+        return Number.isFinite(matrix.m42) ? matrix.m42 : 0;
+      } catch {
+        return 0;
       }
     };
 
@@ -81,22 +105,48 @@ function useVisualViewport(
         window.clearTimeout(animCleanupTimerId);
         animCleanupTimerId = null;
       }
+      if (pendingOpenLaunchTimerId !== null) {
+        window.clearTimeout(pendingOpenLaunchTimerId);
+        pendingOpenLaunchTimerId = null;
+      }
     };
 
-    const clearFlipStyles = () => {
+    const resetGpuAnimationStyles = (preserveVisualOffset = false) => {
       const el = containerRef.current;
       const scroller = scrollContainerRef.current;
+      const track = messagesTrackRef.current;
       const form = formRef.current;
-      if (el) el.style.overflow = '';
+
+      const formY = preserveVisualOffset ? getCurrentTranslateY(form) : 0;
+      const trackY = preserveVisualOffset ? getCurrentTranslateY(track) : 0;
+
+      if (el) {
+        el.style.overflow = '';
+        el.style.transition = '';
+      }
       if (scroller) {
-        scroller.style.transition = '';
+        scroller.style.height = '';
         scroller.style.bottom = '';
+      }
+      if (track) {
+        track.style.transition = '';
+        track.style.willChange = '';
+        track.style.transform = preserveVisualOffset && Math.abs(trackY) > 0.5
+          ? `translate3d(0, ${trackY}px, 0)`
+          : '';
       }
       if (form) {
         form.style.transition = '';
-        form.style.transform = '';
+        form.style.willChange = '';
+        form.style.transform = preserveVisualOffset && Math.abs(formY) > 0.5
+          ? `translate3d(0, ${formY}px, 0)`
+          : '';
+        if (!preserveVisualOffset) {
+          delete form.dataset.animating;
+        }
       }
-      isAnimatingOpen = false;
+      isGpuAnimating = false;
+      pendingOpen = null;
     };
 
     const resetWindowScroll = () => {
@@ -137,6 +187,150 @@ function useVisualViewport(
       }
     };
 
+    const launchPendingOpen = (actualHeight?: number) => {
+      if (!pendingOpen) return;
+      const info = pendingOpen;
+      pendingOpen = null;
+      if (pendingOpenLaunchTimerId !== null) {
+        window.clearTimeout(pendingOpenLaunchTimerId);
+        pendingOpenLaunchTimerId = null;
+      }
+
+      const el = containerRef.current;
+      const track = messagesTrackRef.current;
+      const form = formRef.current;
+      if (!el || !track || !form) {
+        resetGpuAnimationStyles(false);
+        return;
+      }
+
+      let finalMsgEndY = info.msgEndY;
+      if (
+        typeof actualHeight === 'number' &&
+        Math.abs(actualHeight - info.targetH) >= 1
+      ) {
+        const currentFormVisualY = getCurrentTranslateY(form);
+        const oldBottom = form.getBoundingClientRect().bottom - currentFormVisualY;
+        el.style.height = `${actualHeight}px`;
+        lastHeight = `${actualHeight}px`;
+        void el.offsetHeight;
+        const formAfter = form.getBoundingClientRect();
+        const newRestBottom = formAfter.bottom - currentFormVisualY;
+        const deltaRest = newRestBottom - oldBottom;
+        const adjustedStartY = currentFormVisualY - deltaRest;
+        form.style.transition = 'none';
+        form.style.transform = `translate3d(0, ${adjustedStartY}px, 0)`;
+        void form.offsetHeight;
+        const newRestTop = formAfter.top - currentFormVisualY;
+        finalMsgEndY = Math.round(newRestTop - info.formBeforeTop);
+      }
+
+      form.style.transition = `transform ${OPEN_ANIM_MS}ms ${KEYBOARD_EASE}`;
+      form.style.transform = 'translate3d(0, 0, 0)';
+      track.style.transition = `transform ${OPEN_ANIM_MS}ms ${KEYBOARD_EASE}`;
+      track.style.transform = `translate3d(0, ${finalMsgEndY}px, 0)`;
+
+      animCleanupTimerId = window.setTimeout(() => {
+        animCleanupTimerId = null;
+        resetGpuAnimationStyles(false);
+        syncViewport();
+      }, OPEN_ANIM_MS + 24);
+    };
+
+    const runGpuLayoutShift = (
+      applyNewLayout: () => void,
+      durationMs: number,
+      afterSettled?: () => void
+    ) => {
+      const el = containerRef.current;
+      const scroller = scrollContainerRef.current;
+      const track = messagesTrackRef.current;
+      const form = formRef.current;
+      if (!el || !scroller || !track || !form) {
+        applyNewLayout();
+        afterSettled?.();
+        return;
+      }
+
+      clearAnimTimers();
+      resetGpuAnimationStyles(true);
+
+      const formRectBefore = form.getBoundingClientRect();
+      const scrollerRectBefore = scroller.getBoundingClientRect();
+      const prevTrackY = getCurrentTranslateY(track);
+
+      applyNewLayout();
+      void el.offsetHeight;
+
+      const formRectAfter = form.getBoundingClientRect();
+      const scrollerRectAfter = scroller.getBoundingClientRect();
+
+      const formShiftY = Math.round(formRectBefore.bottom - formRectAfter.bottom);
+      const trackVisualAnchorBefore = formRectBefore.top + prevTrackY * 0; // formRectBefore already includes form transform
+      const msgShiftY = Math.round(trackVisualAnchorBefore - formRectAfter.top);
+
+      // If closing/shrinking, make sure scroller stays tall enough so messages are never clipped mid-glide
+      const maxScrollerH = Math.max(scrollerRectBefore.height, scrollerRectAfter.height);
+      const isShrinkingScroller = scrollerRectAfter.height < scrollerRectBefore.height - 2;
+
+      if (Math.abs(formShiftY) < 2 && Math.abs(msgShiftY) < 2) {
+        resetGpuAnimationStyles(false);
+        afterSettled?.();
+        return;
+      }
+
+      isGpuAnimating = true;
+      setFormAttributes(form.dataset.kbOpen === 'true', true);
+      el.style.overflow = 'visible';
+
+      if (isShrinkingScroller) {
+        scroller.style.height = `${maxScrollerH}px`;
+        scroller.style.bottom = 'auto';
+        // Scroller bottom sits at scrollerRectBefore.bottom, track starts at 0 and slides to -msgShiftY?
+        // Actually formRectAfter.top - formRectBefore.top is negative here
+        const msgEndY = Math.round(formRectAfter.top - formRectBefore.top);
+        track.style.transition = 'none';
+        track.style.willChange = 'transform';
+        track.style.transform = `translate3d(0, ${prevTrackY}px, 0)`;
+        form.style.transition = 'none';
+        form.style.willChange = 'transform';
+        form.style.transform = `translate3d(0, ${formShiftY}px, 0)`;
+        void form.offsetHeight;
+
+        flipRafId = requestAnimationFrame(() => {
+          flipRafId = null;
+          track.style.transition = `transform ${durationMs}ms ${KEYBOARD_EASE}`;
+          track.style.transform = `translate3d(0, ${msgEndY}px, 0)`;
+          form.style.transition = `transform ${durationMs}ms ${KEYBOARD_EASE}`;
+          form.style.transform = 'translate3d(0, 0, 0)';
+        });
+      } else {
+        // Scroller expanded (e.g. closing keyboard 528 -> 873): start offset upward and glide down to 0
+        const msgStartY = Math.round(formRectBefore.top - formRectAfter.top);
+        track.style.transition = 'none';
+        track.style.willChange = 'transform';
+        track.style.transform = `translate3d(0, ${msgStartY}px, 0)`;
+        form.style.transition = 'none';
+        form.style.willChange = 'transform';
+        form.style.transform = `translate3d(0, ${formShiftY}px, 0)`;
+        void form.offsetHeight;
+
+        flipRafId = requestAnimationFrame(() => {
+          flipRafId = null;
+          track.style.transition = `transform ${durationMs}ms ${KEYBOARD_EASE}`;
+          track.style.transform = 'translate3d(0, 0, 0)';
+          form.style.transition = `transform ${durationMs}ms ${KEYBOARD_EASE}`;
+          form.style.transform = 'translate3d(0, 0, 0)';
+        });
+      }
+
+      animCleanupTimerId = window.setTimeout(() => {
+        animCleanupTimerId = null;
+        resetGpuAnimationStyles(false);
+        afterSettled?.();
+      }, durationMs + 24);
+    };
+
     const syncViewport = () => {
       resetWindowScroll();
 
@@ -170,6 +364,11 @@ function useVisualViewport(
             window.localStorage.setItem(KB_STORAGE_KEY, String(learnedQwertyHeight));
           } catch {}
         }
+        // If we are holding frame 0 waiting for vv.resize to kick off the open glide, launch now!
+        if (pendingOpen) {
+          launchPendingOpen(viewportHeight);
+          return;
+        }
       } else if (inPreFocus) {
         nextHeight = `${Math.max(240, baseH - learnedQwertyHeight)}px`;
         nextAppHeight = nextHeight;
@@ -177,37 +376,48 @@ function useVisualViewport(
         preFocusUntil = 0;
       }
 
-      setKeyboardOpenState(isKeyboardOpen || inPreFocus);
-
-      // Keep outer --app-height unclipped while open FLIP animation glides up
-      if (!isAnimatingOpen) {
+      if (!isGpuAnimating && !pendingOpen) {
+        setFormAttributes(isKeyboardOpen || inPreFocus, false);
         applyAppHeight(nextAppHeight);
       }
 
       if (nextHeight !== lastHeight) {
         const wasOpen = lastHeight !== '' && lastHeight !== '100%';
         const isClosing = wasOpen && nextHeight === '100%';
-        const isKeyboardAdjusting = wasOpen && nextHeight !== '100%';
+        const isKeyboardAdjusting = wasOpen && nextHeight !== '100%' && !isGpuAnimating;
 
         if (isClosing) {
-          clearAnimTimers();
-          clearFlipStyles();
           applyAppHeight(null);
-          el.style.transition = `height ${ANIM_MS}ms ${KEYBOARD_EASE}`;
-          el.style.height = `${baseH}px`;
-          lastHeight = '100%';
-          animCleanupTimerId = window.setTimeout(() => {
-            animCleanupTimerId = null;
-            if (containerRef.current && lastHeight === '100%') {
-              containerRef.current.style.transition = '';
-              containerRef.current.style.height = '100%';
+          runGpuLayoutShift(
+            () => {
+              el.style.transition = 'none';
+              el.style.height = '100%';
+              lastHeight = '100%';
+              setFormAttributes(false, true);
+            },
+            CLOSE_ANIM_MS,
+            () => {
+              setFormAttributes(false, false);
+              applyAppHeight(null);
             }
-          }, ANIM_MS + 20);
+          );
         } else if (isKeyboardAdjusting) {
-          el.style.transition = `height 200ms ${KEYBOARD_EASE}`;
-          el.style.height = nextHeight;
-          lastHeight = nextHeight;
-        } else {
+          runGpuLayoutShift(
+            () => {
+              el.style.transition = 'none';
+              el.style.height = nextHeight;
+              lastHeight = nextHeight;
+              setFormAttributes(true, true);
+            },
+            SWITCH_ANIM_MS,
+            () => {
+              setFormAttributes(true, false);
+              if (lastHeight !== '100%') {
+                applyAppHeight(lastHeight);
+              }
+            }
+          );
+        } else if (!isGpuAnimating) {
           el.style.transition = '';
           el.style.height = nextHeight;
           lastHeight = nextHeight;
@@ -242,57 +452,79 @@ function useVisualViewport(
       const vv = window.visualViewport;
       const viewportHeight = vv ? vv.height : window.innerHeight;
       const el = containerRef.current;
-      if (!el || !isTouchDevice || baseViewportHeightRef.current - viewportHeight > 80) {
+      const scroller = scrollContainerRef.current;
+      const track = messagesTrackRef.current;
+      const form = formRef.current;
+
+      if (
+        !el ||
+        !isTouchDevice ||
+        baseViewportHeightRef.current - viewportHeight > 80
+      ) {
         afterShrinkFocus?.();
         return;
       }
 
-      const startH = el.getBoundingClientRect().height || baseViewportHeightRef.current;
       const targetH = Math.max(240, baseViewportHeightRef.current - learnedQwertyHeight);
-      const delta = Math.round(startH - targetH);
-
       preFocusUntil = performance.now() + 350;
-      setKeyboardOpenState(true);
 
-      if (animateWithFlip && delta > 20) {
+      if (animateWithFlip && scroller && track && form) {
         clearAnimTimers();
-        isAnimatingOpen = true;
+        // Preserve mid-flight position if user interrupted close animation
+        const wasClosing = isGpuAnimating;
+        const formRectBefore = form.getBoundingClientRect();
+        const scrollerRectBefore = scroller.getBoundingClientRect();
+        const prevTrackY = wasClosing ? getCurrentTranslateY(track) : 0;
+
+        resetGpuAnimationStyles(false);
+        isGpuAnimating = true;
         applyAppHeight(null);
+
         el.style.transition = 'none';
         el.style.overflow = 'visible';
         el.style.height = `${targetH}px`;
         lastHeight = `${targetH}px`;
+        scroller.style.height = `${scrollerRectBefore.height}px`;
+        scroller.style.bottom = 'auto';
+        setFormAttributes(true, true);
         void el.offsetHeight;
 
-        // Run focus() while textarea is laid out inside 0..targetH (prevents UIKit scroll)
+        // Run focus() synchronously while textarea is laid out at 0..targetH (prevents UIKit scroll)
         afterShrinkFocus?.();
 
-        const scroller = scrollContainerRef.current;
-        const form = formRef.current;
-        if (scroller && form) {
-          scroller.style.transition = 'none';
-          scroller.style.bottom = `-${delta}px`;
-          form.style.transition = 'none';
-          form.style.transform = `translate3d(0, ${delta}px, 0)`;
-          void form.offsetHeight;
+        const formRectAfter = form.getBoundingClientRect();
+        const formStartY = Math.round(formRectBefore.bottom - formRectAfter.bottom);
+        const msgEndY = Math.round(formRectAfter.top - formRectBefore.top);
 
-          flipRafId = requestAnimationFrame(() => {
-            flipRafId = null;
-            scroller.style.transition = `bottom ${ANIM_MS}ms ${KEYBOARD_EASE}`;
-            scroller.style.bottom = '0px';
-            form.style.transition = `transform ${ANIM_MS}ms ${KEYBOARD_EASE}`;
-            form.style.transform = 'translate3d(0, 0, 0)';
-          });
-
-          animCleanupTimerId = window.setTimeout(() => {
-            animCleanupTimerId = null;
-            clearFlipStyles();
-            if (lastHeight !== '100%') {
-              applyAppHeight(lastHeight);
-            }
-          }, ANIM_MS + 20);
+        if (Math.abs(formStartY) < 4 && Math.abs(msgEndY) < 4) {
+          resetGpuAnimationStyles(false);
+          setFormAttributes(true, false);
+          applyAppHeight(lastHeight);
+          return;
         }
+
+        form.style.transition = 'none';
+        form.style.willChange = 'transform';
+        form.style.transform = `translate3d(0, ${formStartY}px, 0)`;
+        track.style.transition = 'none';
+        track.style.willChange = 'transform';
+        track.style.transform = `translate3d(0, ${prevTrackY}px, 0)`;
+        void form.offsetHeight;
+
+        pendingOpen = {
+          targetH,
+          formStartY,
+          msgEndY,
+          formBeforeTop: formRectBefore.top,
+        };
+
+        // Fallback if vv.resize doesn't fire within 65ms (e.g., hardware keyboard / desktop)
+        pendingOpenLaunchTimerId = window.setTimeout(() => {
+          pendingOpenLaunchTimerId = null;
+          launchPendingOpen();
+        }, 65);
       } else {
+        setFormAttributes(true, false);
         syncViewport();
         void el.offsetHeight;
         afterShrinkFocus?.();
@@ -306,7 +538,7 @@ function useVisualViewport(
     const handleOrientation = () => {
       preFocusUntil = 0;
       clearAnimTimers();
-      clearFlipStyles();
+      resetGpuAnimationStyles(false);
       baseViewportHeightRef.current = Math.max(
         window.innerHeight,
         window.visualViewport?.height ?? 0
@@ -316,7 +548,7 @@ function useVisualViewport(
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
-        if (preFocusUntil === 0) {
+        if (preFocusUntil === 0 && !isGpuAnimating && !pendingOpen) {
           triggerPreFocus(false);
         }
         scheduleSync([60, 180, 380]);
@@ -330,7 +562,7 @@ function useVisualViewport(
       if (document.visibilityState === 'visible') {
         preFocusUntil = 0;
         clearAnimTimers();
-        clearFlipStyles();
+        resetGpuAnimationStyles(false);
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
@@ -355,7 +587,7 @@ function useVisualViewport(
       triggerPreFocusRef.current = null;
       if (rafId !== null) cancelAnimationFrame(rafId);
       clearAnimTimers();
-      clearFlipStyles();
+      resetGpuAnimationStyles(false);
       clearSettledTimers();
       document.documentElement.style.removeProperty('--app-height');
       if (window.visualViewport) {
@@ -369,11 +601,12 @@ function useVisualViewport(
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [containerRef, scrollContainerRef, formRef, baseViewportHeightRef, triggerPreFocusRef]);
+  }, [containerRef, scrollContainerRef, messagesTrackRef, formRef, baseViewportHeightRef, triggerPreFocusRef]);
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
   const viewportContainerRef = React.useRef<HTMLDivElement>(null);
+  const messagesTrackRef = React.useRef<HTMLDivElement>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const triggerPreFocusRef = React.useRef<((afterShrinkFocus?: () => void) => void) | null>(null);
@@ -381,7 +614,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
   const baseViewportHeightRef = React.useRef<number>(
     typeof window !== 'undefined' ? window.innerHeight : 800
   );
-  const [isKeyboardOpen, setIsKeyboardOpen] = React.useState(false);
 
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
@@ -438,10 +670,10 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
   useVisualViewport(
     viewportContainerRef,
     scrollContainerRef,
+    messagesTrackRef,
     formRef,
     baseViewportHeightRef,
-    triggerPreFocusRef,
-    setIsKeyboardOpen
+    triggerPreFocusRef
   );
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
@@ -531,7 +763,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
         </div>
 
         <div className="flex-1 min-h-0 relative">
-          <div ref={scrollContainerRef} id="chat-messages-container" className="absolute inset-0 flex flex-col-reverse overflow-y-auto overscroll-contain pt-4 px-4 pb-1 space-y-1 space-y-reverse no-scrollbar [-webkit-overflow-scrolling:touch]" 
+          <div ref={scrollContainerRef} id="chat-messages-container" className="absolute inset-0 flex flex-col-reverse overflow-y-auto overscroll-contain pt-4 px-4 pb-1 no-scrollbar [-webkit-overflow-scrolling:touch]" 
             onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
             onTouchMove={(e) => {
               if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -546,40 +778,39 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
               setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
             }}
           >
-             <div ref={messagesEndRef} className="h-0.5 shrink-0" />
-             <div className="flex flex-col-reverse">
-                <AnimatePresence initial={false}>
-                {messages.slice().reverse().map((msg, idx, arr) => (
-                   <motion.div 
-                     key={msg._clientId || msg.id} 
-                     initial={{ opacity: 0, scale: 0.95, y: 15 }} 
-                     animate={{ opacity: 1, scale: 1, y: 0 }} 
-                     transition={{ type: 'spring', stiffness: 400, damping: 30 }} 
-                   >
-                      <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
-                   </motion.div>
-                 ))}
-                </AnimatePresence>
-              </div>
-             
-             {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
-             <AnimatePresence>
-              {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
-                <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
-                  {pullProgress >= 1 ? "Release to load" : "Pull for history"}
+            <div ref={messagesTrackRef} className="flex flex-col-reverse space-y-1 space-y-reverse">
+               <div ref={messagesEndRef} className="h-0.5 shrink-0" />
+               <div className="flex flex-col-reverse">
+                  <AnimatePresence initial={false}>
+                  {messages.slice().reverse().map((msg, idx, arr) => (
+                     <motion.div 
+                       key={msg._clientId || msg.id} 
+                       initial={{ opacity: 0, scale: 0.95, y: 15 }} 
+                       animate={{ opacity: 1, scale: 1, y: 0 }} 
+                       transition={{ type: 'spring', stiffness: 400, damping: 30 }} 
+                     >
+                        <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
+                     </motion.div>
+                   ))}
+                  </AnimatePresence>
                 </div>
-              </motion.div>}
-             </AnimatePresence>
+               
+               {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
+               <AnimatePresence>
+                {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
+                  <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
+                    {pullProgress >= 1 ? "Release to load" : "Pull for history"}
+                  </div>
+                </motion.div>}
+               </AnimatePresence>
+            </div>
           </div>
         </div>
 
         <form
           ref={formRef}
           onSubmit={sendAndKeepFocus}
-          className={cn(
-            "px-4 pt-4 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10 [touch-action:none] transition-[padding] duration-200",
-            isKeyboardOpen ? "pb-4" : "pb-safe pb-6"
-          )}
+          className="px-4 pt-4 pb-safe pb-6 data-[kb-open=true]:pb-4 border-t border-white/10 bg-black/95 backdrop-blur-2xl data-[animating=true]:bg-black data-[animating=true]:backdrop-blur-none shrink-0 relative z-10 [touch-action:none]"
         >
              <div className="flex items-center gap-3">
                <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
