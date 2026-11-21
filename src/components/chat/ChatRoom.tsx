@@ -26,29 +26,59 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
     if (typeof window === 'undefined') return;
 
     let rafId: number | null = null;
+    let watchIntervalId: number | null = null;
     let syncUntil = 0;
+    let lastHeight = '';
+    let lastTransform = '';
+    let lastVvHeight = window.visualViewport?.height ?? window.innerHeight;
+    let lastVvOffsetTop = window.visualViewport?.offsetTop ?? 0;
+
+    const isEditableFocused = () => {
+      const active = document.activeElement;
+      return (
+        active instanceof HTMLElement &&
+        (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')
+      );
+    };
 
     const syncViewport = () => {
-      const vv = window.visualViewport;
-      if (
-        window.scrollY !== 0 ||
-        window.scrollX !== 0 ||
-        (vv && (vv.offsetTop !== 0 || vv.offsetLeft !== 0))
-      ) {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
         window.scrollTo(0, 0);
       }
 
       const el = containerRef.current;
       if (!el) return;
 
+      if (el.scrollTop !== 0) el.scrollTop = 0;
+      if (el.parentElement && el.parentElement.scrollTop !== 0) {
+        el.parentElement.scrollTop = 0;
+      }
+
+      const vv = window.visualViewport;
+      let nextHeight = '100%';
+      let nextTransform = 'translate3d(0px, 0px, 0px)';
+
       if (vv) {
+        lastVvHeight = vv.height;
+        lastVvOffsetTop = vv.offsetTop;
+
+        const offsetTop = vv.offsetTop > 0.5 ? vv.offsetTop : 0;
         const isClosed =
-          vv.offsetTop === 0 && Math.abs(vv.height - window.innerHeight) < 2;
-        el.style.top = `${vv.offsetTop}px`;
-        el.style.height = isClosed ? '100%' : `${vv.height}px`;
-      } else {
-        el.style.top = '0px';
-        el.style.height = '100%';
+          offsetTop === 0 && Math.abs(vv.height - window.innerHeight) < 2;
+
+        nextHeight = isClosed ? '100%' : `${vv.height}px`;
+        nextTransform = isClosed
+          ? 'translate3d(0px, 0px, 0px)'
+          : `translate3d(0px, ${offsetTop}px, 0px)`;
+      }
+
+      if (nextTransform !== lastTransform) {
+        el.style.transform = nextTransform;
+        lastTransform = nextTransform;
+      }
+      if (nextHeight !== lastHeight) {
+        el.style.height = nextHeight;
+        lastHeight = nextHeight;
       }
     };
 
@@ -71,25 +101,60 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
       rafId = requestAnimationFrame(tick);
     };
 
-    const handleResize = () => runSyncWindow(350);
+    const stopFocusWatcher = () => {
+      if (watchIntervalId !== null) {
+        window.clearInterval(watchIntervalId);
+        watchIntervalId = null;
+      }
+    };
+
+    const startFocusWatcher = () => {
+      if (watchIntervalId !== null) return;
+      watchIntervalId = window.setInterval(() => {
+        if (!isEditableFocused()) {
+          stopFocusWatcher();
+          return;
+        }
+        const vv = window.visualViewport;
+        if (!vv) return;
+        if (
+          Math.abs(vv.height - lastVvHeight) >= 0.5 ||
+          Math.abs(vv.offsetTop - lastVvOffsetTop) >= 0.5
+        ) {
+          runSyncWindow(250);
+        }
+      }, 80);
+    };
+
+    const handleResize = () => runSyncWindow(450);
     const handleScroll = () => syncViewport();
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
-        runSyncWindow(500);
+        startFocusWatcher();
+        runSyncWindow(550);
       }
     };
-    const handleFocusOut = () => runSyncWindow(400);
+    const handleFocusOut = () => {
+      if (!isEditableFocused()) {
+        stopFocusWatcher();
+      }
+      runSyncWindow(500);
+    };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
-        runSyncWindow(250);
+        stopFocusWatcher();
+        runSyncWindow(300);
       }
     };
 
     syncViewport();
+    if (isEditableFocused()) {
+      startFocusWatcher();
+    }
 
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', handleResize);
@@ -103,6 +168,7 @@ function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>)
 
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
+      stopFocusWatcher();
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', handleResize);
         window.visualViewport.removeEventListener('scroll', handleScroll);
@@ -182,16 +248,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
   const sendAndKeepFocus = (e: React.SyntheticEvent) => {
     if (!newMessage.trim()) return;
-    const wasFocused = document.activeElement === textareaRef.current;
     handleSendMessage(e as unknown as React.FormEvent);
-    if (wasFocused) {
-      textareaRef.current?.focus({ preventScroll: true });
-      requestAnimationFrame(() => {
-        if (textareaRef.current && document.activeElement !== textareaRef.current) {
-          textareaRef.current.focus({ preventScroll: true });
-        }
-      });
-    }
   };
 
   return (
@@ -202,16 +259,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'spring', stiffness: 320, damping: 32 }} 
-         className="fixed inset-0 z-[60] bg-black w-full h-full overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed inset-0 z-[60] bg-black w-full h-full overflow-hidden [overflow:clip] select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
         {/* Viewport-synced container: tracks visualViewport offsetTop & height directly (handles regular & taller emoji keyboard without leaking background or jittering header) */}
         <div
           ref={viewportContainerRef}
-          className="absolute left-0 right-0 top-0 flex flex-col bg-black overflow-hidden"
-          style={{ height: '100%' }}
+          className="absolute left-0 right-0 top-0 h-full flex flex-col bg-black overflow-hidden [overflow:clip] will-change-transform"
         >
         {/* Stationary Header */}
-        <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 relative z-20 [touch-action:none]">
+        <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black shrink-0 relative z-20 [touch-action:none]">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
@@ -269,7 +325,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto overscroll-contain pt-4 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
           onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
           onTouchMove={(e) => {
             if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -321,7 +377,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    onChange={e => setNewMessage(e.target.value)} 
                    onFocus={() => { 
                      setShowFeatures(false); 
-                     if (window.scrollY !== 0 || (window.visualViewport && window.visualViewport.offsetTop !== 0)) {
+                     if (window.scrollY !== 0) {
                        window.scrollTo(0, 0);
                      }
                      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
