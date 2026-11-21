@@ -49,13 +49,21 @@ function useVisualViewport(
       window.visualViewport?.height ?? 0
     );
     let lastVvHeight = window.visualViewport?.height ?? window.innerHeight;
+    let lastVvOffsetTop = window.visualViewport?.offsetTop ?? 0;
 
     const isTouchDevice =
       window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
     const resetWindowScroll = () => {
       const vvOffsetTop = window.visualViewport?.offsetTop ?? 0;
-      if (window.scrollY !== 0 || window.scrollX !== 0 || vvOffsetTop > 0.5) {
+      const vvOffsetChanged = Math.abs(vvOffsetTop - lastVvOffsetTop) >= 0.5;
+      lastVvOffsetTop = vvOffsetTop;
+      if (
+        window.scrollY !== 0 ||
+        window.scrollX !== 0 ||
+        vvOffsetTop > 5 ||
+        (vvOffsetTop > 0.5 && vvOffsetChanged)
+      ) {
         window.scrollTo(0, 0);
       }
       if (document.documentElement.scrollTop !== 0) {
@@ -182,7 +190,8 @@ function useVisualViewport(
         const vvOffsetTop = vv?.offsetTop ?? 0;
         if (
           window.scrollY !== 0 ||
-          vvOffsetTop > 0.5 ||
+          vvOffsetTop > 5 ||
+          (vvOffsetTop > 0.5 && Math.abs(vvOffsetTop - lastVvOffsetTop) >= 0.5) ||
           Math.abs(currentVvHeight - lastVvHeight) >= 0.5 ||
           (preFocusUntil > 0 && performance.now() >= preFocusUntil)
         ) {
@@ -264,6 +273,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
   const viewportContainerRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const triggerPreFocusRef = React.useRef<(() => void) | null>(null);
+  const textareaTouchRef = React.useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const baseViewportHeightRef = React.useRef<number>(
     typeof window !== 'undefined' ? window.innerHeight : 800
   );
@@ -454,7 +464,9 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                <div
                  onClick={(e) => {
                    if (e.target === e.currentTarget && textareaRef.current && document.activeElement !== textareaRef.current) {
-                     textareaRef.current.focus();
+                     setShowFeatures(false);
+                     triggerPreFocusRef.current?.();
+                     textareaRef.current.focus({ preventScroll: true });
                    }
                  }}
                  className="flex-1 flex items-center bg-white/5 border border-white/10 rounded-[24px] pr-1.5"
@@ -463,7 +475,49 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    ref={textareaRef}
                    placeholder="Message..." 
                    value={newMessage} 
-                   onChange={e => setNewMessage(e.target.value)} 
+                   onChange={e => setNewMessage(e.target.value)}
+                   onTouchStart={(e) => {
+                     const touch = e.touches[0];
+                     if (touch) {
+                       textareaTouchRef.current = {
+                         x: touch.clientX,
+                         y: touch.clientY,
+                         moved: false,
+                       };
+                     }
+                   }}
+                   onTouchMove={(e) => {
+                     const start = textareaTouchRef.current;
+                     const touch = e.touches[0];
+                     if (start && touch && !start.moved) {
+                       if (
+                         Math.abs(touch.clientX - start.x) > 10 ||
+                         Math.abs(touch.clientY - start.y) > 10
+                       ) {
+                         start.moved = true;
+                       }
+                     }
+                   }}
+                   onTouchCancel={() => {
+                     textareaTouchRef.current = null;
+                   }}
+                   onTouchEnd={(e) => {
+                     const start = textareaTouchRef.current;
+                     textareaTouchRef.current = null;
+                     if (!start || start.moved) return;
+
+                     const textarea = textareaRef.current;
+                     if (!textarea || document.activeElement === textarea) return;
+
+                     const vvHeight = window.visualViewport?.height ?? window.innerHeight;
+                     const kbDelta = baseViewportHeightRef.current - vvHeight;
+                     if (kbDelta <= 80) {
+                       e.preventDefault();
+                       setShowFeatures(false);
+                       triggerPreFocusRef.current?.();
+                       textarea.focus({ preventScroll: true });
+                     }
+                   }}
                    onFocus={() => { 
                      setShowFeatures(false); 
                      triggerPreFocusRef.current?.();
