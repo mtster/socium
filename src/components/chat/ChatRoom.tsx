@@ -21,47 +21,106 @@ interface ChatRoomProps {
   openSettings: () => void;
 }
 
-function useVisualViewport() {
-  const [viewportStyle, setViewportStyle] = React.useState<{ height?: string; top?: string }>({});
-
+function useVisualViewport(containerRef: React.RefObject<HTMLDivElement | null>) {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const updateViewport = () => {
-      if (window.scrollY !== 0) {
+    let rafId: number | null = null;
+    let syncUntil = 0;
+
+    const syncViewport = () => {
+      const vv = window.visualViewport;
+      if (
+        window.scrollY !== 0 ||
+        window.scrollX !== 0 ||
+        (vv && (vv.offsetTop !== 0 || vv.offsetLeft !== 0))
+      ) {
         window.scrollTo(0, 0);
       }
 
-      if (window.visualViewport) {
-        setViewportStyle({
-          height: `${window.visualViewport.height}px`,
-          top: `${window.visualViewport.offsetTop}px`,
-        });
+      const el = containerRef.current;
+      if (!el) return;
+
+      if (vv) {
+        const isClosed =
+          vv.offsetTop === 0 && Math.abs(vv.height - window.innerHeight) < 2;
+        el.style.top = `${vv.offsetTop}px`;
+        el.style.height = isClosed ? '100%' : `${vv.height}px`;
+      } else {
+        el.style.top = '0px';
+        el.style.height = '100%';
       }
     };
 
-    updateViewport();
+    const runSyncWindow = (durationMs = 450) => {
+      syncViewport();
+      const target = performance.now() + durationMs;
+      if (target > syncUntil) {
+        syncUntil = target;
+      }
+      if (rafId !== null) return;
+
+      const tick = () => {
+        syncViewport();
+        if (performance.now() < syncUntil) {
+          rafId = requestAnimationFrame(tick);
+        } else {
+          rafId = null;
+        }
+      };
+      rafId = requestAnimationFrame(tick);
+    };
+
+    const handleResize = () => runSyncWindow(350);
+    const handleScroll = () => syncViewport();
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
+        runSyncWindow(500);
+      }
+    };
+    const handleFocusOut = () => runSyncWindow(400);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        runSyncWindow(250);
+      }
+    };
+
+    syncViewport();
 
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', updateViewport);
-      window.visualViewport.addEventListener('scroll', updateViewport);
+      window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', handleScroll);
     }
-    window.addEventListener('scroll', updateViewport);
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleScroll);
+    document.addEventListener('focusin', handleFocusIn);
+    document.addEventListener('focusout', handleFocusOut);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
       if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', updateViewport);
-        window.visualViewport.removeEventListener('scroll', updateViewport);
+        window.visualViewport.removeEventListener('resize', handleResize);
+        window.visualViewport.removeEventListener('scroll', handleScroll);
       }
-      window.removeEventListener('scroll', updateViewport);
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', handleScroll);
+      document.removeEventListener('focusin', handleFocusIn);
+      document.removeEventListener('focusout', handleFocusOut);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
-
-  return viewportStyle;
+  }, [containerRef]);
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
-  const viewportStyle = useVisualViewport();
+  const viewportContainerRef = React.useRef<HTMLDivElement>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  useVisualViewport(viewportContainerRef);
+
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
     activeChat.isGroup
@@ -121,6 +180,20 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     setIsVideoTooLong(false);
   }, [pendingMedia?.dataUrl]);
 
+  const sendAndKeepFocus = (e: React.SyntheticEvent) => {
+    if (!newMessage.trim()) return;
+    const wasFocused = document.activeElement === textareaRef.current;
+    handleSendMessage(e as unknown as React.FormEvent);
+    if (wasFocused) {
+      textareaRef.current?.focus({ preventScroll: true });
+      requestAnimationFrame(() => {
+        if (textareaRef.current && document.activeElement !== textareaRef.current) {
+          textareaRef.current.focus({ preventScroll: true });
+        }
+      });
+    }
+  };
+
   return (
     <>
       <motion.div 
@@ -129,10 +202,16 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          animate={{ x: 0, opacity: 1 }} 
          exit={{ x: '100%', opacity: 1 }} 
          transition={{ type: 'spring', stiffness: 320, damping: 32 }} 
-         className="fixed inset-0 z-[60] flex flex-col bg-black w-full h-full overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
+         className="fixed inset-0 z-[60] bg-black w-full h-full overflow-hidden select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
-        {/* Stationary Header (Never moves) */}
-        <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 relative z-20">
+        {/* Viewport-synced container: tracks visualViewport offsetTop & height directly (handles regular & taller emoji keyboard without leaking background or jittering header) */}
+        <div
+          ref={viewportContainerRef}
+          className="absolute left-0 right-0 top-0 flex flex-col bg-black overflow-hidden"
+          style={{ height: '100%' }}
+        >
+        {/* Stationary Header */}
+        <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black/95 backdrop-blur-xl shrink-0 relative z-20 [touch-action:none]">
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>
@@ -190,16 +269,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        {/* Inner Content Area: Sized to visualViewport height above keyboard */}
-        <div 
-          className="flex-1 flex flex-col min-h-0 overflow-hidden relative"
-          style={{
-            height: viewportStyle.height ? `calc(${viewportStyle.height} - 3.5rem)` : undefined,
-            maxHeight: viewportStyle.height ? `calc(${viewportStyle.height} - 3.5rem)` : undefined
-          }}
-        >
-
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
+        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto pt-4 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
           onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
           onTouchMove={(e) => {
             if (!isPulling || !hasMoreMessages || loadingMessages) return;
@@ -240,35 +310,45 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </AnimatePresence>
         </div>
 
-        <form onSubmit={handleSendMessage} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10">
+        <form onSubmit={sendAndKeepFocus} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10 [touch-action:none]">
              <div className="flex items-center gap-3">
                <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
                <div className="relative flex-1 flex items-center">
                  <textarea 
+                   ref={textareaRef}
                    placeholder="Message..." 
                    value={newMessage} 
                    onChange={e => setNewMessage(e.target.value)} 
                    onFocus={() => { 
                      setShowFeatures(false); 
+                     if (window.scrollY !== 0 || (window.visualViewport && window.visualViewport.offsetTop !== 0)) {
+                       window.scrollTo(0, 0);
+                     }
                      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
                    }} 
-                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} 
-                   className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight" 
+                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAndKeepFocus(e); } }} 
+                   className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/40 rounded-[24px] px-4 py-2.5 pr-12 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight select-text [user-select:text] [-webkit-user-select:text]" 
                    rows={1} 
                    style={{ height: newMessage ? 'auto' : '44px' }} 
                  />
-                 <button type="submit"
-                    disabled={!newMessage.trim()}
+                 <button type="button"
+                    tabIndex={-1}
+                    aria-disabled={!newMessage.trim()}
                     onMouseDown={(e) => {
                       e.preventDefault();
                     }}
                     onTouchStart={(e) => {
-                      if (newMessage.trim()) {
-                        e.preventDefault();
-                        handleSendMessage(e);
-                      }
+                      e.preventDefault();
+                      sendAndKeepFocus(e);
                     }}
-                    className="absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center disabled:opacity-0 transition-all"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      sendAndKeepFocus(e);
+                    }}
+                    className={cn(
+                      "absolute right-1 w-9 h-9 bg-white text-black rounded-full flex items-center justify-center transition-all",
+                      !newMessage.trim() ? "opacity-0 pointer-events-none scale-90" : "opacity-100 scale-100"
+                    )}
                   >
                     <SendHorizonal size={18} />
                 </button>
