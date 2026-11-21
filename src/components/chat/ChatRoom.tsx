@@ -328,6 +328,7 @@ function useVisualViewport(
         animCleanupTimerId = null;
         resetGpuAnimationStyles(false);
         afterSettled?.();
+        syncViewport();
       }, durationMs + 24);
     };
 
@@ -378,13 +379,12 @@ function useVisualViewport(
 
       if (!isGpuAnimating && !pendingOpen) {
         setFormAttributes(isKeyboardOpen || inPreFocus, false);
-        applyAppHeight(nextAppHeight);
       }
 
       if (nextHeight !== lastHeight) {
         const wasOpen = lastHeight !== '' && lastHeight !== '100%';
         const isClosing = wasOpen && nextHeight === '100%';
-        const isKeyboardAdjusting = wasOpen && nextHeight !== '100%' && !isGpuAnimating;
+        const isKeyboardAdjusting = wasOpen && nextHeight !== '100%';
 
         if (isClosing) {
           applyAppHeight(null);
@@ -402,6 +402,11 @@ function useVisualViewport(
             }
           );
         } else if (isKeyboardAdjusting) {
+          const prevH = parseFloat(lastHeight) || 0;
+          const nextH = parseFloat(nextHeight) || 0;
+          if (nextH > prevH) {
+            applyAppHeight(nextAppHeight);
+          }
           runGpuLayoutShift(
             () => {
               el.style.transition = 'none';
@@ -418,10 +423,13 @@ function useVisualViewport(
             }
           );
         } else if (!isGpuAnimating) {
+          applyAppHeight(nextAppHeight);
           el.style.transition = '';
           el.style.height = nextHeight;
           lastHeight = nextHeight;
         }
+      } else if (!isGpuAnimating && !pendingOpen) {
+        applyAppHeight(nextAppHeight);
       }
     };
 
@@ -533,8 +541,8 @@ function useVisualViewport(
     triggerPreFocusRef.current = (afterShrinkFocus?: () => void) =>
       triggerPreFocus(true, afterShrinkFocus);
 
-    const handleResize = () => scheduleSync([65, 180]);
-    const handleScroll = () => scheduleSync([65, 180]);
+    const handleResize = () => scheduleSync([65, 180, 320]);
+    const handleScroll = () => scheduleSync([65, 180, 320]);
     const handleOrientation = () => {
       preFocusUntil = 0;
       clearAnimTimers();

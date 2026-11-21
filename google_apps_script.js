@@ -54,8 +54,8 @@ INSTRUCTIONS:
 
 Return the final output strictly as a structured JSON object containing a "jokes" key holding an array of exactly 7 elements, where each element is an object with a single "caption" key.`;
 
-    // 5. Query Gemini (Targeting your gemini-3.8-flash model endpoint)
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // 5. Query Gemini (Targeting your gemini-4-hydrogen model endpoint)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent?key=${GEMINI_API_KEY}`;
     const geminiPayload = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
