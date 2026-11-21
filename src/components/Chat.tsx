@@ -26,6 +26,7 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
     loadingMore, 
     hasMore, 
     fetchMoreChats, 
+    flushPendingRefresh,
     updateChatList, 
     inboxStates, 
     markChatAsSeenOptimistically 
@@ -205,7 +206,8 @@ export default function Chat({ currentUserId, initialActiveChat, onCloseChat, on
                 onClose={() => { 
                     markChatAsSeenOptimistically(activeChat.id);
                     setActiveChat(null); 
-                    onCloseChat?.(); 
+                    onCloseChat?.();
+                    flushPendingRefresh();
                 }} 
                 onOpenProfile={(id) => window.dispatchEvent(new CustomEvent('openProfile', { detail: { userId: id, forcePopup: true } }))}
                 openSettings={() => setIsGroupSettingsOpen(true)}

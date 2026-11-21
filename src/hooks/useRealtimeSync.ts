@@ -105,12 +105,12 @@ export function useRealtimeSync({
     });
   }, [userId, activeTab, isFeedInboxOpen]);
 
-  // 3. Sync count and fetch unseen count on tab select
+  // 3. Initial unseen count sync on login/session mount (kept live via RTDB + Postgres Realtime)
   useEffect(() => {
     if (userId) {
       fetchFeedUnseenCount(userId);
     }
-  }, [userId, activeTab]);
+  }, [userId]);
 
   // 4. Online Presence configuration
   useEffect(() => {
@@ -203,7 +203,11 @@ export function useRealtimeSync({
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
            if (payload.new.receiver_id === userId || payload.new.group_chat_id !== null || payload.new.sender_id === userId) {
               getUnread();
-              window.dispatchEvent(new CustomEvent('refreshChatList'));
+              const msg = payload.new;
+              const chatId = msg.group_chat_id || (msg.sender_id === userId ? msg.receiver_id : msg.sender_id);
+              if (chatId !== (window as any).currentChatUserId) {
+                window.dispatchEvent(new CustomEvent('refreshChatList'));
+              }
            }
         })
         .subscribe();

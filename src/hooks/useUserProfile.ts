@@ -4,11 +4,15 @@ import { rtdb } from '../lib/firebase';
 import { ref, set } from 'firebase/database';
 import { useStore } from '../store/useStore';
 
+const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+const inFlightProfileData = new Map<string, Promise<void>>();
+const healedConnectionUsers = new Set<string>();
+
 export function useUserProfile(session: any, registerPush: (uid: string) => void) {
   const { 
     setProfile, 
-    fetchProfile, 
-    fetchUserPosts,
+    fetchProfile,
+    fetchConnectionIds,
   } = useStore();
 
   const [isProfileError, setIsProfileError] = useState(false);
@@ -54,81 +58,98 @@ export function useUserProfile(session: any, registerPush: (uid: string) => void
     }
   };
 
-  const fetchProfileData = async (userId: string) => {
-    try {
-      setIsProfileError(false);
-      await fetchProfile(userId);
-      const currentProfile = useStore.getState().profile;
-      if (!currentProfile || currentProfile.id !== userId) {
-        await createInitialProfile(userId);
-      }
-      
-      // Auto-connect to Socium (ADMIN_ID)
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
-      if (userId !== ADMIN_ID) {
-        try {
-          const { data: existingCheck } = await supabase
-            .from('connection_requests')
-            .select('id')
-            .or(`and(requester_id.eq.${ADMIN_ID},receiver_id.eq.${userId}),and(requester_id.eq.${userId},receiver_id.eq.${ADMIN_ID})`)
-            .maybeSingle();
+  const fetchProfileData = async (userId: string, force = false) => {
+    if (!force) {
+      const existing = inFlightProfileData.get(userId);
+      if (existing) return existing;
+    }
 
-          if (!existingCheck) {
-            await supabase.from('connection_requests').insert({
-              requester_id: ADMIN_ID,
-              receiver_id: userId,
-              status: 'accepted'
-            });
-
-            // Insert own record in actual connections
-            await supabase.from('connections').upsert([
-              { user_id: userId, connection_id: ADMIN_ID }
-            ], { onConflict: 'user_id,connection_id' });
-          }
-        } catch (connErr) {
-          console.error('Error establishing default Socium connection:', connErr);
-        }
-      }
-
-      // Self-heal any accepted connections for this user missing in public.connections
+    const task = (async () => {
       try {
-        const { data: acceptedReqs } = await supabase
-          .from('connection_requests')
-          .select('requester_id, receiver_id')
-          .or(`requester_id.eq.${userId},receiver_id.eq.${userId}`)
-          .eq('status', 'accepted');
+        setIsProfileError(false);
 
-        if (acceptedReqs && acceptedReqs.length > 0) {
-          const { data: existingConns } = await supabase
-            .from('connections')
-            .select('connection_id')
-            .eq('user_id', userId);
+        const shouldHealConnections = !healedConnectionUsers.has(userId);
 
-          const existingSet = new Set((existingConns || []).map(c => c.connection_id));
-          const toInsert: any[] = [];
+        const [, connIds, acceptedReqsRes] = await Promise.all([
+          fetchProfile(userId, force),
+          shouldHealConnections ? fetchConnectionIds(userId) : Promise.resolve([] as string[]),
+          shouldHealConnections
+            ? supabase
+                .from('connection_requests')
+                .select('requester_id, receiver_id')
+                .or(`requester_id.eq.${userId},receiver_id.eq.${userId}`)
+                .eq('status', 'accepted')
+            : Promise.resolve({ data: null })
+        ]);
 
-          for (const req of acceptedReqs) {
-            const peerId = req.requester_id === userId ? req.receiver_id : req.requester_id;
-            if (peerId && !existingSet.has(peerId)) {
-              toInsert.push({ user_id: userId, connection_id: peerId });
+        const currentProfile = useStore.getState().profile;
+        if (!currentProfile || currentProfile.id !== userId) {
+          await createInitialProfile(userId);
+        }
+
+        if (shouldHealConnections) {
+          const existingSet = new Set(connIds);
+
+          // Auto-connect to Socium (ADMIN_ID) only if not already present in connections
+          if (userId !== ADMIN_ID && !existingSet.has(ADMIN_ID)) {
+            try {
+              const { data: existingCheck } = await supabase
+                .from('connection_requests')
+                .select('id')
+                .or(`and(requester_id.eq.${ADMIN_ID},receiver_id.eq.${userId}),and(requester_id.eq.${userId},receiver_id.eq.${ADMIN_ID})`)
+                .maybeSingle();
+
+              if (!existingCheck) {
+                await supabase.from('connection_requests').insert({
+                  requester_id: ADMIN_ID,
+                  receiver_id: userId,
+                  status: 'accepted'
+                });
+
+                await supabase.from('connections').upsert([
+                  { user_id: userId, connection_id: ADMIN_ID }
+                ], { onConflict: 'user_id,connection_id' });
+                existingSet.add(ADMIN_ID);
+              }
+            } catch (connErr) {
+              console.error('Error establishing default Socium connection:', connErr);
             }
           }
 
-          if (toInsert.length > 0) {
-            await supabase.from('connections').upsert(toInsert, { onConflict: 'user_id,connection_id' });
-            window.dispatchEvent(new CustomEvent('connectionsChanged'));
-            window.dispatchEvent(new CustomEvent('refreshChatList'));
+          // Self-heal any accepted connections for this user missing in public.connections
+          try {
+            const acceptedReqs = acceptedReqsRes?.data;
+            if (acceptedReqs && acceptedReqs.length > 0) {
+              const toInsert: any[] = [];
+              for (const req of acceptedReqs) {
+                const peerId = req.requester_id === userId ? req.receiver_id : req.requester_id;
+                if (peerId && !existingSet.has(peerId)) {
+                  toInsert.push({ user_id: userId, connection_id: peerId });
+                  existingSet.add(peerId);
+                }
+              }
+
+              if (toInsert.length > 0) {
+                await supabase.from('connections').upsert(toInsert, { onConflict: 'user_id,connection_id' });
+                window.dispatchEvent(new CustomEvent('connectionsChanged'));
+                window.dispatchEvent(new CustomEvent('refreshChatList'));
+              }
+            }
+            healedConnectionUsers.add(userId);
+          } catch (healErr) {
+            console.warn('Self-heal connections sync notice:', healErr);
           }
         }
-      } catch (healErr) {
-        console.warn('Self-heal connections sync notice:', healErr);
+      } catch (error) {
+        console.error('Error fetching profile:', error);
+        setIsProfileError(true);
+      } finally {
+        inFlightProfileData.delete(userId);
       }
+    })();
 
-      fetchUserPosts(userId, userId);
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      setIsProfileError(true);
-    }
+    inFlightProfileData.set(userId, task);
+    return task;
   };
 
   useEffect(() => {

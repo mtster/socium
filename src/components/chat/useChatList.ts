@@ -246,37 +246,55 @@ export function useChatList(currentUserId: string) {
   const [loadingMore, setLoadingMore] = useState(false);
   const chatsRef = useRef<ChatListItemType[]>(chats);
   chatsRef.current = chats;
+  const inFlightFetchRef = useRef<Promise<void> | null>(null);
+  const lastFetchAtRef = useRef<number>(0);
+  const pendingRefreshOnRoomCloseRef = useRef<boolean>(false);
 
-  const fetchChats = useCallback(async (silent = false) => {
+  const fetchChats = useCallback(async (silent = false, force = false) => {
     if (!currentUserId) return;
-    try {
-      if (!silent && chatsRef.current.length === 0) {
-        setLoading(true);
-      }
-
-      // Single database request via RPC get_user_chats with LEFT JOIN LATERAL
-      let chatItems = await fetchChatsViaRpc(currentUserId, INITIAL_LIMIT, 0);
-      if (!chatItems) {
-        chatItems = await fetchChatsFallback(currentUserId, INITIAL_LIMIT, 0);
-      }
-
-      chatItems.sort((a, b) => {
-        const timeA = a.lastMessage?.created_at ? new Date(a.lastMessage.created_at).getTime() : 0;
-        const timeB = b.lastMessage?.created_at ? new Date(b.lastMessage.created_at).getTime() : 0;
-        if (timeB !== timeA) return timeB - timeA;
-        return (a.name || '').localeCompare(b.name || '');
-      });
-
-      setChats(chatItems);
-      setHasMore(chatItems.length >= INITIAL_LIMIT);
-
-      // Synchronize RTDB inboxes
-      syncRtdbInboxes(currentUserId, chatItems);
-    } catch (e) {
-      console.error('[useChatList] Error loading chats:', e);
-    } finally {
-      setLoading(false);
+    if (inFlightFetchRef.current) {
+      return inFlightFetchRef.current;
     }
+    if (!force && silent && Date.now() - lastFetchAtRef.current < 1500) {
+      return;
+    }
+
+    const task = (async () => {
+      try {
+        if (!silent && chatsRef.current.length === 0) {
+          setLoading(true);
+        }
+
+        // Single database request via RPC get_user_chats with LEFT JOIN LATERAL
+        let chatItems = await fetchChatsViaRpc(currentUserId, INITIAL_LIMIT, 0);
+        if (!chatItems) {
+          chatItems = await fetchChatsFallback(currentUserId, INITIAL_LIMIT, 0);
+        }
+
+        chatItems.sort((a, b) => {
+          const timeA = a.lastMessage?.created_at ? new Date(a.lastMessage.created_at).getTime() : 0;
+          const timeB = b.lastMessage?.created_at ? new Date(b.lastMessage.created_at).getTime() : 0;
+          if (timeB !== timeA) return timeB - timeA;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+
+        setChats(chatItems);
+        setHasMore(chatItems.length >= INITIAL_LIMIT);
+        lastFetchAtRef.current = Date.now();
+        pendingRefreshOnRoomCloseRef.current = false;
+
+        // Synchronize RTDB inboxes
+        syncRtdbInboxes(currentUserId, chatItems);
+      } catch (e) {
+        console.error('[useChatList] Error loading chats:', e);
+      } finally {
+        setLoading(false);
+        inFlightFetchRef.current = null;
+      }
+    })();
+
+    inFlightFetchRef.current = task;
+    return task;
   }, [currentUserId, setChats, setHasMore]);
 
   const fetchMoreChats = useCallback(async () => {
@@ -348,28 +366,49 @@ export function useChatList(currentUserId: string) {
     });
   }, [currentUserId, setChats, updateInboxState]);
 
+  const flushPendingRefresh = useCallback(() => {
+    if (pendingRefreshOnRoomCloseRef.current) {
+      pendingRefreshOnRoomCloseRef.current = false;
+      fetchChats(true, true);
+    }
+  }, [fetchChats]);
+
   useEffect(() => {
     if (chats.length === 0) {
       fetchChats();
     }
 
+    let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
+        if ((window as any).currentChatUserId) {
+          // User resumed directly inside an open ChatRoom; defer list RPC until they exit to chat list
+          pendingRefreshOnRoomCloseRef.current = true;
+          return;
+        }
         fetchChats(true);
       }
     };
     
     const handleRefresh = () => {
-      fetchChats(true);
+      if ((window as any).currentChatUserId) {
+        pendingRefreshOnRoomCloseRef.current = true;
+        return;
+      }
+      if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+      refreshDebounceTimer = setTimeout(() => {
+        refreshDebounceTimer = null;
+        fetchChats(true, true);
+      }, 250);
     };
 
-    window.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleVisibility);
+    document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('refreshChatList', handleRefresh);
     
     return () => {
-      window.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleVisibility);
+      if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('refreshChatList', handleRefresh);
     };
   }, [fetchChats, chats.length]);
@@ -392,6 +431,7 @@ export function useChatList(currentUserId: string) {
     hasMore, 
     fetchChats, 
     fetchMoreChats, 
+    flushPendingRefresh,
     updateChatList, 
     inboxStates, 
     markChatAsSeenOptimistically 

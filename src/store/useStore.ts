@@ -4,6 +4,27 @@ import { Profile, Post } from '../types';
 import { ChatListItemType } from '../types/chat';
 import { isPostVisibleToUser } from '../lib/visibility';
 
+const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+const HUMOR_BOT_ID = '00000000-0000-0000-0000-000000000001';
+
+let cachedConnections: { userId: string; ids: string[]; fetchedAt: number } | null = null;
+const inFlightConnections = new Map<string, Promise<string[]>>();
+const inFlightProfile = new Map<string, Promise<void>>();
+const inFlightUserPosts = new Map<string, Promise<void>>();
+let lastUserPostsFetch: { key: string; fetchedAt: number } | null = null;
+
+const inFlightUnread = new Map<string, Promise<void>>();
+const pendingUnreadRerun = new Set<string>();
+
+const inFlightFeedUnseen = new Map<string, Promise<void>>();
+const pendingFeedUnseenRerun = new Set<string>();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('connectionsChanged', () => {
+    cachedConnections = null;
+  });
+}
+
 interface AppState {
   profile: Profile | null;
   userPosts: Post[];
@@ -39,8 +60,9 @@ interface AppState {
   updateInboxState: (chatId: string, state: boolean) => void;
   handleGlobalNewMessage: (msg: any, currentUserId: string) => void;
   
-  fetchProfile: (userId: string) => Promise<void>;
-  fetchUserPosts: (userId: string, currentUserId: string) => Promise<void>;
+  fetchConnectionIds: (userId: string, force?: boolean) => Promise<string[]>;
+  fetchProfile: (userId: string, force?: boolean) => Promise<void>;
+  fetchUserPosts: (userId: string, currentUserId: string, force?: boolean) => Promise<void>;
   fetchFeedPosts: (currentUserId: string, refresh?: boolean) => Promise<void>;
   fetchMoreFeedPosts: (currentUserId: string) => Promise<void>;
   fetchUnreadCount: (userId: string) => Promise<void>;
@@ -130,48 +152,123 @@ export const useStore = create<AppState>((set, get) => ({
        window.dispatchEvent(new CustomEvent('refreshChatList'));
     }
   },
-  fetchProfile: async (userId) => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    if (data) set({ profile: data });
-  },
 
-  fetchUserPosts: async (userId, currentUserId) => {
-    const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
-    
-    let query = supabase
-      .from('posts')
-      .select('*, profiles(*), likes(user_id), comments(id)')
-      .eq('user_id', userId);
-
-    if (currentUserId !== ADMIN_ID) {
-      query = query.lte('created_at', new Date().toISOString());
+  fetchConnectionIds: async (userId, force = false) => {
+    if (
+      !force &&
+      cachedConnections &&
+      cachedConnections.userId === userId &&
+      Date.now() - cachedConnections.fetchedAt < 60_000
+    ) {
+      return cachedConnections.ids;
     }
 
-    const { data } = await query.order('created_at', { ascending: false });
+    if (!force) {
+      const existing = inFlightConnections.get(userId);
+      if (existing) return existing;
+    }
 
-    if (data) {
-      const viewerId = currentUserId;
-      let processed = data.map((p: any) => ({
-        ...p,
-        likes_count: p.likes?.length || 0,
-        has_liked: p.likes?.some((l: any) => l.user_id === viewerId),
-        comments_count: p.comments?.length || 0
-      }));
-
-      if (viewerId !== userId && viewerId !== ADMIN_ID && userId !== '00000000-0000-0000-0000-000000000001') {
-        // Query if viewer is connected to the profile owner
-        const { data: conn } = await supabase
+    const task = (async () => {
+      try {
+        const { data } = await supabase
           .from('connections')
           .select('connection_id')
-          .eq('user_id', userId)
-          .eq('connection_id', viewerId)
-          .maybeSingle();
+          .eq('user_id', userId);
 
-        const isConnection = !!conn;
-        processed = processed.filter(post => isPostVisibleToUser(post, viewerId, isConnection));
+        const ids = (data || [])
+          .map((c: any) => c.connection_id)
+          .filter(Boolean) as string[];
+
+        cachedConnections = { userId, ids, fetchedAt: Date.now() };
+        return ids;
+      } finally {
+        inFlightConnections.delete(userId);
       }
-      set({ userPosts: processed as any });
+    })();
+
+    inFlightConnections.set(userId, task);
+    return task;
+  },
+
+  fetchProfile: async (userId, force = false) => {
+    if (!force) {
+      const existing = inFlightProfile.get(userId);
+      if (existing) return existing;
     }
+
+    const task = (async () => {
+      try {
+        const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+        if (data) set({ profile: data });
+      } finally {
+        inFlightProfile.delete(userId);
+      }
+    })();
+
+    inFlightProfile.set(userId, task);
+    return task;
+  },
+
+  fetchUserPosts: async (userId, currentUserId, force = false) => {
+    const key = `${userId}:${currentUserId}`;
+    if (
+      !force &&
+      lastUserPostsFetch &&
+      lastUserPostsFetch.key === key &&
+      Date.now() - lastUserPostsFetch.fetchedAt < 15_000 &&
+      get().userPosts.length > 0
+    ) {
+      return;
+    }
+
+    if (!force) {
+      const existing = inFlightUserPosts.get(key);
+      if (existing) return existing;
+    }
+
+    const task = (async () => {
+      try {
+        let query = supabase
+          .from('posts')
+          .select('*, profiles(*), likes(user_id), comments(id)')
+          .eq('user_id', userId);
+
+        if (currentUserId !== ADMIN_ID) {
+          query = query.lte('created_at', new Date().toISOString());
+        }
+
+        const { data } = await query.order('created_at', { ascending: false });
+
+        if (data) {
+          const viewerId = currentUserId;
+          let processed = data.map((p: any) => ({
+            ...p,
+            likes_count: p.likes?.length || 0,
+            has_liked: p.likes?.some((l: any) => l.user_id === viewerId),
+            comments_count: p.comments?.length || 0
+          }));
+
+          if (viewerId !== userId && viewerId !== ADMIN_ID && userId !== HUMOR_BOT_ID) {
+            const { data: conn } = await supabase
+              .from('connections')
+              .select('connection_id')
+              .eq('user_id', userId)
+              .eq('connection_id', viewerId)
+              .maybeSingle();
+
+            const isConnection = !!conn;
+            processed = processed.filter(post => isPostVisibleToUser(post, viewerId, isConnection));
+          }
+          set({ userPosts: processed as any });
+          lastUserPostsFetch = { key, fetchedAt: Date.now() };
+        }
+      } finally {
+        inFlightUserPosts.delete(key);
+      }
+    })();
+
+    inFlightUserPosts.set(key, task);
+    return task;
   },
 
   fetchFeedPosts: async (currentUserId, refresh = false) => {
@@ -182,24 +279,15 @@ export const useStore = create<AppState>((set, get) => ({
 
     set({ isFetchingFeedPosts: true });
     try {
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
+      const connIds = await get().fetchConnectionIds(currentUserId, refresh);
 
-      const { data: connectionsData } = await supabase
-        .from('connections')
-        .select('connection_id')
-        .eq('user_id', currentUserId);
-        
-      // Always include currentUserId, Admin ID and Humor Bot ('00000000-0000-0000-0000-000000000001') in feed connections
-      const connectionIds = [
-        currentUserId, 
-        '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', 
-        '00000000-0000-0000-0000-000000000001'
-      ];
-      if (connectionsData) {
-        connectionsData.forEach(c => {
-          if (c.connection_id) connectionIds.push(c.connection_id);
-        });
-      }
+      // Always include currentUserId, Admin ID and Humor Bot in feed connections
+      const connectionIds = Array.from(new Set([
+        currentUserId,
+        ADMIN_ID,
+        HUMOR_BOT_ID,
+        ...connIds
+      ]));
 
       const PAGE_SIZE = 7;
       let query = supabase
@@ -253,28 +341,19 @@ export const useStore = create<AppState>((set, get) => ({
 
     set({ isFetchingMoreFeedPosts: true });
     try {
-      const ADMIN_ID = '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2';
       const oldestPost = feedPosts[feedPosts.length - 1];
       if (!oldestPost || !oldestPost.created_at) {
         set({ isFetchingMoreFeedPosts: false, hasMoreFeedPosts: false });
         return;
       }
 
-      const { data: connectionsData } = await supabase
-        .from('connections')
-        .select('connection_id')
-        .eq('user_id', currentUserId);
-        
-      const connectionIds = [
-        currentUserId, 
-        '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', 
-        '00000000-0000-0000-0000-000000000001'
-      ];
-      if (connectionsData) {
-        connectionsData.forEach(c => {
-          if (c.connection_id) connectionIds.push(c.connection_id);
-        });
-      }
+      const connIds = await get().fetchConnectionIds(currentUserId);
+      const connectionIds = Array.from(new Set([
+        currentUserId,
+        ADMIN_ID,
+        HUMOR_BOT_ID,
+        ...connIds
+      ]));
 
       const PAGE_SIZE = 7;
       let query = supabase
@@ -327,42 +406,58 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchUnreadCount: async (userId) => {
-    try {
-      // 1. Unread 1-on-1 direct messages (number of distinct sender_ids)
-      const { data: dms } = await supabase
-        .from('messages')
-        .select('sender_id')
-        .eq('receiver_id', userId)
-        .is('read_at', null);
-
-      const unreadDMs = new Set(dms?.map(d => d.sender_id) || []).size;
-
-      // 2. Unread Group chats
-      const { data: participants } = await supabase
-        .from('group_chat_participants')
-        .select('chat_id, last_read_at')
-        .eq('user_id', userId);
-
-      let unreadGroups = 0;
-      if (participants && participants.length > 0) {
-        const promises = participants.map(async (part) => {
-          if (!part.last_read_at) return 0;
-          const { count } = await supabase
-            .from('messages')
-            .select('*', { count: 'exact', head: true })
-            .eq('group_chat_id', part.chat_id)
-            .neq('sender_id', userId)
-            .gt('created_at', part.last_read_at);
-          return (count && count > 0) ? 1 : 0;
-        });
-        const results = await Promise.all(promises);
-        unreadGroups = results.reduce((acc, val) => acc + val, 0);
-      }
-
-      set({ totalUnread: unreadDMs + unreadGroups });
-    } catch (e) {
-      console.warn("Error fetching unread count from Supabase:", e);
+    const existing = inFlightUnread.get(userId);
+    if (existing) {
+      pendingUnreadRerun.add(userId);
+      return existing;
     }
+
+    const task = (async () => {
+      try {
+        // 1. Unread 1-on-1 direct messages & 2. Group chat participants in parallel
+        const [{ data: dms }, { data: participants }] = await Promise.all([
+          supabase
+            .from('messages')
+            .select('sender_id')
+            .eq('receiver_id', userId)
+            .is('read_at', null),
+          supabase
+            .from('group_chat_participants')
+            .select('chat_id, last_read_at')
+            .eq('user_id', userId)
+        ]);
+
+        const unreadDMs = new Set(dms?.map(d => d.sender_id) || []).size;
+
+        let unreadGroups = 0;
+        if (participants && participants.length > 0) {
+          const promises = participants.map(async (part) => {
+            if (!part.last_read_at) return 0;
+            const { count } = await supabase
+              .from('messages')
+              .select('*', { count: 'exact', head: true })
+              .eq('group_chat_id', part.chat_id)
+              .neq('sender_id', userId)
+              .gt('created_at', part.last_read_at);
+            return (count && count > 0) ? 1 : 0;
+          });
+          const results = await Promise.all(promises);
+          unreadGroups = results.reduce((acc, val) => acc + val, 0);
+        }
+
+        set({ totalUnread: unreadDMs + unreadGroups });
+      } catch (e) {
+        console.warn("Error fetching unread count from Supabase:", e);
+      } finally {
+        inFlightUnread.delete(userId);
+        if (pendingUnreadRerun.delete(userId)) {
+          get().fetchUnreadCount(userId);
+        }
+      }
+    })();
+
+    inFlightUnread.set(userId, task);
+    return task;
   },
 
   fetchPendingRequestsCount: async (userId) => {
@@ -394,129 +489,136 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   fetchFeedUnseenCount: async (userId) => {
-    try {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('base_timestamp')
-        .eq('id', userId)
-        .maybeSingle();
+    const existing = inFlightFeedUnseen.get(userId);
+    if (existing) {
+      pendingFeedUnseenRerun.add(userId);
+      return existing;
+    }
 
-      const baseTimestamp = profileData?.base_timestamp || new Date(0).toISOString();
+    const task = (async () => {
+      try {
+        // Reuse cached profile.base_timestamp if already fetched for this user
+        const cachedProfile = get().profile;
+        let baseTimestamp = cachedProfile?.id === userId ? cachedProfile.base_timestamp : undefined;
 
-      const { data: seenData } = await supabase
-        .from('seen_activities')
-        .select('activity_id')
-        .eq('user_id', userId);
+        const [profileRes, seenRes, connIds, myPostsRes, myRequestsRes] = await Promise.all([
+          baseTimestamp !== undefined
+            ? Promise.resolve({ data: { base_timestamp: baseTimestamp } })
+            : supabase.from('profiles').select('base_timestamp').eq('id', userId).maybeSingle(),
+          supabase.from('seen_activities').select('activity_id').eq('user_id', userId),
+          get().fetchConnectionIds(userId),
+          supabase.from('posts').select('id').eq('user_id', userId),
+          supabase.from('connection_requests').select('id').eq('receiver_id', userId)
+        ]);
 
-      const seenIds = new Set((seenData || []).map((s: any) => s.activity_id));
+        baseTimestamp = profileRes.data?.base_timestamp || new Date(0).toISOString();
+        const seenIds = new Set((seenRes.data || []).map((s: any) => s.activity_id));
 
-      const [connsRes, myPostsRes, myRequestsRes] = await Promise.all([
-        supabase.from('connections').select('connection_id').eq('user_id', userId),
-        supabase.from('posts').select('id').eq('user_id', userId),
-        supabase.from('connection_requests').select('id').eq('receiver_id', userId)
-      ]);
+        const connectionIds = Array.from(new Set([
+          userId,
+          ADMIN_ID,
+          HUMOR_BOT_ID,
+          ...connIds
+        ]));
 
-      const conns = connsRes.data;
-      const connectionIds = [
-        userId,
-        '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', // Admin
-        '00000000-0000-0000-0000-000000000001'  // Bot
-      ];
-      if (conns) {
-        conns.forEach(c => {
-          if (c.connection_id) connectionIds.push(c.connection_id);
-        });
-      }
+        const myPostIds = (myPostsRes.data || []).map(p => p.id);
+        const myRequestIds = (myRequestsRes.data || []).map(r => r.id);
 
-      const myPostIds = (myPostsRes.data || []).map(p => p.id);
-      const myRequestIds = (myRequestsRes.data || []).map(r => r.id);
+        const queries = [];
 
-      const queries = [];
+        // 1. Likes/comments on my posts
+        if (myPostIds.length > 0) {
+          queries.push(
+            supabase
+              .from('feed_activity')
+              .select('id, activity_type, initiator_id, created_at, post_id')
+              .in('activity_type', ['like', 'comment'])
+              .in('post_id', myPostIds)
+              .order('created_at', { ascending: false })
+              .limit(15)
+          );
+        }
 
-      // 1. Likes/comments on my posts
-      if (myPostIds.length > 0) {
+        // 2. Tagged/mentioned activities for user
         queries.push(
           supabase
             .from('feed_activity')
-            .select('id, activity_type, initiator_id, created_at, post_id')
-            .in('activity_type', ['like', 'comment'])
-            .in('post_id', myPostIds)
+            .select('id, activity_type, initiator_id, created_at, post_id, tagged_user_ids, post:posts(user_id, visibility_mode, audience)')
+            .contains('tagged_user_ids', [userId])
             .order('created_at', { ascending: false })
             .limit(15)
         );
-      }
 
-      // 2. Tagged/mentioned activities for user
-      queries.push(
-        supabase
-          .from('feed_activity')
-          .select('id, activity_type, initiator_id, created_at, post_id, tagged_user_ids, post:posts(user_id, visibility_mode, audience)')
-          .contains('tagged_user_ids', [userId])
-          .order('created_at', { ascending: false })
-          .limit(15)
-      );
+        // 3. Connection requests meant for user
+        if (myRequestIds.length > 0) {
+          queries.push(
+            supabase
+              .from('feed_activity')
+              .select('id, activity_type, initiator_id, created_at, connection_request_id')
+              .eq('activity_type', 'connection_request')
+              .in('connection_request_id', myRequestIds)
+              .order('created_at', { ascending: false })
+              .limit(15)
+          );
+        }
 
-      // 3. Connection requests meant for user
-      if (myRequestIds.length > 0) {
-        queries.push(
-          supabase
-            .from('feed_activity')
-            .select('id, activity_type, initiator_id, created_at, connection_request_id')
-            .eq('activity_type', 'connection_request')
-            .in('connection_request_id', myRequestIds)
-            .order('created_at', { ascending: false })
-            .limit(15)
-        );
-      }
+        // 4. Posts created by connections (without legacy visible_to column)
+        if (connectionIds.length > 0) {
+          queries.push(
+            supabase
+              .from('feed_activity')
+              .select('id, activity_type, initiator_id, created_at, post_id, post:posts(user_id, visibility_mode, audience)')
+              .in('activity_type', ['post', 'profile_picture'])
+              .in('initiator_id', connectionIds)
+              .order('created_at', { ascending: false })
+              .limit(15)
+          );
+        }
 
-      // 4. Posts created by connections (without legacy visible_to column)
-      if (connectionIds.length > 0) {
-        queries.push(
-          supabase
-            .from('feed_activity')
-            .select('id, activity_type, initiator_id, created_at, post_id, post:posts(user_id, visibility_mode, audience)')
-            .in('activity_type', ['post', 'profile_picture'])
-            .in('initiator_id', connectionIds)
-            .order('created_at', { ascending: false })
-            .limit(15)
-        );
-      }
+        const results = await Promise.all(queries);
 
-      const results = await Promise.all(queries);
+        const allActivities: any[] = [];
+        const seenActivityIds = new Set<string>();
 
-      const allActivities: any[] = [];
-      const seenActivityIds = new Set<string>();
-
-      results.forEach(res => {
-        if (res.data) {
-          res.data.forEach((act: any) => {
-            if (act.activity_type === 'profile_picture' && !act.post_id) {
-              return;
-            }
-            if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
-              const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
-              if (!postObj || !isPostVisibleToUser(postObj, userId, true)) {
+        results.forEach(res => {
+          if (res.data) {
+            res.data.forEach((act: any) => {
+              if (act.activity_type === 'profile_picture' && !act.post_id) {
                 return;
               }
-            }
-            if (!seenActivityIds.has(act.id)) {
-              seenActivityIds.add(act.id);
-              allActivities.push(act);
-            }
-          });
+              if (act.activity_type === 'post' || act.activity_type === 'profile_picture') {
+                const postObj = Array.isArray(act.post) ? act.post[0] : (act.post || (Array.isArray(act.posts) ? act.posts[0] : act.posts));
+                if (!postObj || !isPostVisibleToUser(postObj, userId, true)) {
+                  return;
+                }
+              }
+              if (!seenActivityIds.has(act.id)) {
+                seenActivityIds.add(act.id);
+                allActivities.push(act);
+              }
+            });
+          }
+        });
+
+        const unseen = allActivities.filter((act: any) => {
+          if (act.initiator_id === userId) return false;
+          const isOlderThanBase = act.created_at <= baseTimestamp!;
+          const isSeen = seenIds.has(act.id);
+          return !isOlderThanBase && !isSeen;
+        });
+
+        set({ feedUnseenCount: unseen.length });
+      } catch (err) {
+        console.warn("Error fetching feed unseen count:", err);
+      } finally {
+        inFlightFeedUnseen.delete(userId);
+        if (pendingFeedUnseenRerun.delete(userId)) {
+          get().fetchFeedUnseenCount(userId);
         }
-      });
+      }
+    })();
 
-      const unseen = allActivities.filter((act: any) => {
-        if (act.initiator_id === userId) return false;
-        const isOlderThanBase = act.created_at <= baseTimestamp;
-        const isSeen = seenIds.has(act.id);
-        return !isOlderThanBase && !isSeen;
-      });
-
-      set({ feedUnseenCount: unseen.length });
-    } catch (err) {
-      console.warn("Error fetching feed unseen count:", err);
-    }
+    inFlightFeedUnseen.set(userId, task);
+    return task;
   }
 }));

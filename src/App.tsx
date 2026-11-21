@@ -138,22 +138,26 @@ export default function App() {
       window.history.replaceState({}, document.title, '/');
     }
 
+    const applySession = (currentSession: any) => {
+      setSession((prev: any) => {
+        if (
+          prev?.user?.id === currentSession?.user?.id &&
+          prev?.access_token === currentSession?.access_token
+        ) {
+          return prev;
+        }
+        return currentSession;
+      });
+    };
+
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      setSession(currentSession);
-      if (currentSession) {
-        fetchProfileData(currentSession.user.id);
-        registerPush(currentSession.user.id);
-      }
+      applySession(currentSession);
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, currentSession) => {
-      setSession(currentSession);
-      if (currentSession) {
-        fetchProfileData(currentSession.user.id);
-        registerPush(currentSession.user.id);
-      }
+      applySession(currentSession);
     });
 
     return () => {
@@ -179,12 +183,12 @@ export default function App() {
 
 
 
-  // Reload posts when switching back to profile tab
+  // Load posts only when switching to profile tab (deferred off cold Feed/Chat startup)
   useEffect(() => {
     if (session?.user?.id && activeTab === 'profile') {
       fetchUserPosts(session.user.id, session.user.id);
     }
-  }, [activeTab, session?.user]);
+  }, [activeTab, session?.user?.id]);
 
   const handleLikeProfilePost = async (postId: string, isLiked: boolean) => {
     // Optimistic Update
@@ -215,7 +219,7 @@ export default function App() {
     } catch (e) {
       console.error(e);
       // Revert if error
-      fetchUserPosts(viewingProfileId || session.user.id, session.user.id);
+      fetchUserPosts(viewingProfileId || session.user.id, session.user.id, true);
     }
   };
 
@@ -341,7 +345,7 @@ export default function App() {
       {/* Modals and Overlays */}
       <CompleteProfileModal 
         profile={profile} 
-        onComplete={() => { if (session?.user?.id) fetchProfileData(session.user.id); }} 
+        onComplete={() => { if (session?.user?.id) fetchProfileData(session.user.id, true); }} 
       />
       <AddToHomeScreenModal />
       <SharePostModal />
@@ -393,7 +397,7 @@ export default function App() {
                    onUserClick={handleUserClick}
                    onDeletePost={handleDeletePost}
                    onLikePost={handleLikeProfilePost}
-                   onRefetch={() => { fetchUserPosts(session.user.id, session.user.id); }}
+                   onRefetch={() => { fetchUserPosts(session.user.id, session.user.id, true); }}
                  />
                ) : (
                  <div className="flex flex-col items-center justify-center pt-40 px-4 text-center">
@@ -410,7 +414,7 @@ export default function App() {
                 userId={session.user.id}
                 onSuccess={() => {
                   setActiveTab('feed');
-                  fetchUserPosts(session.user.id, session.user.id);
+                  fetchUserPosts(session.user.id, session.user.id, true);
                   useStore.getState().fetchFeedPosts(session.user.id, true).then(() => {
                     (window as any).lastFeedFetchTime = Date.now();
                   });

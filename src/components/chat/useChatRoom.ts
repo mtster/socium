@@ -10,6 +10,7 @@ import {
   applyCloudinaryVideoTransformation 
 } from '@/src/lib/videoCompression';
 import { videoLog } from '@/src/lib/videoLogger';
+import { useStore } from '@/src/store/useStore';
 
 export function useChatRoom(currentUserId: string, activeChat: ChatListItemType) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -147,12 +148,12 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
   };
 
   const markMessagesAsRead = async () => {
-    window.dispatchEvent(new CustomEvent('forceGetUnread'));
     if (activeChat.isGroup) {
       await supabase.from('group_chat_participants').update({ last_read_at: new Date().toISOString() }).eq('chat_id', activeChat.id).eq('user_id', currentUserId);
     } else {
       await supabase.from('messages').update({ read_at: new Date().toISOString() }).eq('sender_id', activeChat.id).eq('receiver_id', currentUserId).is('read_at', null);
     }
+    window.dispatchEvent(new CustomEvent('forceGetUnread'));
   };
 
   const fetchMessages = async (loadOld = false, currentOffset = 0) => {
@@ -160,7 +161,7 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     const limit = loadOld ? 15 : 20;
     const offset = loadOld ? currentOffset : 0;
     
-    let req = supabase.from('messages').select('*').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    let req = supabase.from('messages').select('*, vault_messages(id)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (activeChat.isGroup) {
       req = req.eq('group_chat_id', activeChat.id);
     } else {
@@ -172,17 +173,46 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     
     if (data) {
       const orderedData = data.reverse();
+      const vaultedInBatch = orderedData
+        .filter((m: any) => Array.isArray(m.vault_messages) ? m.vault_messages.length > 0 : !!m.vault_messages)
+        .map((m: any) => m.id);
+
       if (loadOld) {
         setMessages(prev => {
           const existingIds = new Set(prev.map(m => m.id));
           const filteredNew = orderedData.filter(m => !existingIds.has(m.id));
           return [...filteredNew, ...prev];
         });
+        if (vaultedInBatch.length > 0) {
+          setVaultedMessageIds(prev => {
+            const next = new Set(prev);
+            vaultedInBatch.forEach((id: string) => next.add(id));
+            return next;
+          });
+        }
         setHasMoreMessages(data.length === limit);
       } else {
         setMessages(orderedData);
+        setVaultedMessageIds(new Set(vaultedInBatch));
         scrollToBottom(false);
-        markMessagesAsRead();
+
+        const storeState = useStore.getState();
+        const hasUnreadHint = (activeChat.unreadCount || 0) > 0 || storeState.inboxStates[activeChat.id] === false;
+        if (activeChat.isGroup) {
+          const lastReadAt = (activeChat.groupChat as any)?.my_last_read_at;
+          const hasNewerGroupMsg = !lastReadAt
+            ? orderedData.some((m: any) => m.sender_id !== currentUserId)
+            : orderedData.some((m: any) => m.sender_id !== currentUserId && m.created_at > lastReadAt);
+          if (hasUnreadHint || hasNewerGroupMsg) {
+            markMessagesAsRead();
+          }
+        } else {
+          const hasUnreadInBatch = orderedData.some((m: any) => m.receiver_id === currentUserId && !m.read_at);
+          if (hasUnreadInBatch || hasUnreadHint) {
+            markMessagesAsRead();
+          }
+        }
+
         setHasMoreMessages(data.length === limit);
       }
     }
@@ -209,13 +239,8 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
     window.addEventListener('refreshActiveChat', handleRefreshActiveChat);
 
     fetchMessages();
-    fetchVaultedMessageIds();
 
     // Setup realtime listener
-    const filter = activeChat.isGroup 
-      ? `group_chat_id=eq.${activeChat.id}` 
-      : `sender_id=eq.${activeChat.id}`;
-
     const channel = supabase.channel(`chat_${activeChat.id}_active`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
@@ -234,14 +259,33 @@ export function useChatRoom(currentUserId: string, activeChat: ChatListItemType)
             if (prev.some(m => m.id === msg.id)) return prev;
             return [...prev, msg];
           });
-          markMessagesAsRead();
+          if (msg.sender_id !== currentUserId) {
+            markMessagesAsRead();
+          }
           scrollToBottom();
         }
       }).subscribe();
 
     const vaultChannel = supabase.channel(`chat_vault_${activeChat.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_messages' }, () => {
-        fetchVaultedMessageIds();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_messages' }, (payload: any) => {
+        const msgId = payload.new?.message_id || payload.old?.message_id;
+        if (payload.eventType === 'INSERT' && msgId) {
+          setVaultedMessageIds(prev => {
+            if (prev.has(msgId)) return prev;
+            const next = new Set(prev);
+            next.add(msgId);
+            return next;
+          });
+        } else if (payload.eventType === 'DELETE' && msgId) {
+          setVaultedMessageIds(prev => {
+            if (!prev.has(msgId)) return prev;
+            const next = new Set(prev);
+            next.delete(msgId);
+            return next;
+          });
+        } else {
+          fetchVaultedMessageIds();
+        }
       }).subscribe();
 
     return () => { 

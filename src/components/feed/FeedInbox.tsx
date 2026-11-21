@@ -66,43 +66,31 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
     try {
       setLoading(true);
 
-      // 1. Fetch user profile config
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('base_timestamp')
-        .eq('id', currentUserId)
-        .maybeSingle();
-      
-      const bTS = prof?.base_timestamp || new Date(0).toISOString();
-      setBaseTimestamp(bTS);
+      const storeState = useStore.getState();
+      const cachedBase = storeState.profile?.id === currentUserId ? storeState.profile.base_timestamp : undefined;
 
-      // 2. Fetch seen activities
-      const { data: seenData } = await supabase
-        .from('seen_activities')
-        .select('activity_id')
-        .eq('user_id', currentUserId);
-      
-      const sIds = new Set<string>((seenData || []).map((s: any) => s.activity_id));
-      setSeenIds(sIds);
-
-      // 3. Concurrently fetch connections, my posts, and my connection requests in one batch
-      const [connsRes, myPostsRes, myRequestsRes] = await Promise.all([
-        supabase.from('connections').select('connection_id').eq('user_id', currentUserId),
+      // Concurrently fetch missing profile config, seen activities, connections, my posts, and my connection requests in one batch
+      const [profRes, seenRes, connIds, myPostsRes, myRequestsRes] = await Promise.all([
+        cachedBase !== undefined
+          ? Promise.resolve({ data: { base_timestamp: cachedBase } })
+          : supabase.from('profiles').select('base_timestamp').eq('id', currentUserId).maybeSingle(),
+        supabase.from('seen_activities').select('activity_id').eq('user_id', currentUserId),
+        storeState.fetchConnectionIds(currentUserId),
         supabase.from('posts').select('id').eq('user_id', currentUserId),
         supabase.from('connection_requests').select('id').eq('receiver_id', currentUserId)
       ]);
 
-      const conns = connsRes.data;
-      const connectionIds = [
+      const bTS = profRes.data?.base_timestamp || new Date(0).toISOString();
+      setBaseTimestamp(bTS);
+
+      const sIds = new Set<string>((seenRes.data || []).map((s: any) => s.activity_id));
+      setSeenIds(sIds);
+      const connectionIds = Array.from(new Set([
         currentUserId,
         '0f6e2346-107e-4d8e-8e7c-9ea1e74ecae2', // Admin
-        '00000000-0000-0000-0000-000000000001'  // Bot
-      ];
-      if (conns) {
-        conns.forEach(c => {
-          if (c.connection_id) connectionIds.push(c.connection_id);
-        });
-      }
+        '00000000-0000-0000-0000-000000000001', // Bot
+        ...connIds
+      ]));
 
       // 4. Query activities using highly targeted parallel queries to ensure free-tier speed and accuracy:
       const myPostIds = (myPostsRes.data || []).map(p => p.id);
@@ -466,6 +454,10 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
 
           setBaseTimestamp(nowStr);
           setSeenIds(new Set());
+          const curProf = useStore.getState().profile;
+          if (curProf && curProf.id === currentUserId) {
+            useStore.getState().setProfile({ ...curProf, base_timestamp: nowStr });
+          }
         }
       }
     }, 400);

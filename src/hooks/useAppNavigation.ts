@@ -318,7 +318,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibility);
     }
-    if (session) {
+    if (session?.user?.id) {
       checkUrlParamsAndRoute();
       checkNotificationRouteAndNavigate();
     }
@@ -327,7 +327,7 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         document.removeEventListener('visibilitychange', handleVisibility);
       }
     };
-  }, [session]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
