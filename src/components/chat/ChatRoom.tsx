@@ -23,13 +23,22 @@ interface ChatRoomProps {
 
 function useVisualViewport(
   containerRef: React.RefObject<HTMLDivElement | null>,
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>,
+  formRef: React.RefObject<HTMLFormElement | null>,
   baseViewportHeightRef: React.MutableRefObject<number>,
-  triggerPreFocusRef: React.MutableRefObject<(() => void) | null>
+  triggerPreFocusRef: React.MutableRefObject<((afterShrinkFocus?: () => void) => void) | null>,
+  onKeyboardOpenChange: (open: boolean) => void
 ) {
+  const onKeyboardOpenChangeRef = React.useRef(onKeyboardOpenChange);
+  onKeyboardOpenChangeRef.current = onKeyboardOpenChange;
+
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const KB_STORAGE_KEY = 'socium_qwerty_kb_h';
+    const KEYBOARD_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+    const ANIM_MS = 260;
+
     let learnedQwertyHeight = 345;
     try {
       const saved = Number(window.localStorage.getItem(KB_STORAGE_KEY));
@@ -39,20 +48,56 @@ function useVisualViewport(
     } catch {}
 
     let rafId: number | null = null;
-    let watchIntervalId: number | null = null;
+    let flipRafId: number | null = null;
+    let animCleanupTimerId: number | null = null;
     const timeoutIds = new Set<number>();
     let lastHeight = '';
     let lastAppHeight = '';
+    let lastKeyboardOpen = false;
+    let isAnimatingOpen = false;
     let preFocusUntil = 0;
     baseViewportHeightRef.current = Math.max(
       window.innerHeight,
       window.visualViewport?.height ?? 0
     );
-    let lastVvHeight = window.visualViewport?.height ?? window.innerHeight;
     let lastVvOffsetTop = window.visualViewport?.offsetTop ?? 0;
 
     const isTouchDevice =
       window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
+    const setKeyboardOpenState = (open: boolean) => {
+      if (open !== lastKeyboardOpen) {
+        lastKeyboardOpen = open;
+        onKeyboardOpenChangeRef.current(open);
+      }
+    };
+
+    const clearAnimTimers = () => {
+      if (flipRafId !== null) {
+        cancelAnimationFrame(flipRafId);
+        flipRafId = null;
+      }
+      if (animCleanupTimerId !== null) {
+        window.clearTimeout(animCleanupTimerId);
+        animCleanupTimerId = null;
+      }
+    };
+
+    const clearFlipStyles = () => {
+      const el = containerRef.current;
+      const scroller = scrollContainerRef.current;
+      const form = formRef.current;
+      if (el) el.style.overflow = '';
+      if (scroller) {
+        scroller.style.transition = '';
+        scroller.style.bottom = '';
+      }
+      if (form) {
+        form.style.transition = '';
+        form.style.transform = '';
+      }
+      isAnimatingOpen = false;
+    };
 
     const resetWindowScroll = () => {
       const vvOffsetTop = window.visualViewport?.offsetTop ?? 0;
@@ -100,7 +145,6 @@ function useVisualViewport(
 
       const vv = window.visualViewport;
       const viewportHeight = vv ? vv.height : window.innerHeight;
-      lastVvHeight = viewportHeight;
 
       if (viewportHeight > baseViewportHeightRef.current) {
         baseViewportHeightRef.current = viewportHeight;
@@ -112,6 +156,7 @@ function useVisualViewport(
       const baseH = baseViewportHeightRef.current;
       const kbDelta = baseH - viewportHeight;
       const isKeyboardOpen = kbDelta > 80;
+      const inPreFocus = !isKeyboardOpen && preFocusUntil > 0 && performance.now() < preFocusUntil;
 
       let nextHeight = '100%';
       let nextAppHeight: string | null = null;
@@ -125,17 +170,48 @@ function useVisualViewport(
             window.localStorage.setItem(KB_STORAGE_KEY, String(learnedQwertyHeight));
           } catch {}
         }
-      } else if (preFocusUntil > 0 && performance.now() < preFocusUntil) {
+      } else if (inPreFocus) {
         nextHeight = `${Math.max(240, baseH - learnedQwertyHeight)}px`;
         nextAppHeight = nextHeight;
       } else {
         preFocusUntil = 0;
       }
 
-      applyAppHeight(nextAppHeight);
+      setKeyboardOpenState(isKeyboardOpen || inPreFocus);
+
+      // Keep outer --app-height unclipped while open FLIP animation glides up
+      if (!isAnimatingOpen) {
+        applyAppHeight(nextAppHeight);
+      }
+
       if (nextHeight !== lastHeight) {
-        el.style.height = nextHeight;
-        lastHeight = nextHeight;
+        const wasOpen = lastHeight !== '' && lastHeight !== '100%';
+        const isClosing = wasOpen && nextHeight === '100%';
+        const isKeyboardAdjusting = wasOpen && nextHeight !== '100%';
+
+        if (isClosing) {
+          clearAnimTimers();
+          clearFlipStyles();
+          applyAppHeight(null);
+          el.style.transition = `height ${ANIM_MS}ms ${KEYBOARD_EASE}`;
+          el.style.height = `${baseH}px`;
+          lastHeight = '100%';
+          animCleanupTimerId = window.setTimeout(() => {
+            animCleanupTimerId = null;
+            if (containerRef.current && lastHeight === '100%') {
+              containerRef.current.style.transition = '';
+              containerRef.current.style.height = '100%';
+            }
+          }, ANIM_MS + 20);
+        } else if (isKeyboardAdjusting) {
+          el.style.transition = `height 200ms ${KEYBOARD_EASE}`;
+          el.style.height = nextHeight;
+          lastHeight = nextHeight;
+        } else {
+          el.style.transition = '';
+          el.style.height = nextHeight;
+          lastHeight = nextHeight;
+        }
       }
     };
 
@@ -162,48 +238,75 @@ function useVisualViewport(
       }
     };
 
-    const triggerPreFocus = () => {
+    const triggerPreFocus = (animateWithFlip = false, afterShrinkFocus?: () => void) => {
       const vv = window.visualViewport;
       const viewportHeight = vv ? vv.height : window.innerHeight;
-      if (isTouchDevice && baseViewportHeightRef.current - viewportHeight <= 80) {
-        preFocusUntil = performance.now() + 350;
+      const el = containerRef.current;
+      if (!el || !isTouchDevice || baseViewportHeightRef.current - viewportHeight > 80) {
+        afterShrinkFocus?.();
+        return;
+      }
+
+      const startH = el.getBoundingClientRect().height || baseViewportHeightRef.current;
+      const targetH = Math.max(240, baseViewportHeightRef.current - learnedQwertyHeight);
+      const delta = Math.round(startH - targetH);
+
+      preFocusUntil = performance.now() + 350;
+      setKeyboardOpenState(true);
+
+      if (animateWithFlip && delta > 20) {
+        clearAnimTimers();
+        isAnimatingOpen = true;
+        applyAppHeight(null);
+        el.style.transition = 'none';
+        el.style.overflow = 'visible';
+        el.style.height = `${targetH}px`;
+        lastHeight = `${targetH}px`;
+        void el.offsetHeight;
+
+        // Run focus() while textarea is laid out inside 0..targetH (prevents UIKit scroll)
+        afterShrinkFocus?.();
+
+        const scroller = scrollContainerRef.current;
+        const form = formRef.current;
+        if (scroller && form) {
+          scroller.style.transition = 'none';
+          scroller.style.bottom = `-${delta}px`;
+          form.style.transition = 'none';
+          form.style.transform = `translate3d(0, ${delta}px, 0)`;
+          void form.offsetHeight;
+
+          flipRafId = requestAnimationFrame(() => {
+            flipRafId = null;
+            scroller.style.transition = `bottom ${ANIM_MS}ms ${KEYBOARD_EASE}`;
+            scroller.style.bottom = '0px';
+            form.style.transition = `transform ${ANIM_MS}ms ${KEYBOARD_EASE}`;
+            form.style.transform = 'translate3d(0, 0, 0)';
+          });
+
+          animCleanupTimerId = window.setTimeout(() => {
+            animCleanupTimerId = null;
+            clearFlipStyles();
+            if (lastHeight !== '100%') {
+              applyAppHeight(lastHeight);
+            }
+          }, ANIM_MS + 20);
+        }
+      } else {
         syncViewport();
-        if (containerRef.current) {
-          void containerRef.current.offsetHeight;
-        }
+        void el.offsetHeight;
+        afterShrinkFocus?.();
       }
     };
-    triggerPreFocusRef.current = triggerPreFocus;
-
-    const stopWatcher = () => {
-      if (watchIntervalId !== null) {
-        window.clearInterval(watchIntervalId);
-        watchIntervalId = null;
-      }
-    };
-
-    const startWatcher = () => {
-      if (watchIntervalId !== null || document.visibilityState !== 'visible') return;
-      watchIntervalId = window.setInterval(() => {
-        const vv = window.visualViewport;
-        const currentVvHeight = vv ? vv.height : window.innerHeight;
-        const vvOffsetTop = vv?.offsetTop ?? 0;
-        if (
-          window.scrollY !== 0 ||
-          vvOffsetTop > 5 ||
-          (vvOffsetTop > 0.5 && Math.abs(vvOffsetTop - lastVvOffsetTop) >= 0.5) ||
-          Math.abs(currentVvHeight - lastVvHeight) >= 0.5 ||
-          (preFocusUntil > 0 && performance.now() >= preFocusUntil)
-        ) {
-          scheduleSync([65, 180]);
-        }
-      }, 80);
-    };
+    triggerPreFocusRef.current = (afterShrinkFocus?: () => void) =>
+      triggerPreFocus(true, afterShrinkFocus);
 
     const handleResize = () => scheduleSync([65, 180]);
     const handleScroll = () => scheduleSync([65, 180]);
     const handleOrientation = () => {
       preFocusUntil = 0;
+      clearAnimTimers();
+      clearFlipStyles();
       baseViewportHeightRef.current = Math.max(
         window.innerHeight,
         window.visualViewport?.height ?? 0
@@ -213,9 +316,10 @@ function useVisualViewport(
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
-        triggerPreFocus();
-        startWatcher();
-        scheduleSync([60, 180, 360]);
+        if (preFocusUntil === 0) {
+          triggerPreFocus(false);
+        }
+        scheduleSync([60, 180, 380]);
       }
     };
     const handleFocusOut = () => {
@@ -225,18 +329,16 @@ function useVisualViewport(
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         preFocusUntil = 0;
+        clearAnimTimers();
+        clearFlipStyles();
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
-        startWatcher();
         scheduleSync([65, 180]);
-      } else {
-        stopWatcher();
       }
     };
 
     syncViewport();
-    startWatcher();
 
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', handleResize);
@@ -252,8 +354,9 @@ function useVisualViewport(
     return () => {
       triggerPreFocusRef.current = null;
       if (rafId !== null) cancelAnimationFrame(rafId);
+      clearAnimTimers();
+      clearFlipStyles();
       clearSettledTimers();
-      stopWatcher();
       document.documentElement.style.removeProperty('--app-height');
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', handleResize);
@@ -266,18 +369,19 @@ function useVisualViewport(
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [containerRef, baseViewportHeightRef, triggerPreFocusRef]);
+  }, [containerRef, scrollContainerRef, formRef, baseViewportHeightRef, triggerPreFocusRef]);
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
   const viewportContainerRef = React.useRef<HTMLDivElement>(null);
+  const formRef = React.useRef<HTMLFormElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-  const triggerPreFocusRef = React.useRef<(() => void) | null>(null);
+  const triggerPreFocusRef = React.useRef<((afterShrinkFocus?: () => void) => void) | null>(null);
   const textareaTouchRef = React.useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const baseViewportHeightRef = React.useRef<number>(
     typeof window !== 'undefined' ? window.innerHeight : 800
   );
-  useVisualViewport(viewportContainerRef, baseViewportHeightRef, triggerPreFocusRef);
+  const [isKeyboardOpen, setIsKeyboardOpen] = React.useState(false);
 
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
@@ -330,6 +434,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
     handleAddToVault,
     handleRemoveFromVault
   } = useChatRoom(currentUserId, activeChat);
+
+  useVisualViewport(
+    viewportContainerRef,
+    scrollContainerRef,
+    formRef,
+    baseViewportHeightRef,
+    triggerPreFocusRef,
+    setIsKeyboardOpen
+  );
 
   const [confirmRemoveMsgId, setConfirmRemoveMsgId] = React.useState<string | null>(null);
   const [isVideoTooLong, setIsVideoTooLong] = React.useState(false);
@@ -417,56 +530,69 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
            </div>
         </div>
 
-        <div ref={scrollContainerRef} id="chat-messages-container" className="flex-1 min-h-0 flex flex-col-reverse overflow-y-auto overscroll-contain pt-4 px-4 pb-1 space-y-1 space-y-reverse relative no-scrollbar [-webkit-overflow-scrolling:touch]" 
-          onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
-          onTouchMove={(e) => {
-            if (!isPulling || !hasMoreMessages || loadingMessages) return;
-            const touch = e.touches[0];
-            const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
-            if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
-            const diff = touch.clientY - startY;
-            if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
-          }}
-          onTouchEnd={(e) => {
-            if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
-            setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
-          }}
-        >
-           <div ref={messagesEndRef} className="h-0.5 shrink-0" />
-           <div className="flex flex-col-reverse">
-              <AnimatePresence initial={false}>
-              {messages.slice().reverse().map((msg, idx, arr) => (
-                 <motion.div 
-                   key={msg._clientId || msg.id} 
-                   initial={{ opacity: 0, scale: 0.95, y: 15 }} 
-                   animate={{ opacity: 1, scale: 1, y: 0 }} 
-                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                 >
-                    <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
-                 </motion.div>
-               ))}
-              </AnimatePresence>
-            </div>
-           
-           {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
-           <AnimatePresence>
-            {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
-              <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
-                {pullProgress >= 1 ? "Release to load" : "Pull for history"}
+        <div className="flex-1 min-h-0 relative">
+          <div ref={scrollContainerRef} id="chat-messages-container" className="absolute inset-0 flex flex-col-reverse overflow-y-auto overscroll-contain pt-4 px-4 pb-1 space-y-1 space-y-reverse no-scrollbar [-webkit-overflow-scrolling:touch]" 
+            onTouchStart={(e) => { if (e.currentTarget.scrollTop <= 5) setIsPulling(true); }}
+            onTouchMove={(e) => {
+              if (!isPulling || !hasMoreMessages || loadingMessages) return;
+              const touch = e.touches[0];
+              const startY = (e.currentTarget as any)._pullStartY || touch.clientY;
+              if (!(e.currentTarget as any)._pullStartY) (e.currentTarget as any)._pullStartY = touch.clientY;
+              const diff = touch.clientY - startY;
+              if (diff > 0) setPullProgress(Math.min(diff / 180, 1));
+            }}
+            onTouchEnd={(e) => {
+              if (isPulling && pullProgress >= 1) fetchMessages(true, messages.length);
+              setIsPulling(false); setPullProgress(0); (e.currentTarget as any)._pullStartY = null;
+            }}
+          >
+             <div ref={messagesEndRef} className="h-0.5 shrink-0" />
+             <div className="flex flex-col-reverse">
+                <AnimatePresence initial={false}>
+                {messages.slice().reverse().map((msg, idx, arr) => (
+                   <motion.div 
+                     key={msg._clientId || msg.id} 
+                     initial={{ opacity: 0, scale: 0.95, y: 15 }} 
+                     animate={{ opacity: 1, scale: 1, y: 0 }} 
+                     transition={{ type: 'spring', stiffness: 400, damping: 30 }} 
+                   >
+                      <MessageBubble msg={msg} isMine={msg.sender_id === currentUserId} nextMsg={arr[idx - 1]} prevMsg={arr[idx + 1]} activeChat={activeChat} currentUserId={currentUserId} setViewingImage={setViewingImage} setViewingVideo={setViewingVideo} handleLongPress={handleLongPress} contextMenuId={contextMenu?.message?.id} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onCloseChat={onClose} onOpenProfile={onOpenProfile} showDate={activeDateMsgId === msg.id} onToggleDate={() => setActiveDateMsgId(prev => prev === msg.id ? null : msg.id)} isVaulted={vaultedMessageIds?.has(msg.id)} />
+                   </motion.div>
+                 ))}
+                </AnimatePresence>
               </div>
-            </motion.div>}
-           </AnimatePresence>
+             
+             {loadingMessages && <div className="flex justify-center z-50 pointer-events-none pb-4 pt-8"><div className="bg-black/60 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2"><span className="w-3 h-3 border-2 border-white/30 border-t-white animate-spin rounded-full" />Loading...</div></div>}
+             <AnimatePresence>
+              {pullProgress > 0 && <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: pullProgress }} exit={{ scale: 0.8, opacity: 0 }} className="flex justify-center z-50 pointer-events-none pb-4 pt-4">
+                <div className={cn("text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10", pullProgress >= 1 ? "text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "text-white/50")}>
+                  {pullProgress >= 1 ? "Release to load" : "Pull for history"}
+                </div>
+              </motion.div>}
+             </AnimatePresence>
+          </div>
         </div>
 
-        <form onSubmit={sendAndKeepFocus} className="p-4 pb-safe pb-6 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10 [touch-action:none]">
+        <form
+          ref={formRef}
+          onSubmit={sendAndKeepFocus}
+          className={cn(
+            "px-4 pt-4 border-t border-white/10 bg-black/95 backdrop-blur-2xl shrink-0 relative z-10 [touch-action:none] transition-[padding] duration-200",
+            isKeyboardOpen ? "pb-4" : "pb-safe pb-6"
+          )}
+        >
              <div className="flex items-center gap-3">
                <button type="button" onClick={() => setShowFeatures(!showFeatures)} className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center transition-all"><Plus size={24} className={cn("text-white transition-transform duration-300", showFeatures && "rotate-45")} /></button>
                <div
                  onClick={(e) => {
                    if (e.target === e.currentTarget && textareaRef.current && document.activeElement !== textareaRef.current) {
+                     const textarea = textareaRef.current;
                      setShowFeatures(false);
-                     triggerPreFocusRef.current?.();
-                     textareaRef.current.focus({ preventScroll: true });
+                     if (triggerPreFocusRef.current) {
+                       triggerPreFocusRef.current(() => textarea.focus({ preventScroll: true }));
+                     } else {
+                       textarea.focus({ preventScroll: true });
+                     }
                    }
                  }}
                  className="flex-1 flex items-center bg-white/5 border border-white/10 rounded-[24px] pr-1.5"
@@ -514,13 +640,15 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                      if (kbDelta <= 80) {
                        e.preventDefault();
                        setShowFeatures(false);
-                       triggerPreFocusRef.current?.();
-                       textarea.focus({ preventScroll: true });
+                       if (triggerPreFocusRef.current) {
+                         triggerPreFocusRef.current(() => textarea.focus({ preventScroll: true }));
+                       } else {
+                         textarea.focus({ preventScroll: true });
+                       }
                      }
                    }}
                    onFocus={() => { 
                      setShowFeatures(false); 
-                     triggerPreFocusRef.current?.();
                      if (window.scrollY !== 0 || window.scrollX !== 0) {
                        window.scrollTo(0, 0);
                      }
