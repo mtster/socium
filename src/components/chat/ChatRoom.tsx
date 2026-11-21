@@ -23,8 +23,6 @@ interface ChatRoomProps {
 
 function useVisualViewport(
   containerRef: React.RefObject<HTMLDivElement | null>,
-  preFocusUntilRef: React.MutableRefObject<number>,
-  lastKeyboardHeightRef: React.MutableRefObject<number>,
   baseViewportHeightRef: React.MutableRefObject<number>
 ) {
   React.useEffect(() => {
@@ -32,26 +30,15 @@ function useVisualViewport(
 
     let rafId: number | null = null;
     let watchIntervalId: number | null = null;
-    let syncUntil = 0;
+    const timeoutIds = new Set<number>();
     let lastHeight = '';
-    let lastTransform = '';
     baseViewportHeightRef.current = Math.max(
       window.innerHeight,
       window.visualViewport?.height ?? 0
     );
     let lastVvHeight = window.visualViewport?.height ?? window.innerHeight;
-    let lastVvOffsetTop = window.visualViewport?.offsetTop ?? 0;
 
-    const getVisibleHeight = () => {
-      const vv = window.visualViewport;
-      if (!vv) return window.innerHeight;
-      const docHeight = document.documentElement?.clientHeight || vv.height;
-      return Math.min(vv.height, window.innerHeight || vv.height, docHeight);
-    };
-
-    let lastMeasuredHeight = getVisibleHeight();
-
-    const syncViewport = () => {
+    const resetWindowScroll = () => {
       if (window.scrollY !== 0 || window.scrollX !== 0) {
         window.scrollTo(0, 0);
       }
@@ -61,81 +48,60 @@ function useVisualViewport(
       if (document.body.scrollTop !== 0) {
         document.body.scrollTop = 0;
       }
+      const el = containerRef.current;
+      if (el) {
+        if (el.scrollTop !== 0) el.scrollTop = 0;
+        if (el.parentElement && el.parentElement.scrollTop !== 0) {
+          el.parentElement.scrollTop = 0;
+        }
+      }
+    };
+
+    const syncViewport = () => {
+      resetWindowScroll();
 
       const el = containerRef.current;
       if (!el) return;
 
-      if (el.scrollTop !== 0) el.scrollTop = 0;
-      if (el.parentElement && el.parentElement.scrollTop !== 0) {
-        el.parentElement.scrollTop = 0;
-      }
-
       const vv = window.visualViewport;
-      let nextHeight = '100%';
-      let nextTransform = 'none';
+      const viewportHeight = vv ? vv.height : window.innerHeight;
+      lastVvHeight = viewportHeight;
 
-      if (vv) {
-        const measuredHeight = getVisibleHeight();
-        lastVvHeight = vv.height;
-        lastVvOffsetTop = vv.offsetTop;
-        lastMeasuredHeight = measuredHeight;
-
-        const offsetTop = vv.offsetTop > 0.5 ? vv.offsetTop : 0;
-        if (offsetTop === 0 && measuredHeight > baseViewportHeightRef.current) {
-          baseViewportHeightRef.current = measuredHeight;
-        }
-
-        const baseH = baseViewportHeightRef.current;
-        if (measuredHeight < baseH - 40) {
-          lastKeyboardHeightRef.current = Math.max(220, baseH - measuredHeight);
-        }
-
-        const preFitHeight = Math.max(240, baseH - Math.max(lastKeyboardHeightRef.current, 360));
-        const isPreFocusing =
-          performance.now() < preFocusUntilRef.current &&
-          measuredHeight > preFitHeight + 2;
-
-        if (isPreFocusing) {
-          nextHeight = `${preFitHeight}px`;
-          nextTransform =
-            offsetTop === 0 ? 'none' : `translate3d(0px, ${offsetTop}px, 0px)`;
-        } else {
-          const isClosed =
-            offsetTop === 0 && Math.abs(measuredHeight - baseH) < 2;
-
-          nextHeight = isClosed ? '100%' : `${measuredHeight}px`;
-          nextTransform =
-            offsetTop === 0 ? 'none' : `translate3d(0px, ${offsetTop}px, 0px)`;
-        }
+      if (viewportHeight > baseViewportHeightRef.current) {
+        baseViewportHeightRef.current = viewportHeight;
       }
 
-      if (nextTransform !== lastTransform) {
-        el.style.transform = nextTransform;
-        lastTransform = nextTransform;
-      }
+      const baseH = baseViewportHeightRef.current;
+      const isKeyboardOpen = baseH - viewportHeight > 80;
+      const nextHeight = isKeyboardOpen ? `${viewportHeight}px` : '100%';
+
       if (nextHeight !== lastHeight) {
         el.style.height = nextHeight;
         lastHeight = nextHeight;
       }
     };
 
-    const runSyncWindow = (durationMs = 450) => {
-      syncViewport();
-      const target = performance.now() + durationMs;
-      if (target > syncUntil) {
-        syncUntil = target;
-      }
-      if (rafId !== null) return;
+    const clearSettledTimers = () => {
+      timeoutIds.forEach((id) => window.clearTimeout(id));
+      timeoutIds.clear();
+    };
 
-      const tick = () => {
+    const scheduleSync = (delays: number[] = [65, 180]) => {
+      syncViewport();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
         syncViewport();
-        if (performance.now() < syncUntil) {
-          rafId = requestAnimationFrame(tick);
-        } else {
-          rafId = null;
-        }
-      };
-      rafId = requestAnimationFrame(tick);
+      });
+
+      clearSettledTimers();
+      for (const delay of delays) {
+        const id = window.setTimeout(() => {
+          timeoutIds.delete(id);
+          syncViewport();
+        }, delay);
+        timeoutIds.add(id);
+      }
     };
 
     const stopWatcher = () => {
@@ -149,50 +115,42 @@ function useVisualViewport(
       if (watchIntervalId !== null || document.visibilityState !== 'visible') return;
       watchIntervalId = window.setInterval(() => {
         const vv = window.visualViewport;
-        if (!vv) return;
-        const measuredHeight = getVisibleHeight();
+        const currentVvHeight = vv ? vv.height : window.innerHeight;
         if (
           window.scrollY !== 0 ||
-          Math.abs(vv.height - lastVvHeight) >= 0.5 ||
-          Math.abs(vv.offsetTop - lastVvOffsetTop) >= 0.5 ||
-          Math.abs(measuredHeight - lastMeasuredHeight) >= 0.5 ||
-          (performance.now() >= preFocusUntilRef.current &&
-            lastHeight !== '100%' &&
-            Math.abs(measuredHeight - baseViewportHeightRef.current) < 2)
+          Math.abs(currentVvHeight - lastVvHeight) >= 0.5
         ) {
-          runSyncWindow(350);
+          scheduleSync([65, 180]);
         }
       }, 80);
     };
 
-    const handleResize = () => runSyncWindow(450);
-    const handleScroll = () => syncViewport();
+    const handleResize = () => scheduleSync([65, 180]);
+    const handleScroll = () => scheduleSync([65, 180]);
     const handleOrientation = () => {
       baseViewportHeightRef.current = Math.max(
         window.innerHeight,
         window.visualViewport?.height ?? 0
       );
-      runSyncWindow(500);
+      scheduleSync([65, 180, 300]);
     };
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
         startWatcher();
-        runSyncWindow(600);
+        scheduleSync([60, 180, 300]);
       }
     };
     const handleFocusOut = () => {
-      preFocusUntilRef.current = 0;
-      runSyncWindow(550);
+      scheduleSync([65, 180]);
     };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        preFocusUntilRef.current = 0;
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
         startWatcher();
-        runSyncWindow(350);
+        scheduleSync([65, 180]);
       } else {
         stopWatcher();
       }
@@ -214,6 +172,7 @@ function useVisualViewport(
 
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
+      clearSettledTimers();
       stopWatcher();
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', handleResize);
@@ -226,23 +185,16 @@ function useVisualViewport(
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [containerRef, preFocusUntilRef, lastKeyboardHeightRef, baseViewportHeightRef]);
+  }, [containerRef, baseViewportHeightRef]);
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
   const viewportContainerRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-  const preFocusUntilRef = React.useRef<number>(0);
-  const lastKeyboardHeightRef = React.useRef<number>(350);
   const baseViewportHeightRef = React.useRef<number>(
     typeof window !== 'undefined' ? window.innerHeight : 800
   );
-  useVisualViewport(
-    viewportContainerRef,
-    preFocusUntilRef,
-    lastKeyboardHeightRef,
-    baseViewportHeightRef
-  );
+  useVisualViewport(viewportContainerRef, baseViewportHeightRef);
 
   const { isOnline: isPeerOnline, statusText: peerStatusText } = usePeerPresence(
     activeChat.id,
@@ -318,10 +270,10 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
          transition={{ type: 'spring', stiffness: 320, damping: 32 }} 
          className="fixed inset-0 z-[60] bg-black w-full max-w-lg mx-auto h-full overflow-hidden [overflow:clip] select-none [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none]"
       >
-        {/* Viewport-synced container: tracks visualViewport offsetTop & height directly (handles regular & taller emoji keyboard without leaking background or jittering header) */}
+        {/* Top-pinned container (top always hardcoded to 0px, only shrinks height to visualViewport.height) */}
         <div
           ref={viewportContainerRef}
-          className="absolute left-0 right-0 top-0 h-full flex flex-col bg-black overflow-hidden [overflow:clip]"
+          className="fixed top-0 left-0 right-0 max-w-lg mx-auto h-full flex flex-col bg-black overflow-hidden [overflow:clip]"
         >
         {/* Stationary Header */}
         <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black shrink-0 relative z-20 [touch-action:none]">
@@ -441,7 +393,7 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                    onChange={e => setNewMessage(e.target.value)} 
                    onFocus={() => { 
                      setShowFeatures(false); 
-                     if (window.scrollY !== 0) {
+                     if (window.scrollY !== 0 || window.scrollX !== 0) {
                        window.scrollTo(0, 0);
                      }
                      if (document.documentElement.scrollTop !== 0) {
@@ -451,18 +403,6 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
                        document.body.scrollTop = 0;
                      }
                      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-                     const isTouchDevice =
-                       typeof window !== 'undefined' &&
-                       (window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0);
-                     if (isTouchDevice && viewportContainerRef.current) {
-                       const vvH = window.visualViewport?.height ?? window.innerHeight;
-                       const baseH = Math.max(baseViewportHeightRef.current, vvH);
-                       if (vvH >= baseH - 2) {
-                         preFocusUntilRef.current = performance.now() + 450;
-                         viewportContainerRef.current.style.height = `${Math.max(240, baseH - Math.max(lastKeyboardHeightRef.current, 360))}px`;
-                         void viewportContainerRef.current.offsetHeight;
-                       }
-                     }
                    }} 
                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAndKeepFocus(e); } }} 
                    className="flex-1 min-w-0 bg-transparent text-white placeholder:text-white/40 pl-4 pr-2 py-2.5 focus:outline-none text-[16px] resize-none min-h-[44px] max-h-[120px] leading-tight select-text [user-select:text] [-webkit-user-select:text]" 
