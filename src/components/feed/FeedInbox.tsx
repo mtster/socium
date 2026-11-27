@@ -8,6 +8,7 @@ import PostCard from '@/src/components/PostCard';
 import { rtdb } from '@/src/lib/firebase';
 import { ref, set } from 'firebase/database';
 import { isPostVisibleToUser } from '@/src/lib/visibility';
+import { AudioCallBanner } from '@/src/components/chat/AudioCallBanner';
 
 interface FeedInboxProps {
   currentUserId: string;
@@ -594,6 +595,7 @@ export default function FeedInbox({ currentUserId, onBack, onUserClick }: FeedIn
 
   return (
     <div className="w-full h-full bg-zinc-950 flex flex-col">
+      <AudioCallBanner withSafeArea />
       {/* Header */}
       <header className="h-14 shrink-0 bg-black/80 border-b border-white/10 flex items-center px-4 relative">
         <button 

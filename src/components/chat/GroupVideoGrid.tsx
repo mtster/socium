@@ -64,7 +64,8 @@ export function GroupVideoGrid({
         {stream && !isPeerVideoDisabled ? (
           <VideoPlayer
             stream={stream}
-            muted={isSelf}
+            muted={true}
+            mirror={isSelf}
             className="w-full h-full object-cover rounded-3xl"
           />
         ) : (

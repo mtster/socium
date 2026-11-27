@@ -10,6 +10,8 @@ import { useChatRoom } from './useChatRoom';
 import { usePeerPresence } from './usePeerPresence';
 import { ChatListItemType } from '@/src/types/chat';
 import { videoLog } from '@/src/lib/videoLogger';
+import { useStore } from '@/src/store/useStore';
+import { AudioCallBanner } from './AudioCallBanner';
 
 import { parseLocation, openInAppleMaps, openInGoogleMaps } from './locationUtils';
 
@@ -613,6 +615,7 @@ function useVisualViewport(
 }
 
 export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, openSettings }: ChatRoomProps) {
+  const hasMinimizedAudioCall = useStore(state => Boolean(state.minimizedAudioCall));
   const viewportContainerRef = React.useRef<HTMLDivElement>(null);
   const messagesTrackRef = React.useRef<HTMLDivElement>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
@@ -711,8 +714,12 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
           ref={viewportContainerRef}
           className="fixed top-0 left-0 right-0 max-w-lg mx-auto h-full flex flex-col bg-black overflow-hidden [overflow:clip]"
         >
+        <AudioCallBanner withSafeArea />
         {/* Stationary Header */}
-        <div className="px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black shrink-0 relative z-20 [touch-action:none]">
+        <div className={cn(
+          "px-4 pb-2.5 flex items-center gap-4 border-b border-white/10 bg-black shrink-0 relative z-20 [touch-action:none]",
+          hasMinimizedAudioCall ? "pt-2" : "pt-[calc(0.5rem+env(safe-area-inset-top))]"
+        )}>
            <button onClick={onClose} className="p-2 -ml-2 text-white/80 active:scale-90 transition-transform"><ArrowLeft size={24} /></button>
            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={openSettings}>
               <div className={cn("w-8 h-8 shrink-0 flex items-center justify-center relative", (activeChat.avatar_url || !activeChat.isGroup) ? "rounded-full overflow-hidden bg-white/10 border border-white/10" : "")}>

@@ -21,6 +21,7 @@ export interface CallNode {
   meta: CallMeta;
   participants: Record<string, Participant>;
   caller_video_disabled?: boolean;
+  mode?: 'audio' | 'video';
   status?: 'dialing' | 'accepted' | 'ended';
   meetingId?: string;
   timestamp?: number;

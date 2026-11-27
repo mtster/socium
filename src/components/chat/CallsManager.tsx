@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, Video, VideoOff, Mic, MicOff, Users, Volume2 } from 'lucide-react';
+import { Phone, Video, VideoOff, Mic, MicOff, Users, Volume2, ArrowLeft } from 'lucide-react';
 import {
   Room,
   RoomEvent,
@@ -17,19 +17,23 @@ import { CallMeta, Participant, CallNode } from './callTypes';
 import { synth } from './SoundSynthesizer';
 import { VideoPlayer } from './VideoPlayer';
 import { GroupVideoGrid } from './GroupVideoGrid';
+import { MinimizedVideoPip } from './MinimizedVideoPip';
 import { getLiveKitCallToken, startCallRinger } from './CallsApi';
 
 interface AttachedAudioProps {
   track: RemoteAudioTrack;
+  sinkId: string;
+  volume: number;
 }
 
-const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track }) => {
+const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volume }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !track) return;
     track.attach(el);
+    el.volume = volume;
     el.play().catch(() => {});
     return () => {
       try {
@@ -38,18 +42,29 @@ const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track }) => {
     };
   }, [track]);
 
+  useEffect(() => {
+    const el = audioRef.current as any;
+    if (!el) return;
+    el.volume = volume;
+    if (sinkId && typeof el.setSinkId === 'function') {
+      el.setSinkId(sinkId).catch(() => {});
+    }
+  }, [sinkId, volume]);
+
   return <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />;
-}
+};
 
 export function CallsManager() {
   const currentUserId = useStore(state => state.profile?.id);
   const currentProfile = useStore(state => state.profile);
+  const setMinimizedAudioCall = useStore(state => state.setMinimizedAudioCall);
 
   // States
   const [activeCall, setActiveCall] = useState<CallNode | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
   const [callStatus, setCallStatus] = useState<'idle' | 'ringing_outgoing' | 'ringing_incoming' | 'connected' | 'ended'>('idle');
   const [showControls, setShowControls] = useState(true);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null);
   const [remoteVideoStreams, setRemoteVideoStreams] = useState<Record<string, MediaStream>>({});
@@ -58,6 +73,8 @@ export function CallsManager() {
 
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoDisabled, setIsVideoDisabled] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const [audioSinkId, setAudioSinkId] = useState('');
   const [callDuration, setCallDuration] = useState(0);
 
   // Refs for clean async closures & teardown
@@ -70,6 +87,7 @@ export function CallsManager() {
   const isJoiningRoomRef = useRef(false);
   const autoAnswerCallIdRef = useRef<string | null>(null);
   const pendingIntentRef = useRef<{ type: 'open' | 'decline'; callId: string; autoAnswer?: boolean } | null>(null);
+  const lastAppliedModeRef = useRef<'audio' | 'video' | null>(null);
 
   const activeCallRef = useRef<CallNode | null>(null);
   useEffect(() => {
@@ -91,6 +109,43 @@ export function CallsManager() {
     callDurationRef.current = callDuration;
   }, [callDuration]);
 
+  // Configure hardware/browser audio routing (phone-to-ear default for audio calls, speaker for video calls)
+  const applyAudioOutputRoute = useCallback(async (speakerEnabled: boolean, roomInstance?: Room | null) => {
+    setIsSpeakerOn(speakerEnabled);
+
+    // Hint iOS Safari WebKit AudioSession
+    try {
+      const navAny = navigator as any;
+      if (navAny?.audioSession) {
+        navAny.audioSession.type = 'play-and-record';
+      }
+    } catch (_) {}
+
+    // Select hardware audio output device where supported (Android Chrome / Desktop)
+    try {
+      if (navigator.mediaDevices?.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const outputs = devices.filter(d => d.kind === 'audiooutput' && d.deviceId);
+        if (outputs.length > 0) {
+          let chosen: MediaDeviceInfo | undefined;
+          if (speakerEnabled) {
+            chosen = outputs.find(d => /speaker|loud|built-in/i.test(d.label));
+          } else {
+            chosen = outputs.find(d => /earpiece|receiver|handset|communications/i.test(d.label))
+              || outputs.find(d => d.deviceId === 'default');
+          }
+          const nextSinkId = chosen?.deviceId || '';
+          setAudioSinkId(nextSinkId);
+
+          const targetRoom = roomInstance || roomRef.current;
+          if (targetRoom && nextSinkId) {
+            await targetRoom.switchActiveDevice('audiooutput', nextSinkId).catch(() => {});
+          }
+        }
+      }
+    } catch (_) {}
+  }, []);
+
   // Call duration timer
   useEffect(() => {
     if (callStatus === 'connected') {
@@ -111,6 +166,56 @@ export function CallsManager() {
       }
     };
   }, [callStatus]);
+
+  // Release ringing AudioContext on connect so iOS WebRTC uses earpiece cleanly by default
+  useEffect(() => {
+    if (callStatus === 'connected' && activeCall) {
+      const initialMode = activeCall.mode || activeCall.meta.type;
+      const t = setTimeout(() => {
+        synth.releaseAudioContext();
+        applyAudioOutputRoute(initialMode === 'video');
+      }, 380);
+      return () => clearTimeout(t);
+    }
+  }, [callStatus, applyAudioOutputRoute]);
+
+  // Sync minimized audio call top banner across the whole app
+  const activeMode: 'audio' | 'video' = activeCall ? (activeCall.mode || activeCall.meta.type) : 'audio';
+  useEffect(() => {
+    if (callStatus === 'connected' && isMinimized && activeCall && activeMode === 'audio') {
+      const isCaller = activeCall.meta.caller_id === currentUserId;
+      const bannerName = activeCall.meta.is_group
+        ? (activeCall.meta.room_name || 'Group Call')
+        : (isCaller ? activeCall.meta.room_name : activeCall.meta.caller_name);
+      const bannerAvatar = activeCall.meta.is_group
+        ? activeCall.meta.room_avatar
+        : (isCaller ? activeCall.meta.room_avatar : activeCall.meta.caller_avatar);
+
+      setMinimizedAudioCall({
+        displayName: bannerName || 'Audio Call',
+        avatarUrl: bannerAvatar || null,
+        isGroup: activeCall.meta.is_group,
+        duration: callDuration,
+      });
+    } else {
+      setMinimizedAudioCall(null);
+    }
+  }, [callStatus, isMinimized, activeCall, activeMode, callDuration, currentUserId, setMinimizedAudioCall]);
+
+  // Clear banner on unmount
+  useEffect(() => {
+    return () => setMinimizedAudioCall(null);
+  }, [setMinimizedAudioCall]);
+
+  // Listen for banner tap to expand minimized call
+  useEffect(() => {
+    const handleExpand = () => {
+      setIsMinimized(false);
+      setShowControls(true);
+    };
+    window.addEventListener('expandActiveCall', handleExpand);
+    return () => window.removeEventListener('expandActiveCall', handleExpand);
+  }, []);
 
   const archiveCallToSupabase = async (
     callUuid: string,
@@ -199,15 +304,33 @@ export function CallsManager() {
       roomRef.current = null;
     }
 
+    // Reset Safari iOS audio session cleanly when leaving call
+    try {
+      const navAny = navigator as any;
+      if (navAny?.audioSession) {
+        navAny.audioSession.type = 'playback';
+        setTimeout(() => {
+          try {
+            navAny.audioSession.type = 'auto';
+          } catch (_) {}
+        }, 60);
+      }
+    } catch (_) {}
+
     setLocalVideoStream(null);
     setRemoteVideoStreams({});
     setRemoteAudioTracks([]);
     setCanPlaybackAudio(true);
     setIsMuted(false);
     setIsVideoDisabled(false);
+    setIsSpeakerOn(false);
+    setAudioSinkId('');
+    setIsMinimized(false);
+    setMinimizedAudioCall(null);
+    lastAppliedModeRef.current = null;
     isJoiningRoomRef.current = false;
     synth.stopRinging();
-  }, []);
+  }, [setMinimizedAudioCall]);
 
   const handleLocalHangup = useCallback(async (isSilent = false) => {
     if (isCleaningUpRef.current) return;
@@ -247,6 +370,45 @@ export function CallsManager() {
     }
   }, [cleanMediaAndRTC]);
 
+  const applyLocalMediaForMode = useCallback(async (targetMode: 'audio' | 'video') => {
+    const room = roomRef.current;
+    const cid = callIdRef.current;
+    lastAppliedModeRef.current = targetMode;
+
+    if (!room) return;
+    try {
+      const enableCam = targetMode === 'video';
+      await room.localParticipant.setCameraEnabled(enableCam);
+      setIsVideoDisabled(!enableCam);
+      syncMediaFromRoom(room);
+
+      if (cid && currentUserId) {
+        const isCaller = activeCallRef.current?.meta?.caller_id === currentUserId;
+        if (isCaller) {
+          set(ref(rtdb, `calls/${cid}/caller_video_disabled`), !enableCam).catch(() => {});
+        } else {
+          set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/video_disabled`), !enableCam).catch(() => {});
+        }
+      }
+      applyAudioOutputRoute(enableCam, room);
+    } catch (e) {
+      console.warn('Error applying call mode media:', e);
+    }
+  }, [applyAudioOutputRoute, currentUserId, syncMediaFromRoom]);
+
+  const switchCallMode = async (targetMode: 'audio' | 'video') => {
+    const cid = callIdRef.current || callId;
+    if (!cid || !rtdb) return;
+
+    setActiveCall(prev => (prev ? { ...prev, mode: targetMode } : prev));
+    try {
+      await set(ref(rtdb, `calls/${cid}/mode`), targetMode);
+    } catch (e) {
+      console.warn('Failed updating call mode in RTDB:', e);
+    }
+    await applyLocalMediaForMode(targetMode);
+  };
+
   const joinLiveKitCall = useCallback(async (roomName: string, callType: 'audio' | 'video') => {
     if (isJoiningRoomRef.current) return;
     if (roomRef.current && roomRef.current.name === roomName) return;
@@ -260,6 +422,13 @@ export function CallsManager() {
         } catch (_) {}
         roomRef.current = null;
       }
+
+      try {
+        const navAny = navigator as any;
+        if (navAny?.audioSession) {
+          navAny.audioSession.type = 'play-and-record';
+        }
+      } catch (_) {}
 
       const myName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
       const { token, wsUrl } = await getLiveKitCallToken(roomName, myName);
@@ -302,7 +471,6 @@ export function CallsManager() {
 
       await room.connect(wsUrl, token);
 
-      // Unlock WebAudio / HTMLAudioElement playback inside current user gesture if possible
       room.startAudio().catch(() => {
         setCanPlaybackAudio(room.canPlaybackAudio);
       });
@@ -310,8 +478,14 @@ export function CallsManager() {
       await room.localParticipant.setMicrophoneEnabled(true);
       if (callType === 'video') {
         await room.localParticipant.setCameraEnabled(true);
+        setIsVideoDisabled(false);
+        await applyAudioOutputRoute(true, room);
+      } else {
+        setIsVideoDisabled(true);
+        await applyAudioOutputRoute(false, room);
       }
 
+      lastAppliedModeRef.current = callType;
       initiatedAtRef.current = new Date().toISOString();
       syncMediaFromRoom(room);
     } catch (err) {
@@ -320,23 +494,25 @@ export function CallsManager() {
     } finally {
       isJoiningRoomRef.current = false;
     }
-  }, [currentProfile, handleLocalHangup, syncMediaFromRoom]);
+  }, [applyAudioOutputRoute, currentProfile, handleLocalHangup, syncMediaFromRoom]);
 
   const acceptIncomingCall = useCallback(async (targetCallId: string, targetCall: CallNode) => {
     if (!currentUserId || !rtdb) return;
 
     synth.playAnswer();
     setIsMuted(false);
-    setIsVideoDisabled(false);
+    const liveMode = targetCall.mode || targetCall.meta.type;
+    setIsVideoDisabled(liveMode !== 'video');
+    setIsMinimized(false);
 
     try {
       const roomName = targetCall.meetingId || targetCallId;
       await set(ref(rtdb, `calls/${targetCallId}/participants/${currentUserId}/status`), 'accepted');
       await set(ref(rtdb, `calls/${targetCallId}/status`), 'accepted');
 
-      await joinLiveKitCall(roomName, targetCall.meta.type);
+      await joinLiveKitCall(roomName, liveMode);
       setCallStatus('connected');
-      synth.stopRinging();
+      synth.releaseAudioContext();
     } catch (err) {
       console.error('Failed to accept LiveKit call:', err);
       handleLocalHangup();
@@ -395,6 +571,17 @@ export function CallsManager() {
           return;
         }
 
+        // Sync live mode switches (audio <-> video) initiated by either side
+        const nextMode = callData.mode || callData.meta.type;
+        if (
+          callStatusRef.current === 'connected' &&
+          roomRef.current &&
+          lastAppliedModeRef.current &&
+          lastAppliedModeRef.current !== nextMode
+        ) {
+          applyLocalMediaForMode(nextMode);
+        }
+
         const isCaller = callData.meta.caller_id === currentUserId;
 
         if (isCaller) {
@@ -430,7 +617,7 @@ export function CallsManager() {
               ringTimeoutRef.current = null;
             }
             setCallStatus('connected');
-            synth.stopRinging();
+            synth.releaseAudioContext();
           }
         } else {
           // Receiver branch
@@ -454,7 +641,7 @@ export function CallsManager() {
               setCallStatus('connected');
             }
             if (!roomRef.current && !isJoiningRoomRef.current) {
-              joinLiveKitCall(callData.meetingId || targetCallId, callData.meta.type).catch(() => handleLocalHangup());
+              joinLiveKitCall(callData.meetingId || targetCallId, nextMode).catch(() => handleLocalHangup());
             }
           } else if (selfPart.status === 'declined') {
             handleLocalHangup();
@@ -482,10 +669,13 @@ export function CallsManager() {
     const handleInitiateCallEvent = async (e: any) => {
       const { chat, type } = e.detail || {};
       if (!chat) return;
-      if (callStatusRef.current !== 'idle') return; // Prevent double-taps
+      if (callStatusRef.current !== 'idle') return;
 
       setIsMuted(false);
-      setIsVideoDisabled(false);
+      setIsMinimized(false);
+      setShowControls(true);
+      setIsVideoDisabled(type !== 'video');
+      setIsSpeakerOn(type === 'video');
 
       const newCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       setCallId(newCallId);
@@ -539,6 +729,7 @@ export function CallsManager() {
 
       const freshCallNode: CallNode = {
         status: 'dialing',
+        mode: type as 'audio' | 'video',
         meetingId: newCallId,
         meta,
         participants,
@@ -549,7 +740,6 @@ export function CallsManager() {
       activeCallRef.current = freshCallNode;
 
       try {
-        // 1. Create RTDB signaling nodes FIRST so Edge Function & receivers see them immediately
         const callRefNode = ref(rtdb, `calls/${newCallId}`);
         await set(callRefNode, freshCallNode);
         onDisconnect(callRefNode).remove();
@@ -565,10 +755,9 @@ export function CallsManager() {
 
         subscribeToCallNode(newCallId);
 
-        // 2. Connect caller to LiveKit room immediately inside user gesture
         await joinLiveKitCall(newCallId, type as 'audio' | 'video');
 
-        // 3. Log call bubble in Supabase messages
+        // Insert initial call bubble in chat ONCE (preserves initial call type regardless of later switches)
         supabase.from('messages').insert({
           sender_id: currentUserId,
           receiver_id: chat.isGroup ? null : chat.id,
@@ -579,7 +768,6 @@ export function CallsManager() {
           if (error) console.warn('Failed to insert call bubble:', error.message);
         });
 
-        // 4. Fire single-invocation background push ring loop (no await blocking UI)
         startCallRinger({
           callId: newCallId,
           recipientIds: recipients,
@@ -588,7 +776,7 @@ export function CallsManager() {
           isGroup: Boolean(chat.isGroup),
         });
 
-        // 5. Auto-end unanswered outgoing calls after 32 seconds
+        // Auto-end unanswered outgoing calls after 38 seconds
         ringTimeoutRef.current = setTimeout(async () => {
           if (callIdRef.current === newCallId && callStatusRef.current === 'ringing_outgoing') {
             try {
@@ -601,7 +789,7 @@ export function CallsManager() {
             } catch (_) {}
             handleLocalHangup();
           }
-        }, 32000);
+        }, 38000);
       } catch (err) {
         console.error('Failed to establish outgoing LiveKit call:', err);
         try {
@@ -662,7 +850,6 @@ export function CallsManager() {
     window.addEventListener('openIncomingCall', handleOpenIncomingCallEvent);
     window.addEventListener('declineIncomingCall', handleDeclineIncomingCallEvent);
 
-    // Replay any intent captured during cold-boot before profile finished loading
     if (pendingIntentRef.current) {
       const intent = pendingIntentRef.current;
       pendingIntentRef.current = null;
@@ -683,9 +870,9 @@ export function CallsManager() {
       window.removeEventListener('openIncomingCall', handleOpenIncomingCallEvent);
       window.removeEventListener('declineIncomingCall', handleDeclineIncomingCallEvent);
     };
-  }, [currentUserId, currentProfile, acceptIncomingCall, declineCallById, handleLocalHangup, joinLiveKitCall]);
+  }, [currentUserId, currentProfile, acceptIncomingCall, applyLocalMediaForMode, declineCallById, handleLocalHangup, joinLiveKitCall]);
 
-  // Capture cold-start push deep-link events even before currentProfile/currentUserId finish loading
+  // Capture cold-start push deep-link events even before currentProfile finishes loading
   useEffect(() => {
     if (currentUserId) return;
     const captureOpen = (e: any) => {
@@ -792,6 +979,11 @@ export function CallsManager() {
     }
   };
 
+  const toggleSpeaker = async () => {
+    const nextSpeaker = !isSpeakerOn;
+    await applyAudioOutputRoute(nextSpeaker);
+  };
+
   const handleEnableAudioPlayback = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const room = roomRef.current;
@@ -837,7 +1029,7 @@ export function CallsManager() {
         if (roomRef.current) setCanPlaybackAudio(roomRef.current.canPlaybackAudio);
       }).catch(() => {});
     }
-    if (callStatus === 'connected' && activeCall?.meta?.type === 'video') {
+    if (callStatus === 'connected' && activeMode === 'video') {
       setShowControls(prev => !prev);
     }
   };
@@ -846,294 +1038,406 @@ export function CallsManager() {
   const otherPartyId = isCaller
     ? Object.keys(activeCall.participants || {})[0]
     : activeCall.meta.caller_id;
-  const remoteVideo1on1 = remoteVideoStreams[otherPartyId] || null;
+
+  // For group PiP fallback, pick first active remote video stream if any
+  const primaryRemoteVideo = isGroupCall
+    ? (Object.values(remoteVideoStreams)[0] || null)
+    : (remoteVideoStreams[otherPartyId] || null);
   const isPeerVideoDisabled1on1 = isCaller
     ? activeCall.participants?.[otherPartyId]?.video_disabled === true
     : activeCall.caller_video_disabled === true;
+  const remoteParticipantCount = (Object.values(activeCall.participants || {}) as Participant[]).filter(p => p.status === 'accepted').length + (isCaller ? 0 : 1);
 
   return createPortal(
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={handleScreenTap}
-        className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
-      >
-        {/* Dedicated Remote Audio Renderer for both Audio and Video Calls */}
-        {isConnected && remoteAudioTracks.map(item => (
-          <RemoteAudioElement key={item.key} track={item.track} />
-        ))}
+    <>
+      {/* Dedicated Remote Audio Renderer (always mounted while connected, even when minimized) */}
+      {isConnected && remoteAudioTracks.map(item => (
+        <RemoteAudioElement
+          key={item.key}
+          track={item.track}
+          sinkId={audioSinkId}
+          volume={isSpeakerOn ? 1.0 : 0.9}
+        />
+      ))}
 
-        {/* iOS Safari Cold-Start Audio Unlock Pill (only visible if browser blocked autoplay) */}
-        {isConnected && !canPlaybackAudio && (
-          <div className="fixed top-[calc(5.5rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
-            <button
-              onClick={handleEnableAudioPlayback}
-              className="flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500 text-black font-semibold text-xs shadow-xl animate-pulse"
-            >
-              <Volume2 size={15} />
-              Tap to turn on call audio
-            </button>
-          </div>
+      {/* Minimized Video Messenger-style Draggable Dual-Camera PiP */}
+      <AnimatePresence>
+        {isConnected && isMinimized && activeMode === 'video' && (
+          <MinimizedVideoPip
+            remoteStream={primaryRemoteVideo}
+            localStream={localVideoStream}
+            isLocalVideoDisabled={isVideoDisabled}
+            isRemoteVideoDisabled={!isGroupCall && isPeerVideoDisabled1on1}
+            displayName={displayName}
+            avatarUrl={avatarUrl}
+            isGroup={isGroupCall}
+            participantCount={remoteParticipantCount}
+            duration={callDuration}
+            onExpand={() => {
+              setIsMinimized(false);
+              setShowControls(true);
+            }}
+          />
         )}
+      </AnimatePresence>
 
-        {/* Active Video overlay panels */}
-        {isConnected && activeCall?.meta?.type === 'video' && (
-          <div className="absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none">
-            {isGroupCall ? (
-              <GroupVideoGrid
-                remoteStreams={remoteVideoStreams}
-                localStream={localVideoStream}
-                currentUserId={currentUserId!}
-                isVideoDisabled={isVideoDisabled}
-                activeCall={activeCall}
-                currentProfile={currentProfile}
-              />
-            ) : (
-              <div className="absolute inset-0 w-full h-full object-cover">
-                {remoteVideo1on1 && !isPeerVideoDisabled1on1 ? (
-                  <VideoPlayer
-                    stream={remoteVideo1on1}
-                    muted={true}
-                    className="absolute inset-0 w-full h-full object-cover rounded-none"
-                  />
-                ) : (localVideoStream && !isVideoDisabled && !isPeerVideoDisabled1on1) ? (
-                  <VideoPlayer
-                    stream={localVideoStream}
-                    muted={true}
-                    className="absolute inset-0 w-full h-full object-cover rounded-none"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center gap-3 absolute inset-0 justify-center">
-                    <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center shadow-lg">
-                      {avatarUrl ? (
-                        <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <Users className="w-10 h-10 text-white/50" />
-                      )}
-                    </div>
-                    <p className="text-white/40 text-xs font-mono tracking-widest uppercase animate-pulse">
-                      {isPeerVideoDisabled1on1 ? 'CAMERA OFF' : 'CONNECTING VIDEO...'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Picture-in-picture local feed */}
-                {remoteVideo1on1 && !isPeerVideoDisabled1on1 && localVideoStream && !isVideoDisabled && (
-                  <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
-                    <VideoPlayer
-                      stream={localVideoStream}
-                      muted={true}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                )}
+      {/* Fullscreen Call Overlay (hidden cleanly while minimized so user can browse app) */}
+      {!isMinimized && (
+        <AnimatePresence>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={handleScreenTap}
+            className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
+          >
+            {/* iOS Safari Cold-Start Audio Unlock Pill (only visible if browser blocked autoplay) */}
+            {isConnected && !canPlaybackAudio && (
+              <div className="fixed top-[calc(5.5rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+                <button
+                  onClick={handleEnableAudioPlayback}
+                  className="flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500 text-black font-semibold text-xs shadow-xl animate-pulse"
+                >
+                  <Volume2 size={15} />
+                  Tap to turn on call audio
+                </button>
               </div>
             )}
-          </div>
-        )}
 
-        {/* Header Elements */}
-        <AnimatePresence>
-          {(!isConnected || activeCall?.meta?.type !== 'video') ? (
-            <motion.div
-              key="centered-header"
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="pt-[calc(2.5rem+env(safe-area-inset-top))] px-6 flex flex-col items-center text-center z-10 shrink-0 pointer-events-none"
-            >
-              <div className="w-28 h-28 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center relative shadow-[0_0_40px_rgba(0,0,0,0.8)]">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            {/* Active Video overlay panels */}
+            {isConnected && activeMode === 'video' && (
+              <div className="absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none">
+                {isGroupCall ? (
+                  <GroupVideoGrid
+                    remoteStreams={remoteVideoStreams}
+                    localStream={localVideoStream}
+                    currentUserId={currentUserId!}
+                    isVideoDisabled={isVideoDisabled}
+                    activeCall={activeCall}
+                    currentProfile={currentProfile}
+                  />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                    {isGroupCall ? (
-                      <Users className="w-12 h-12 text-white/60" />
+                  <div className="absolute inset-0 w-full h-full object-cover">
+                    {primaryRemoteVideo && !isPeerVideoDisabled1on1 ? (
+                      <VideoPlayer
+                        stream={primaryRemoteVideo}
+                        muted={true}
+                        className="absolute inset-0 w-full h-full object-cover rounded-none"
+                      />
+                    ) : (localVideoStream && !isVideoDisabled && !isPeerVideoDisabled1on1) ? (
+                      <VideoPlayer
+                        stream={localVideoStream}
+                        muted={true}
+                        mirror={true}
+                        className="absolute inset-0 w-full h-full object-cover rounded-none"
+                      />
                     ) : (
-                      <span className="text-3xl font-bold text-white/50 uppercase">
-                        {displayName?.[0] || '?'}
-                      </span>
+                      <div className="flex flex-col items-center gap-3 absolute inset-0 justify-center">
+                        <div className="w-24 h-24 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center shadow-lg">
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <Users className="w-10 h-10 text-white/50" />
+                          )}
+                        </div>
+                        <p className="text-white/40 text-xs font-medium tracking-widest uppercase">
+                          {isPeerVideoDisabled1on1 ? 'Camera off' : 'Connecting video...'}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Picture-in-picture local feed (mirrored naturally like a mirror) */}
+                    {primaryRemoteVideo && !isPeerVideoDisabled1on1 && localVideoStream && !isVideoDisabled && (
+                      <div className="absolute top-24 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
+                        <VideoPlayer
+                          stream={localVideoStream}
+                          muted={true}
+                          mirror={true}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
                     )}
                   </div>
                 )}
               </div>
+            )}
 
-              <h1 className="text-3xl font-bold tracking-tight mt-6 text-white drop-shadow-md">
-                {displayName}
-              </h1>
+            {/* Header / Top Controls */}
+            <AnimatePresence>
+              {(!isConnected || activeMode !== 'video') ? (
+                <motion.div
+                  key="centered-header"
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="pt-[calc(1rem+env(safe-area-inset-top))] px-4 flex flex-col items-center text-center z-10 shrink-0 w-full"
+                >
+                  {/* Top Bar with Go Back button for browsing while in Audio Call */}
+                  <div className="w-full h-11 flex items-center justify-between mb-3">
+                    {isConnected ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsMinimized(true);
+                        }}
+                        className="p-2 -ml-1 text-white/85 hover:text-white active:scale-90 transition-transform"
+                        aria-label="Minimize call"
+                      >
+                        <ArrowLeft size={24} />
+                      </button>
+                    ) : (
+                      <div className="w-10" />
+                    )}
+                    <div className="w-10" />
+                  </div>
 
-              <p className="text-xs font-mono tracking-widest text-[#00E676] uppercase mt-3 py-1 px-3 bg-white/5 border border-white/10 rounded-full">
-                {activeCall?.meta?.type === 'video' ? '🎥 Video Call' : '📞 Audio Call'}
-              </p>
-
-              <p className="text-[#a0a0a0] text-sm mt-3.5 tracking-wider font-medium">
-                {isRingingIncoming && 'INCOMING CALL...'}
-                {isRingingOutgoing && 'RINGING...'}
-                {isConnected && `ACTIVE — ${formatTime(callDuration)}`}
-              </p>
-
-              {isGroupCall && (
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {Object.keys(activeCall.participants || {}).map(uid => {
-                    const p = activeCall.participants[uid];
-                    return (
-                      <div key={uid} className="flex items-center gap-1.5 px-3 py-1 bg-white/[0.04] border border-white/5 rounded-full">
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.status === 'accepted' ? 'bg-green-500' : p.status === 'declined' ? 'bg-red-500' : 'bg-amber-400'}`} />
-                        <span className="text-[10px] font-medium text-white/60 truncate max-w-[80px]">
-                          {(uid === currentUserId) ? 'Me' : p.name || `User (${uid.slice(0, 4)})`} — <span className="text-[9px] uppercase tracking-wider font-mono text-white/40">{p.status}</span>
-                        </span>
+                  <div className="w-28 h-28 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center relative shadow-[0_0_40px_rgba(0,0,0,0.8)] pointer-events-none">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
+                        {isGroupCall ? (
+                          <Users className="w-12 h-12 text-white/60" />
+                        ) : (
+                          <span className="text-3xl font-bold text-white/50 uppercase">
+                            {displayName?.[0] || '?'}
+                          </span>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </motion.div>
-          ) : (
-            showControls && (
-              <motion.div
-                key="compact-video-header"
-                initial={{ opacity: 0, y: -40 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -40 }}
-                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-                className="absolute top-0 left-0 right-0 pt-[calc(1.5rem+env(safe-area-inset-top))] px-6 pb-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent z-20 flex items-center gap-3.5 text-left pointer-events-auto"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="w-12 h-12 rounded-full overflow-hidden border border-white/10 bg-white/5 shrink-0 shadow-lg">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
-                      {isGroupCall ? (
-                        <Users className="w-5 h-5 text-white/60" />
-                      ) : (
-                        <span className="text-lg font-bold text-white/50 uppercase">{displayName?.[0] || '?'}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex flex-col min-w-0 flex-1">
-                  <h1 className="text-lg font-bold tracking-tight text-white drop-shadow-md truncate">
+                    )}
+                  </div>
+
+                  <h1 className="text-3xl font-bold tracking-tight mt-6 text-white drop-shadow-md pointer-events-none">
                     {displayName}
                   </h1>
-                  <p className="text-white/60 text-xs font-medium mt-0.5 tracking-wider">
-                    {formatTime(callDuration)}
+
+                  {/* Sleek clean unboxed call type subtitle */}
+                  <div className="flex items-center gap-1.5 mt-2.5 text-xs font-medium text-white/55 tracking-wide pointer-events-none">
+                    {activeMode === 'video' ? <Video size={13} className="text-emerald-400" /> : <Phone size={13} className="text-emerald-400" />}
+                    <span>{activeMode === 'video' ? 'Video Call' : 'Audio Call'}</span>
+                  </div>
+
+                  {/* Clean duration (without "ACTIVE — ") */}
+                  <p className="text-white/75 text-sm mt-2 tracking-wider font-medium tabular-nums pointer-events-none">
+                    {isRingingIncoming && 'Incoming call'}
+                    {isRingingOutgoing && 'Ringing...'}
+                    {isConnected && formatTime(callDuration)}
                   </p>
-                </div>
-              </motion.div>
-            )
-          )}
-        </AnimatePresence>
 
-        {/* Audio controls */}
-        {isConnected && activeCall?.meta?.type === 'audio' && (
-          <div className="flex justify-center gap-6 z-10 pb-4 shrink-0 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={toggleMute}
-              className={`p-4 rounded-full border transition-all active:scale-90 ${isMuted ? 'bg-red-600 border-red-500 text-white shadow-lg' : 'bg-white/5 border-white/10 text-white'}`}
-            >
-              {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
-            </button>
-          </div>
-        )}
-
-        {/* Sliding video overlay controls */}
-        <AnimatePresence>
-          {isConnected && activeCall?.meta?.type === 'video' && showControls && (
-            <motion.div
-              initial={{ opacity: 0, y: 50 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 50 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="absolute bottom-0 left-0 right-0 pb-[calc(2.5rem+env(safe-area-inset-bottom))] pt-8 px-8 bg-gradient-to-t from-black/90 via-black/50 to-transparent z-20 flex justify-center items-center gap-8 pointer-events-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={toggleVideo}
-                className={`w-14 h-14 rounded-full border border-white/10 flex items-center justify-center transition-all ${isVideoDisabled ? 'bg-red-600/90 border-red-500 text-white shadow-lg' : 'bg-white/10 text-white backdrop-blur-md'}`}
-              >
-                {isVideoDisabled ? <VideoOff size={22} /> : <Video size={22} />}
-              </motion.button>
-
-              <motion.button
-                whileTap={{ scale: 0.88 }}
-                onClick={handleHangupCall}
-                className="w-18 h-18 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
-              >
-                <Phone size={30} className="rotate-[135deg]" />
-              </motion.button>
-
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={toggleMute}
-                className={`w-14 h-14 rounded-full border border-white/10 flex items-center justify-center transition-all ${isMuted ? 'bg-red-600/90 border-red-500 text-white shadow-lg' : 'bg-white/10 text-white backdrop-blur-md'}`}
-              >
-                {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
-              </motion.button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Centered actions */}
-        {(!isConnected || activeCall?.meta?.type !== 'video') && (
-          <div className="pb-[calc(4rem+env(safe-area-inset-bottom))] px-8 flex justify-center items-center gap-12 z-10 shrink-0 relative pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-            <AnimatePresence mode="wait">
-              {isRingingIncoming ? (
-                <motion.div
-                  key="incoming-actions"
-                  initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 30 }}
-                  className="flex items-center justify-between w-full max-w-[300px] px-2"
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <motion.button
-                      whileTap={{ scale: 0.88 }}
-                      onClick={handleDeclineCall}
-                      className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
-                    >
-                      <Phone size={32} className="rotate-[135deg] translate-y-[1px]" />
-                    </motion.button>
-                    <span className="text-xs font-semibold text-white/50 tracking-wider">Decline</span>
-                  </div>
-
-                  <div className="flex flex-col items-center gap-3">
-                    <motion.button
-                      whileTap={{ scale: 0.88 }}
-                      onClick={handleAcceptCall}
-                      className="w-20 h-20 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
-                    >
-                      <Phone size={32} className="translate-y-[1px]" />
-                    </motion.button>
-                    <span className="text-xs font-semibold text-white/50 tracking-wider">Accept</span>
-                  </div>
+                  {isGroupCall && (
+                    <div className="mt-4 flex flex-wrap justify-center gap-2 pointer-events-none">
+                      {Object.keys(activeCall.participants || {}).map(uid => {
+                        const p = activeCall.participants[uid];
+                        return (
+                          <div key={uid} className="flex items-center gap-1.5 px-3 py-1 bg-white/[0.04] border border-white/5 rounded-full">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.status === 'accepted' ? 'bg-green-500' : p.status === 'declined' ? 'bg-red-500' : 'bg-amber-400'}`} />
+                            <span className="text-[10px] font-medium text-white/60 truncate max-w-[80px]">
+                              {(uid === currentUserId) ? 'Me' : p.name || `User (${uid.slice(0, 4)})`} — <span className="text-[9px] uppercase tracking-wider font-mono text-white/40">{p.status}</span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </motion.div>
               ) : (
-                <motion.div
-                  key="connected-actions"
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="flex flex-col items-center gap-2.5"
+                showControls && (
+                  <motion.div
+                    key="compact-video-header"
+                    initial={{ opacity: 0, y: -40 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -40 }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                    className="absolute top-0 left-0 right-0 pt-[calc(1rem+env(safe-area-inset-top))] px-4 pb-6 bg-gradient-to-b from-black/85 via-black/45 to-transparent z-20 flex items-center gap-3 text-left pointer-events-auto"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Go back button immediately to the left of profile picture */}
+                    <button
+                      onClick={() => setIsMinimized(true)}
+                      className="p-2 -ml-1 text-white/90 hover:text-white active:scale-90 transition-transform shrink-0"
+                      aria-label="Minimize video call"
+                    >
+                      <ArrowLeft size={24} />
+                    </button>
+
+                    <div className="w-11 h-11 rounded-full overflow-hidden border border-white/15 bg-white/5 shrink-0 shadow-lg">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-zinc-900 border border-white/5">
+                          {isGroupCall ? (
+                            <Users className="w-5 h-5 text-white/60" />
+                          ) : (
+                            <span className="text-lg font-bold text-white/50 uppercase">{displayName?.[0] || '?'}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <h1 className="text-base font-bold tracking-tight text-white drop-shadow-md truncate">
+                        {displayName}
+                      </h1>
+                      <p className="text-white/65 text-xs font-medium mt-0.5 tracking-wider tabular-nums">
+                        {formatTime(callDuration)}
+                      </p>
+                    </div>
+
+                    {/* Switch Video Call -> Audio Call */}
+                    <button
+                      onClick={() => switchCallMode('audio')}
+                      className="w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-white backdrop-blur-md active:scale-90 transition-all shrink-0"
+                      aria-label="Switch to audio call"
+                      title="Switch to Audio Call"
+                    >
+                      <Phone size={18} />
+                    </button>
+                  </motion.div>
+                )
+              )}
+            </AnimatePresence>
+
+            {/* Audio call in-call controls: Switch to Video, Mute Mic, Toggle Speaker */}
+            {isConnected && activeMode === 'audio' && (
+              <div className="flex justify-center items-center gap-6 z-10 pb-2 shrink-0 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => switchCallMode('video')}
+                  className="w-14 h-14 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-all active:scale-90"
+                  aria-label="Switch to video call"
+                  title="Switch to Video Call"
                 >
+                  <Video size={22} />
+                </button>
+
+                <button
+                  onClick={toggleMute}
+                  className={`w-14 h-14 rounded-full border flex items-center justify-center transition-all active:scale-90 ${
+                    isMuted
+                      ? 'bg-red-600 border-red-500 text-white shadow-lg'
+                      : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
+                  }`}
+                  aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                  title={isMuted ? 'Unmute' : 'Mute'}
+                >
+                  {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+                </button>
+
+                <button
+                  onClick={toggleSpeaker}
+                  className={`w-14 h-14 rounded-full border flex items-center justify-center transition-all active:scale-90 ${
+                    isSpeakerOn
+                      ? 'bg-white text-black border-white shadow-lg'
+                      : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
+                  }`}
+                  aria-label={isSpeakerOn ? 'Turn off speaker' : 'Turn on speaker'}
+                  title={isSpeakerOn ? 'Speaker On' : 'Earpiece'}
+                >
+                  <Volume2 size={22} />
+                </button>
+              </div>
+            )}
+
+            {/* Sliding video overlay controls */}
+            <AnimatePresence>
+              {isConnected && activeMode === 'video' && showControls && (
+                <motion.div
+                  initial={{ opacity: 0, y: 50 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 50 }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                  className="absolute bottom-0 left-0 right-0 pb-[calc(2.5rem+env(safe-area-inset-bottom))] pt-8 px-8 bg-gradient-to-t from-black/90 via-black/50 to-transparent z-20 flex justify-center items-center gap-8 pointer-events-auto"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    onClick={toggleVideo}
+                    className={`w-14 h-14 rounded-full border border-white/10 flex items-center justify-center transition-all ${
+                      isVideoDisabled ? 'bg-red-600/90 border-red-500 text-white shadow-lg' : 'bg-white/10 text-white backdrop-blur-md'
+                    }`}
+                  >
+                    {isVideoDisabled ? <VideoOff size={22} /> : <Video size={22} />}
+                  </motion.button>
+
                   <motion.button
                     whileTap={{ scale: 0.88 }}
                     onClick={handleHangupCall}
-                    className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                    className="w-18 h-18 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
                   >
-                    <Phone size={32} className="rotate-[135deg]" />
+                    <Phone size={30} className="rotate-[135deg]" />
                   </motion.button>
-                  <span className="text-xs font-semibold text-white/50 tracking-wider">End</span>
+
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    onClick={toggleMute}
+                    className={`w-14 h-14 rounded-full border border-white/10 flex items-center justify-center transition-all ${
+                      isMuted ? 'bg-red-600/90 border-red-500 text-white shadow-lg' : 'bg-white/10 text-white backdrop-blur-md'
+                    }`}
+                  >
+                    {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+                  </motion.button>
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
-        )}
-      </motion.div>
-    </AnimatePresence>,
+
+            {/* Centered actions */}
+            {(!isConnected || activeMode !== 'video') && (
+              <div className="pb-[calc(4rem+env(safe-area-inset-bottom))] px-8 flex justify-center items-center gap-12 z-10 shrink-0 relative pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                <AnimatePresence mode="wait">
+                  {isRingingIncoming ? (
+                    <motion.div
+                      key="incoming-actions"
+                      initial={{ opacity: 0, y: 30 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 30 }}
+                      className="flex items-center justify-between w-full max-w-[300px] px-2"
+                    >
+                      <div className="flex flex-col items-center gap-3">
+                        <motion.button
+                          whileTap={{ scale: 0.88 }}
+                          onClick={handleDeclineCall}
+                          className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                        >
+                          <Phone size={32} className="rotate-[135deg] translate-y-[1px]" />
+                        </motion.button>
+                        <span className="text-xs font-semibold text-white/50 tracking-wider">Decline</span>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-3">
+                        <motion.button
+                          whileTap={{ scale: 0.88 }}
+                          onClick={handleAcceptCall}
+                          className="w-20 h-20 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                        >
+                          <Phone size={32} className="translate-y-[1px]" />
+                        </motion.button>
+                        <span className="text-xs font-semibold text-white/50 tracking-wider">Accept</span>
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="connected-actions"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      className="flex flex-col items-center gap-2.5"
+                    >
+                      <motion.button
+                        whileTap={{ scale: 0.88 }}
+                        onClick={handleHangupCall}
+                        className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shadow-xl border border-white/5 cursor-pointer"
+                      >
+                        <Phone size={32} className="rotate-[135deg]" />
+                      </motion.button>
+                      <span className="text-xs font-semibold text-white/50 tracking-wider">End</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      )}
+    </>,
     document.body
   );
 }

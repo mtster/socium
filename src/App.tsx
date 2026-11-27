@@ -16,6 +16,7 @@ import { Bell, ArrowLeft, Inbox } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
 import { useStore } from './store/useStore';
 import { CallsManager } from './components/chat/CallsManager';
+import { AudioCallBanner } from './components/chat/AudioCallBanner';
 import ErudaDevTools from './components/ErudaDevTools';
 
 import { usePushNotifications } from './hooks/usePushNotifications';
@@ -34,6 +35,7 @@ export default function App() {
     hasMoreUserPosts, isFetchingMoreUserPosts,
     totalUnread,
     floatingAvatar, setFloatingAvatar,
+    minimizedAudioCall,
     fetchProfile, fetchUserPosts, fetchMoreUserPosts,
   } = useStore();
 
@@ -254,6 +256,7 @@ export default function App() {
     <div className="fixed top-0 left-0 right-0 h-[var(--app-height,100dvh)] bg-black text-white font-sans w-full max-w-lg mx-auto border-x border-white/5 flex flex-col overflow-hidden">
       <Toaster />
       <div className="bg-black shrink-0 h-[env(safe-area-inset-top)] w-full relative z-30"></div>
+      <AudioCallBanner />
       
       {/* Header */}
       {(activeTab !== 'create' && !isImageViewerOpen && !isChatRoomOpen && !isHeaderHidden) && (
@@ -465,16 +468,19 @@ export default function App() {
              transition={{ type: "tween", duration: 0.3 }}
              className="fixed inset-0 z-[80] bg-black overflow-y-auto"
              >
-               <div style={{ display: isImageViewerOpen ? 'none' : 'flex' }} className="sticky top-0 left-0 w-full px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 flex items-center bg-black/90 backdrop-blur-md z-50 border-b border-white/10 gap-4">
-                 <button 
-                   onClick={() => setViewingProfileId(null)} 
-                   className="p-3 -ml-2 text-white/90 active:scale-95 transition-transform"
-                 >
-                   <ArrowLeft size={24} />
-                 </button>
-                 <span className="text-xl font-bold tracking-tight">
-                   {viewingProfileData?.profile?.full_name || viewingProfileData?.profile?.username || 'Profile'}
-                 </span>
+               <div style={{ display: isImageViewerOpen ? 'none' : 'block' }} className="sticky top-0 left-0 w-full z-50">
+                 <AudioCallBanner withSafeArea />
+                 <div className={`w-full px-4 pb-3 flex items-center bg-black/90 backdrop-blur-md border-b border-white/10 gap-4 ${minimizedAudioCall ? 'pt-3' : 'pt-[calc(0.75rem+env(safe-area-inset-top))]'}`}>
+                   <button 
+                     onClick={() => setViewingProfileId(null)} 
+                     className="p-3 -ml-2 text-white/90 active:scale-95 transition-transform"
+                   >
+                     <ArrowLeft size={24} />
+                   </button>
+                   <span className="text-xl font-bold tracking-tight">
+                     {viewingProfileData?.profile?.full_name || viewingProfileData?.profile?.username || 'Profile'}
+                   </span>
+                 </div>
                </div>
                
                {viewingProfileData ? (

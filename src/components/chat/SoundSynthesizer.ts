@@ -102,6 +102,23 @@ class SoundSynthesizer {
       console.warn("Answer audio synth error:", e);
     }
   }
+
+  /**
+   * Releases the WebAudio AudioContext once connected/ended so iOS AVAudioSession
+   * yields audio routing cleanly back to WebRTC voice chat (earpiece by default).
+   */
+  releaseAudioContext() {
+    this.stopRinging();
+    if (this.audioCtx) {
+      const ctx = this.audioCtx;
+      this.audioCtx = null;
+      try {
+        if (ctx.state !== 'closed') {
+          ctx.close().catch(() => {});
+        }
+      } catch (_) {}
+    }
+  }
 }
 
 export const synth = new SoundSynthesizer();

@@ -150,10 +150,10 @@ async function runRingLoop(params: {
     }
   }
 
-  const maxRings = 8; // ~28 seconds total at 3.5s interval
-  const intervalMs = 3500;
+  const maxRings = 6; // ~36 seconds total at 6s interval
+  const intervalMs = 6000;
   const callTag = `call_${callId}`;
-  const bodyLabel = callType === 'video' ? 'Incoming Video Call' : 'Incoming Audio Call';
+  const bodyLabel = callType === 'video' ? '🎥🎥🎥 Video Call 🎥🎥🎥' : '📞📞📞 Audio Call 📞📞📞';
 
   for (let attempt = 0; attempt < maxRings; attempt++) {
     // 1. Check live call status in Firebase RTDB before sending any ring ping

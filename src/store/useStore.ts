@@ -49,6 +49,12 @@ interface AppState {
   chats: ChatListItemType[];
   hasMoreChats: boolean;
   inboxStates: Record<string, boolean>;
+  minimizedAudioCall: {
+    displayName: string;
+    avatarUrl: string | null;
+    isGroup: boolean;
+    duration: number;
+  } | null;
   
   setProfile: (profile: Profile | null) => void;
   setUserPosts: (posts: Post[]) => void;
@@ -64,6 +70,7 @@ interface AppState {
   setChats: (chats: ChatListItemType[]) => void;
   setHasMoreChats: (val: boolean) => void;
   setInboxStates: (states: Record<string, boolean>) => void;
+  setMinimizedAudioCall: (banner: AppState['minimizedAudioCall']) => void;
   updateInboxState: (chatId: string, state: boolean) => void;
   handleGlobalNewMessage: (msg: any, currentUserId: string) => void;
   
@@ -99,6 +106,7 @@ export const useStore = create<AppState>((set, get) => ({
   chats: [],
   hasMoreChats: true,
   inboxStates: {},
+  minimizedAudioCall: null,
 
   setProfile: (profile) => set({ profile }),
   setUserPosts: (userPosts) => set({ userPosts }),
@@ -114,6 +122,7 @@ export const useStore = create<AppState>((set, get) => ({
   setChats: (chats) => set({ chats }),
   setHasMoreChats: (hasMoreChats) => set({ hasMoreChats }),
   setInboxStates: (inboxStates) => set({ inboxStates }),
+  setMinimizedAudioCall: (minimizedAudioCall) => set({ minimizedAudioCall }),
   updateInboxState: (chatId, state) => set(stateObj => ({
     inboxStates: {
       ...stateObj.inboxStates,

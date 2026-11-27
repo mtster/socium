@@ -3,11 +3,12 @@ import React, { useEffect, useRef } from 'react';
 interface VideoPlayerProps {
   stream: MediaStream | null;
   muted?: boolean;
+  mirror?: boolean;
   className?: string;
   style?: React.CSSProperties;
 }
 
-export function VideoPlayer({ stream, muted = false, className = "", style }: VideoPlayerProps) {
+export function VideoPlayer({ stream, muted = false, mirror = false, className = "", style }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -38,7 +39,7 @@ export function VideoPlayer({ stream, muted = false, className = "", style }: Vi
       autoPlay
       playsInline
       muted={muted}
-      className={className}
+      className={`${mirror ? '-scale-x-100 ' : ''}${className}`}
       style={style}
     />
   );
