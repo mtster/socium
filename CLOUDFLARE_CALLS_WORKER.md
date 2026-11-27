@@ -309,7 +309,8 @@ export default {
           type,
           recipient_tokens,
           firebaseDbUrl,
-          fcmAccessToken
+          fcmAccessToken,
+          env
         })
       );
 
@@ -341,7 +342,8 @@ async function handleCallingNotificationLoop({
   type,
   recipient_tokens,
   firebaseDbUrl,
-  fcmAccessToken
+  fcmAccessToken,
+  env
 }) {
   const maxRings = 10; // Play ringtone pattern up to 10 strikes (approx 30s)
   const ringIntervalMs = 3000; // Strike every 3 seconds

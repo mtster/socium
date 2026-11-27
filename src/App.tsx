@@ -304,8 +304,9 @@ export default function App() {
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowNotifPromoPopup(false);
-                  if (typeof window !== 'undefined' && 'Notification' in window && (notifPermission !== 'granted' || hasPushSubscription !== true)) {
-                    registerPush(session.user.id, true);
+                  if (typeof window !== 'undefined' && 'Notification' in window) {
+                    const shouldForceRefresh = notifPermission === 'granted' && hasPushSubscription === true;
+                    registerPush(session.user.id, true, shouldForceRefresh);
                   }
                 }}
                 className="text-white hover:text-white/80 transition-colors relative"

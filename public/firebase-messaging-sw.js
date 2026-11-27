@@ -48,11 +48,15 @@ function getBadgeCount() {
           const fetchPromise = firebase.database().ref('/unseen_chat_count/' + uid).once('value')
             .then((snapshot) => snapshot.val() || 0);
           
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
           
           Promise.race([fetchPromise, timeoutPromise])
-            .then((count) => resolve(count))
+            .then((count) => {
+              try { firebase.database().goOffline(); } catch (e) {}
+              resolve(count);
+            })
             .catch((err) => {
+              try { firebase.database().goOffline(); } catch (e) {}
               console.error('[firebase-messaging-sw.js] Failed to fetch unseen count in time:', err);
               resolve(null);
             });
@@ -70,21 +74,27 @@ function getBadgeCount() {
 // Intercept all raw push events (including FCM group chat multicasts) to ensure
 // the application badge count is always updated dynamically in the background.
 self.addEventListener('push', function(event) {
-  console.log('[firebase-messaging-sw.js] Custom push event intercepted:', event);
-  
+  let payloadBadge = null;
+  try {
+    const raw = event.data ? event.data.json() : null;
+    const badgeStr = raw?.data?.badge ?? raw?.notification?.badge;
+    if (badgeStr !== undefined && badgeStr !== null && badgeStr !== '') {
+      const parsed = parseInt(String(badgeStr), 10);
+      if (!Number.isNaN(parsed)) payloadBadge = parsed;
+    }
+  } catch (e) {}
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       // If there is an active visible foreground window client, do NOT update badge
-      // from the background service worker! The active client has real-time sockets
-      // and will maintain a pristine badge, eliminating foreground/background racing.
+      // from the background service worker! The active client has real-time sockets.
       const isAnyVisible = windowClients.some(client => client.visibilityState === 'visible');
       if (isAnyVisible) {
-        console.log('[firebase-messaging-sw.js] Visible window found. Foreground client handles badge updates.');
         return;
       }
 
-      return getBadgeCount().then((badgeCount) => {
-        console.log('[firebase-messaging-sw.js] Custom push calculated badgeCount:', badgeCount);
+      const badgePromise = payloadBadge !== null ? Promise.resolve(payloadBadge) : getBadgeCount();
+      return badgePromise.then((badgeCount) => {
         if (badgeCount !== null) {
           const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
           if (nav && 'setAppBadge' in nav) {
@@ -99,37 +109,20 @@ self.addEventListener('push', function(event) {
 });
 
 messaging.onBackgroundMessage(function(payload) {
-  console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  
-  const promiseChain = clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-    const isAnyVisible = windowClients.some(client => client.visibilityState === 'visible');
-    
-    return getBadgeCount().then((badgeCount) => {
-      if (badgeCount !== null && !isAnyVisible) {
-        const nav = typeof navigator !== 'undefined' ? navigator : (self.navigator || null);
-        if (nav && 'setAppBadge' in nav) {
-          nav.setAppBadge(parseInt(badgeCount)).catch(() => {});
-        }
+  // ONLY display manual notification if payload.notification is ABSENT (i.e. a data-only message)
+  if (!payload.notification) {
+    const notificationTitle = payload.data?.title || 'New Message';
+    const notificationOptions = {
+      body: payload.data?.body || '',
+      icon: '/icon-192.png',
+      data: {
+        url: payload.data?.url || '/',
+        senderId: payload.data?.senderId || payload.data?.sender_id || '',
+        groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
       }
-
-      // ONLY display manual notification if payload.notification is ABSENT (i.e. a data-only message)
-      if (!payload.notification) {
-        const notificationTitle = payload.data?.title || 'New Message';
-        const notificationOptions = {
-          body: payload.data?.body || '',
-          icon: '/icon-192.png',
-          data: {
-            url: payload.data?.url || '/',
-            senderId: payload.data?.senderId || payload.data?.sender_id || '',
-            groupChatId: payload.data?.groupChatId || payload.data?.group_chat_id || ''
-          }
-        };
-        return self.registration.showNotification(notificationTitle, notificationOptions);
-      }
-    });
-  });
-
-  return promiseChain;
+    };
+    return self.registration.showNotification(notificationTitle, notificationOptions);
+  }
 });
 
 self.addEventListener('notificationclick', function(event) {

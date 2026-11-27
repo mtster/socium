@@ -405,11 +405,34 @@ async function fetchSupabase(env, path) {
   return res.json();
 }
 
+function isDeadFcmToken(status, errorText) {
+  return (
+    status === 404 ||
+    errorText.includes('UNREGISTERED') ||
+    errorText.includes('NotRegistered') ||
+    errorText.includes('Requested entity was not found') ||
+    errorText.includes('registration token is not a valid FCM registration token')
+  );
+}
+
+async function deleteDeadFcmToken(env, token) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return;
+  const base = env.SUPABASE_URL.replace(/\/+$/, '');
+  await fetch(`${base}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+    }
+  }).catch(() => {});
+}
+
 // --- FCM Multi-Cast Sender Helper ---
 async function sendFCMMessages(env, tokens, title, body, url, badge, accessToken) {
   const fcmUrl = `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`;
+  const uniqueTokens = Array.from(new Set(tokens));
   
-  for (const tokenTarget of tokens) {
+  for (const tokenTarget of uniqueTokens) {
     const payload = {
       message: {
         token: tokenTarget,
@@ -438,6 +461,9 @@ async function sendFCMMessages(env, tokens, title, body, url, badge, accessToken
       if (!res.ok) {
         const errorText = await res.text();
         console.error(`FCM send error HTTP ${res.status}:`, errorText);
+        if (isDeadFcmToken(res.status, errorText)) {
+          await deleteDeadFcmToken(env, tokenTarget);
+        }
       }
     } catch (e) {
       console.error('FCM Transmission network error:', e);

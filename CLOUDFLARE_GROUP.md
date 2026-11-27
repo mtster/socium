@@ -200,7 +200,27 @@ export default {
                       body: JSON.stringify(messageBody)
                     });
                     
-                    if (fcmResp.ok) successCount++;
+                    if (fcmResp.ok) {
+                      successCount++;
+                    } else {
+                      const errText = await fcmResp.text();
+                      console.error(`Group FCM error HTTP ${fcmResp.status}:`, errText);
+                      const isDead =
+                        fcmResp.status === 404 ||
+                        errText.includes('UNREGISTERED') ||
+                        errText.includes('Requested entity was not found') ||
+                        errText.includes('registration token is not a valid FCM registration token');
+                      if (isDead && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+                        const sbBase = env.SUPABASE_URL.replace(/\/+$/, '');
+                        await fetch(`${sbBase}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(token)}`, {
+                          method: 'DELETE',
+                          headers: {
+                            'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+                            'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+                          }
+                        }).catch(() => {});
+                      }
+                    }
                   });
                   
                   await Promise.all(tokenOperations);

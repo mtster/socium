@@ -119,7 +119,7 @@ export default {
         aud: 'https://oauth2.googleapis.com/token',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
-        scope: 'https://www.googleapis.com/auth/firebase.messaging'
+        scope: 'https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email'
       }));
 
       const privateKeyText = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
@@ -173,6 +173,19 @@ export default {
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`;
       let successCount = 0;
 
+      // Check Firebase RTDB global_presence before pushing so active foreground apps don't get silent pushes
+      if (env.FIREBASE_DATABASE_URL && receiver_id) {
+        const dbBase = env.FIREBASE_DATABASE_URL.replace(/\/+$/, '');
+        try {
+          const presRes = await fetch(`${dbBase}/global_presence/${receiver_id}.json?access_token=${access_token}`);
+          if (presRes.ok && (await presRes.json()) === true) {
+            return new Response(JSON.stringify({ success: true, skipped: 'user_online' }), {
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+        } catch {}
+      }
+
       // 4. Concurrently send push requests for tokens
       const pushOperations = recipient_tokens.map(async (recipient) => {
         const tokenOperations = recipient.tokens.map(async (token) => {
@@ -204,7 +217,23 @@ export default {
           if (fcmResp.ok) {
             successCount++;
           } else {
-            console.error(`FCM direct send failed for connection request: ${await fcmResp.text()}`);
+            const errText = await fcmResp.text();
+            console.error(`FCM direct send failed for connection request: ${errText}`);
+            const isDead =
+              fcmResp.status === 404 ||
+              errText.includes('UNREGISTERED') ||
+              errText.includes('Requested entity was not found') ||
+              errText.includes('registration token is not a valid FCM registration token');
+            if (isDead && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+              const sbBase = env.SUPABASE_URL.replace(/\/+$/, '');
+              await fetch(`${sbBase}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(token)}`, {
+                method: 'DELETE',
+                headers: {
+                  'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+                  'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+                }
+              }).catch(() => {});
+            }
           }
         });
         

@@ -163,6 +163,10 @@ serve(async (req) => {
 
     const collapseTag = message.id ? String(message.id) : `msg-${message.sender_id}`;
 
+    let sentCount = 0;
+    let failedCount = 0;
+    const removedTokens: string[] = [];
+
     const pushPromises = dedupedSubscriptions.map(async (sub: any) => {
       const fcmToken = sub.endpoint;
 
@@ -211,9 +215,11 @@ serve(async (req) => {
       
       try {
         const response = await admin.messaging().send(payload);
+        sentCount++;
         console.log(`Firebase push sent successfully to token ${fcmToken.substring(0, 20)}... | Message ID: ${response}`);
       } catch (err: any) {
-        console.error(`Firebase push error for token ${fcmToken.substring(0, 20)}...:`, err);
+        failedCount++;
+        console.error(`Firebase push error for token ${fcmToken.substring(0, 20)}...:`, err?.code, err?.message || err);
         
         // Cleanup invalid FCM tokens
         if (
@@ -223,14 +229,20 @@ serve(async (req) => {
         ) {
           console.log(`Token is invalid or unregistered. Removing from DB...`);
           await supabase.from('push_subscriptions').delete().eq('endpoint', fcmToken);
+          removedTokens.push(fcmToken.substring(0, 12));
         }
       }
     });
 
     await Promise.all(pushPromises);
-    console.log("All push promises settled.");
+    console.log(`All push promises settled. Sent: ${sentCount}, Failed: ${failedCount}, Removed: ${removedTokens.length}`);
 
-    return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({
+      success: sentCount > 0 || failedCount === 0,
+      sent: sentCount,
+      failed: failedCount,
+      removed: removedTokens.length
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error: any) {
     console.error("Fatal error in edge function:", error);
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
