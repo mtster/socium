@@ -1,0 +1,442 @@
+// ============================================================================
+// SOCIUM LIVEKIT CALLS + SINGLE-INVOCATION RING LOOP — SUPABASE EDGE FUNCTION
+// ============================================================================
+// Function Name in Supabase Dashboard: livekit-call
+//
+// REQUIRED SECRETS (Supabase Dashboard -> Edge Functions -> livekit-call -> Secrets):
+//   1. LIVEKIT_URL              -> e.g. wss://your-project-xxxx.livekit.cloud
+//   2. LIVEKIT_API_KEY          -> API Key from LiveKit Cloud -> Settings -> Keys
+//   3. LIVEKIT_API_SECRET       -> API Secret from LiveKit Cloud -> Settings -> Keys
+//   4. FIREBASE_SERVICE_ACCOUNT -> Raw JSON string of Firebase Service Account
+//                                  (same secret already used by `send-push`)
+//   5. FIREBASE_DATABASE_URL    -> Your Firebase RTDB URL, no trailing slash
+//                                  (same secret already used by `send-push`)
+//
+// NOTE: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are automatically provided
+//       by Supabase inside all Edge Functions.
+// ============================================================================
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import admin from 'npm:firebase-admin@11'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+// Initialize Firebase Admin (for RTDB call-state checks + FCM v1 delivery)
+const serviceAccountRaw = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
+const databaseURL = Deno.env.get('FIREBASE_DATABASE_URL');
+
+if (serviceAccountRaw && databaseURL) {
+  try {
+    const serviceAccount = JSON.parse(serviceAccountRaw);
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL,
+      });
+    }
+  } catch (err) {
+    console.error('CRITICAL: Failed to initialize Firebase Admin in livekit-call:', err);
+  }
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function base64UrlEncodeJson(obj: unknown): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  return base64UrlEncodeBytes(bytes);
+}
+
+/**
+ * Mints a standard LiveKit Room Access Token (HS256 JWT) using native Web Crypto.
+ * Zero external JWT packages required.
+ */
+async function createLiveKitAccessToken(params: {
+  apiKey: string;
+  apiSecret: string;
+  identity: string;
+  name: string;
+  roomName: string;
+  ttlSeconds?: number;
+}): Promise<string> {
+  const { apiKey, apiSecret, identity, name, roomName, ttlSeconds = 7200 } = params;
+  const now = Math.floor(Date.now() / 1000);
+
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = {
+    iss: apiKey,
+    sub: identity,
+    name,
+    nbf: now - 10,
+    exp: now + ttlSeconds,
+    video: {
+      room: roomName,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    },
+  };
+
+  const encodedHeader = base64UrlEncodeJson(header);
+  const encodedPayload = base64UrlEncodeJson(payload);
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(apiSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signatureBuffer = await crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+
+  const encodedSignature = base64UrlEncodeBytes(new Uint8Array(signatureBuffer));
+  return `${signingInput}.${encodedSignature}`;
+}
+
+async function runRingLoop(params: {
+  callId: string;
+  callerId: string;
+  callerName: string;
+  callType: 'audio' | 'video';
+  isGroup: boolean;
+  recipientIds: string[];
+  supabase: ReturnType<typeof createClient>;
+}) {
+  const { callId, callerId, callerName, callType, isGroup, recipientIds, supabase } = params;
+
+  if (!admin.apps.length || !recipientIds.length) return;
+
+  // Fetch all push tokens once at call start for all recipients
+  const { data: pushRows, error: pushErr } = await supabase
+    .from('push_subscriptions')
+    .select('user_id, endpoint')
+    .in('user_id', recipientIds);
+
+  if (pushErr) {
+    console.error('Failed to query push_subscriptions:', pushErr.message);
+    return;
+  }
+
+  if (!pushRows || pushRows.length === 0) {
+    console.log(`No push subscriptions found for call ${callId}.`);
+    return;
+  }
+
+  // Deduplicate tokens per user
+  const tokensByUser = new Map<string, string[]>();
+  for (const row of pushRows) {
+    if (!row.user_id || !row.endpoint) continue;
+    const existing = tokensByUser.get(row.user_id) || [];
+    if (!existing.includes(row.endpoint)) {
+      existing.push(row.endpoint);
+      tokensByUser.set(row.user_id, existing);
+    }
+  }
+
+  const maxRings = 8; // ~28 seconds total at 3.5s interval
+  const intervalMs = 3500;
+  const callTag = `call_${callId}`;
+  const bodyLabel = callType === 'video' ? 'Incoming Video Call' : 'Incoming Audio Call';
+
+  for (let attempt = 0; attempt < maxRings; attempt++) {
+    // 1. Check live call status in Firebase RTDB before sending any ring ping
+    let callNode: any = null;
+    try {
+      const snap = await admin.database().ref(`calls/${callId}`).once('value');
+      callNode = snap.val();
+    } catch (rtdbErr) {
+      console.error(`RTDB read error for call ${callId}:`, rtdbErr);
+    }
+
+    if (!callNode || callNode.status === 'ended') {
+      console.log(`Call ${callId} ended/missing on attempt ${attempt + 1}. Stopping ring loop.`);
+      break;
+    }
+
+    // Filter to recipients whose participant status is STILL 'ringing'
+    const stillRingingUserIds = recipientIds.filter((uid) => {
+      const participant = callNode.participants?.[uid];
+      return participant && participant.status === 'ringing';
+    });
+
+    if (stillRingingUserIds.length === 0) {
+      console.log(`No recipients still ringing for call ${callId}. Exiting loop.`);
+      break;
+    }
+
+    // 2. Check global_presence per user so online users don't get redundant background pushes
+    for (const uid of stillRingingUserIds) {
+      const tokens = tokensByUser.get(uid);
+      if (!tokens || tokens.length === 0) continue;
+
+      let isOnline = false;
+      try {
+        const presenceSnap = await admin.database().ref(`global_presence/${uid}`).once('value');
+        isOnline = presenceSnap.val() === true;
+      } catch (_) {}
+
+      if (isOnline) {
+        continue;
+      }
+
+      const sendPromises = tokens.map(async (fcmToken) => {
+        const messagePayload: any = {
+          token: fcmToken,
+          notification: {
+            title: callerName || 'Incoming Call',
+            body: bodyLabel,
+          },
+          webpush: {
+            headers: {
+              Urgency: 'high',
+              TTL: '15',
+            },
+            notification: {
+              tag: callTag,
+              renotify: true,
+              requireInteraction: true,
+              icon: '/icon-192.png',
+              vibrate: [500, 200, 500],
+              actions: [
+                { action: 'answer', title: 'Answer' },
+                { action: 'decline', title: 'Decline' },
+              ],
+            },
+            fcm_options: {
+              link: `/?incoming_call=${encodeURIComponent(callId)}`,
+            },
+          },
+          android: {
+            priority: 'high',
+            ttl: 15000,
+            collapseKey: callTag,
+          },
+          apns: {
+            headers: {
+              'apns-priority': '10',
+              'apns-collapse-id': callTag,
+            },
+            payload: {
+              aps: {
+                sound: 'default',
+              },
+            },
+          },
+          data: {
+            type: 'incoming_call',
+            callId,
+            callType,
+            isGroup: String(Boolean(isGroup)),
+            callerId,
+            callerName: callerName || 'Incoming Call',
+            tag: callTag,
+            url: `/?incoming_call=${encodeURIComponent(callId)}`,
+          },
+        };
+
+        try {
+          await admin.messaging().send(messagePayload);
+        } catch (err: any) {
+          if (
+            err?.code === 'messaging/invalid-registration-token' ||
+            err?.code === 'messaging/registration-token-not-registered' ||
+            err?.code === 'messaging/invalid-argument'
+          ) {
+            await supabase.from('push_subscriptions').delete().eq('endpoint', fcmToken);
+            const updated = (tokensByUser.get(uid) || []).filter((t) => t !== fcmToken);
+            tokensByUser.set(uid, updated);
+          } else {
+            console.warn(`FCM call push failed for ${uid}:`, err?.code || err?.message);
+          }
+        }
+      });
+
+      await Promise.all(sendPromises);
+    }
+
+    if (attempt < maxRings - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Require a valid signed-in Supabase user for all actions
+    const authHeader = req.headers.get('Authorization') || '';
+    const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!jwt) {
+      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(jwt);
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const body = await req.json();
+    const action = body?.action;
+
+    // ------------------------------------------------------------------------
+    // ACTION 1: Mint a LiveKit Room Token
+    // ------------------------------------------------------------------------
+    if (action === 'token') {
+      const livekitUrl = Deno.env.get('LIVEKIT_URL');
+      const livekitApiKey = Deno.env.get('LIVEKIT_API_KEY');
+      const livekitApiSecret = Deno.env.get('LIVEKIT_API_SECRET');
+
+      if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+        return new Response(
+          JSON.stringify({ error: 'Missing LIVEKIT_URL, LIVEKIT_API_KEY, or LIVEKIT_API_SECRET secrets' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const roomName = typeof body.roomName === 'string' ? body.roomName.trim() : '';
+      const participantName = typeof body.participantName === 'string' && body.participantName.trim()
+        ? body.participantName.trim()
+        : 'Socium User';
+
+      if (!roomName) {
+        return new Response(JSON.stringify({ error: 'roomName is required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Authorize caller/callee against RTDB call record if it exists
+      if (admin.apps.length) {
+        try {
+          const callSnap = await admin.database().ref(`calls/${roomName}`).once('value');
+          const callNode = callSnap.val();
+          if (callNode) {
+            const isCaller = callNode.meta?.caller_id === user.id;
+            const isInvited = Boolean(callNode.participants?.[user.id]);
+            if (!isCaller && !isInvited) {
+              return new Response(JSON.stringify({ error: 'Forbidden for this call room' }), {
+                status: 403,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+          }
+        } catch (rtdbCheckErr) {
+          console.warn('Call participant RTDB check warning:', rtdbCheckErr);
+        }
+      }
+
+      const token = await createLiveKitAccessToken({
+        apiKey: livekitApiKey,
+        apiSecret: livekitApiSecret,
+        identity: user.id,
+        name: participantName,
+        roomName,
+      });
+
+      return new Response(
+        JSON.stringify({ token, wsUrl: livekitUrl }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // ACTION 2: Start Single-Invocation Background Call Ring Loop
+    // ------------------------------------------------------------------------
+    if (action === 'ring') {
+      const callId = typeof body.callId === 'string' ? body.callId.trim() : '';
+      const recipientIds: string[] = Array.isArray(body.recipientIds)
+        ? body.recipientIds.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0 && id !== user.id)
+        : [];
+      const callerName = typeof body.callerName === 'string' ? body.callerName : 'Socium User';
+      const callType: 'audio' | 'video' = body.callType === 'video' ? 'video' : 'audio';
+      const isGroup = Boolean(body.isGroup);
+
+      if (!callId || recipientIds.length === 0) {
+        return new Response(JSON.stringify({ error: 'callId and recipientIds are required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Verify caller owns the call in RTDB
+      if (admin.apps.length) {
+        const callSnap = await admin.database().ref(`calls/${callId}/meta/caller_id`).once('value');
+        const ownerId = callSnap.val();
+        if (ownerId && ownerId !== user.id) {
+          return new Response(JSON.stringify({ error: 'Only the caller can initiate ringing' }), {
+            status: 403,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      const ringTask = runRingLoop({
+        callId,
+        callerId: user.id,
+        callerName,
+        callType,
+        isGroup,
+        recipientIds,
+        supabase,
+      });
+
+      // Use EdgeRuntime.waitUntil so the 25-28s ring loop completes in 1 single invocation
+      // without blocking the caller's HTTP response!
+      const edgeRuntime = (globalThis as any).EdgeRuntime;
+      if (edgeRuntime && typeof edgeRuntime.waitUntil === 'function') {
+        edgeRuntime.waitUntil(ringTask);
+        return new Response(JSON.stringify({ status: 'ringing_started', callId }), {
+          status: 202,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      await ringTask;
+      return new Response(JSON.stringify({ status: 'ringing_finished', callId }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ error: 'Invalid action' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    console.error('livekit-call fatal error:', err);
+    return new Response(JSON.stringify({ error: err?.message || 'Internal Server Error' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});

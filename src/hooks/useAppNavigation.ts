@@ -315,9 +315,19 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
   const checkUrlParamsAndRoute = async () => {
     if (typeof window === 'undefined') return;
     const urlParams = new URLSearchParams(window.location.search);
+    const incomingCallId = urlParams.get('incoming_call');
+    const autoAnswer = urlParams.get('auto_answer') === '1';
     const chatWith = urlParams.get('chat_with') || urlParams.get('chatId');
     const activityId = urlParams.get('activity_id');
-    
+
+    if (incomingCallId) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('openIncomingCall', { detail: { callId: incomingCallId, autoAnswer } }));
+      }, 100);
+      return;
+    }
+
     if (activityId) {
       window.history.replaceState({}, document.title, window.location.pathname);
       setActiveTab('feed');
@@ -390,9 +400,18 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
         const data = await response.json();
         await cache.delete('/target-route');
         
+        const callId = data.callId;
+        const autoAnswer = Boolean(data.autoAnswer);
         const senderId = data.senderId;
         const groupChatId = data.groupChatId;
         const targetUrl = data.url;
+
+        if (callId) {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('openIncomingCall', { detail: { callId, autoAnswer } }));
+          }, 100);
+          return;
+        }
 
         let activityId = null;
         if (targetUrl) {
@@ -567,6 +586,25 @@ export function useAppNavigation(session: any, fetchProfileData: (uid: string) =
                }
             }
           }
+        }
+        if (event.data && event.data.type === 'OPEN_CALL') {
+          if (typeof window !== 'undefined' && 'caches' in window) {
+            caches.open('notification-route').then(c => c.delete('/target-route')).catch(() => {});
+          }
+          if (event.data.callId) {
+            window.dispatchEvent(new CustomEvent('openIncomingCall', {
+              detail: { callId: event.data.callId, autoAnswer: Boolean(event.data.autoAnswer) }
+            }));
+          }
+          return;
+        }
+        if (event.data && event.data.type === 'DECLINE_CALL') {
+          if (event.data.callId) {
+            window.dispatchEvent(new CustomEvent('declineIncomingCall', {
+              detail: { callId: event.data.callId }
+            }));
+          }
+          return;
         }
         if (event.data && event.data.type === 'OPEN_REQUESTS') {
            setActiveTab('profile');

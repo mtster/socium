@@ -1,37 +1,44 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Users } from 'lucide-react';
+import { Phone, Video, VideoOff, Mic, MicOff, Users, Volume2 } from 'lucide-react';
+import {
+  Room,
+  RoomEvent,
+  Track,
+  VideoPresets,
+  RemoteAudioTrack,
+} from 'livekit-client';
 import { supabase } from '@/src/lib/supabase';
 import { rtdb } from '@/src/lib/firebase';
-import { ref, onValue, set, get, remove, off, onDisconnect } from 'firebase/database';
+import { ref, onValue, set, get, remove, onDisconnect } from 'firebase/database';
 import { useStore } from '@/src/store/useStore';
-import { CallMeta, Participant, CallNode, CfSession } from './callTypes';
+import { CallMeta, Participant, CallNode } from './callTypes';
 import { synth } from './SoundSynthesizer';
 import { VideoPlayer } from './VideoPlayer';
 import { GroupVideoGrid } from './GroupVideoGrid';
-import { createRealtimeKitRoom, getRealtimeKitToken, delegateCallRinger } from './CallsApi';
-import RealtimeKitClient from '@cloudflare/realtimekit';
+import { getLiveKitCallToken, startCallRinger } from './CallsApi';
 
-function parseAppIdFromToken(token: string): string {
-  try {
-    const parts = token.split('.');
-    if (parts.length > 1) {
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-      return payload.app || payload.sub || "";
-    }
-  } catch (e) {
-    console.warn("Failed to parse App ID from JWT token:", e);
-  }
-  return "";
+interface AttachedAudioProps {
+  track: RemoteAudioTrack;
 }
 
-function getUserIdFromParticipant(participant: any): string {
-  const name = participant.name || '';
-  if (name.includes('||')) {
-    return name.split('||')[0];
-  }
-  return name || participant.id;
+const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track }) => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !track) return;
+    track.attach(el);
+    el.play().catch(() => {});
+    return () => {
+      try {
+        track.detach(el);
+      } catch (_) {}
+    };
+  }, [track]);
+
+  return <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />;
 }
 
 export function CallsManager() {
@@ -44,22 +51,26 @@ export function CallsManager() {
   const [callStatus, setCallStatus] = useState<'idle' | 'ringing_outgoing' | 'ringing_incoming' | 'connected' | 'ended'>('idle');
   const [showControls, setShowControls] = useState(true);
 
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null);
+  const [remoteVideoStreams, setRemoteVideoStreams] = useState<Record<string, MediaStream>>({});
+  const [remoteAudioTracks, setRemoteAudioTracks] = useState<Array<{ key: string; track: RemoteAudioTrack }>>([]);
+  const [canPlaybackAudio, setCanPlaybackAudio] = useState(true);
+
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoDisabled, setIsVideoDisabled] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  // For multi-peer rendering
-  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
-
-  // Refs
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const timerRef = useRef<any>(null);
-  const listenersRef = useRef<{ path: string; handler: any }[]>([]);
-  const rtkRoomRef = useRef<any>(null);
+  // Refs for clean async closures & teardown
+  const roomRef = useRef<Room | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeCallUnsubRef = useRef<(() => void) | null>(null);
   const initiatedAtRef = useRef<string | null>(null);
+  const isCleaningUpRef = useRef(false);
+  const isJoiningRoomRef = useRef(false);
+  const autoAnswerCallIdRef = useRef<string | null>(null);
+  const pendingIntentRef = useRef<{ type: 'open' | 'decline'; callId: string; autoAnswer?: boolean } | null>(null);
 
-  // Connection-State synchronizers to avoid closure state captures in listeners
   const activeCallRef = useRef<CallNode | null>(null);
   useEffect(() => {
     activeCallRef.current = activeCall;
@@ -75,7 +86,12 @@ export function CallsManager() {
     callIdRef.current = callId;
   }, [callId]);
 
-  // Handle call duration timer
+  const callDurationRef = useRef(callDuration);
+  useEffect(() => {
+    callDurationRef.current = callDuration;
+  }, [callDuration]);
+
+  // Call duration timer
   useEffect(() => {
     if (callStatus === 'connected') {
       timerRef.current = setInterval(() => {
@@ -89,25 +105,12 @@ export function CallsManager() {
       setCallDuration(0);
     }
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, [callStatus]);
-
-  // Register database listeners safely with direct tracking vectors to prevent leaks or duplicates
-  const registerDbListener = (pRef: any, callback: any) => {
-    const pPath = pRef.toString().replace(/https?:\/\/[^\/]+/, '');
-    onValue(pRef, callback);
-    listenersRef.current.push({ path: pPath, handler: callback });
-  };
-
-  const clearAllDbListeners = () => {
-    listenersRef.current.forEach(item => {
-      try {
-        off(ref(rtdb, item.path), 'value', item.handler);
-      } catch (e) {}
-    });
-    listenersRef.current = [];
-  };
 
   const archiveCallToSupabase = async (
     callUuid: string,
@@ -130,135 +133,369 @@ export function CallsManager() {
         });
 
       if (error) {
-        console.warn("Supabase archive insert warning (ignore if table is missing or unmigrated):", error.message);
-      } else {
-        console.log("Call record archived successfully in Supabase!");
+        console.warn('Supabase archive insert warning:', error.message);
       }
     } catch (err) {
-      console.warn("Could not insert call record in Supabase:", err);
+      console.warn('Could not insert call record in Supabase:', err);
     }
   };
 
-  // Release media tracks and connections
-  const cleanMediaAndRTC = () => {
-    // 1. Release local streams
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => {
-        try { track.stop(); } catch (e) {}
-      });
-      localStreamRef.current = null;
-    }
-    if (localStream) {
-      localStream.getTracks().forEach(track => {
-        try { track.stop(); } catch (e) {}
-      });
-      setLocalStream(null);
+  const syncMediaFromRoom = useCallback((room: Room | null) => {
+    if (!room) {
+      setLocalVideoStream(null);
+      setRemoteVideoStreams({});
+      setRemoteAudioTracks([]);
+      return;
     }
 
-    // 2. Stop remote streams
-    Object.keys(remoteStreams).forEach(uid => {
-      const stream = remoteStreams[uid];
-      if (stream) {
-        stream.getTracks().forEach(track => {
-          try { track.stop(); } catch (e) {}
-        });
+    // 1. Local video stream (camera only — never play local mic audio back)
+    let nextLocalVideo: MediaStream | null = null;
+    room.localParticipant.videoTrackPublications.forEach((pub) => {
+      if (pub.track?.mediaStreamTrack && !pub.isMuted) {
+        nextLocalVideo = new MediaStream([pub.track.mediaStreamTrack]);
       }
     });
-    setRemoteStreams({});
+    setLocalVideoStream(nextLocalVideo);
 
-    // 3. Close RealtimeKit Room
-    if (rtkRoomRef.current) {
-      try {
-        rtkRoomRef.current.leave();
-      } catch (e) {}
-      rtkRoomRef.current = null;
+    // 2. Remote video & audio tracks keyed cleanly by remoteParticipant.identity (which is userId)
+    const nextRemoteVideos: Record<string, MediaStream> = {};
+    const nextRemoteAudios: Array<{ key: string; track: RemoteAudioTrack }> = [];
+
+    room.remoteParticipants.forEach((participant) => {
+      const uid = participant.identity;
+
+      participant.videoTrackPublications.forEach((pub) => {
+        if (pub.isSubscribed && pub.track?.mediaStreamTrack && !pub.isMuted) {
+          nextRemoteVideos[uid] = new MediaStream([pub.track.mediaStreamTrack]);
+        }
+      });
+
+      participant.audioTrackPublications.forEach((pub) => {
+        if (pub.isSubscribed && pub.track && pub.track.kind === Track.Kind.Audio) {
+          nextRemoteAudios.push({
+            key: `${uid}_${pub.trackSid}`,
+            track: pub.track as RemoteAudioTrack,
+          });
+        }
+      });
+    });
+
+    setRemoteVideoStreams(nextRemoteVideos);
+    setRemoteAudioTracks(nextRemoteAudios);
+    setCanPlaybackAudio(room.canPlaybackAudio);
+  }, []);
+
+  const cleanMediaAndRTC = useCallback(() => {
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
     }
 
+    if (roomRef.current) {
+      try {
+        roomRef.current.removeAllListeners();
+        roomRef.current.disconnect(true);
+      } catch (_) {}
+      roomRef.current = null;
+    }
+
+    setLocalVideoStream(null);
+    setRemoteVideoStreams({});
+    setRemoteAudioTracks([]);
+    setCanPlaybackAudio(true);
     setIsMuted(false);
     setIsVideoDisabled(false);
+    isJoiningRoomRef.current = false;
     synth.stopRinging();
-  };
+  }, []);
 
-  // Main teardown caller
-  const handleLocalHangup = async (isSilent = false) => {
-    const cid = callIdRef.current || callId;
-    const callObj = activeCallRef.current || activeCall;
-    if (cid && callObj && callStatusRef.current === 'connected') {
-      const initiatedAt = initiatedAtRef.current || new Date().toISOString();
-      const terminatedAt = new Date().toISOString();
-      const host = callObj.meta.caller_id;
-      const peer = Object.keys(callObj.participants || {})[0] || '';
-
-      await archiveCallToSupabase(cid, host, peer, initiatedAt, terminatedAt, callDuration);
+  const handleLocalHangup = useCallback(async (isSilent = false) => {
+    if (isCleaningUpRef.current) return;
+    if (callStatusRef.current === 'idle' && !activeCallRef.current && !roomRef.current) {
+      synth.stopRinging();
+      return;
     }
 
-    cleanMediaAndRTC();
-    setCallStatus('idle');
-    setActiveCall(null);
-    setCallId(null);
-    if (!isSilent) synth.playHangup();
-  };
+    isCleaningUpRef.current = true;
+    try {
+      const cid = callIdRef.current;
+      const callObj = activeCallRef.current;
+      const wasConnected = callStatusRef.current === 'connected';
+      const durationToArchive = callDurationRef.current;
 
-  // Core Orchestration hooks
-  useEffect(() => {
-    if (!currentUserId || !rtdb) return;
+      if (activeCallUnsubRef.current) {
+        activeCallUnsubRef.current();
+        activeCallUnsubRef.current = null;
+      }
 
-    const userCallActiveRef = ref(rtdb, `user_calls/${currentUserId}/active`);
-    registerDbListener(userCallActiveRef, async (snapshot) => {
-      const incomingCallId = snapshot.val();
-      if (incomingCallId) {
-        setCallId(incomingCallId);
+      if (cid && callObj && wasConnected) {
+        const initiatedAt = initiatedAtRef.current || new Date().toISOString();
+        const terminatedAt = new Date().toISOString();
+        const host = callObj.meta.caller_id;
+        const peer = Object.keys(callObj.participants || {})[0] || '';
+        await archiveCallToSupabase(cid, host, peer, initiatedAt, terminatedAt, durationToArchive);
+      }
 
-        const callNodeRef = ref(rtdb, `calls/${incomingCallId}`);
-        registerDbListener(callNodeRef, (callSnap) => {
-          const callData = callSnap.val() as CallNode | null;
-          if (callData && callData.meta) {
-            setActiveCall(callData);
+      cleanMediaAndRTC();
+      setCallStatus('idle');
+      setActiveCall(null);
+      setCallId(null);
+      initiatedAtRef.current = null;
+      if (!isSilent) synth.playHangup();
+    } finally {
+      isCleaningUpRef.current = false;
+    }
+  }, [cleanMediaAndRTC]);
 
-            if (callData.status === 'ended') {
-              handleLocalHangup();
-              return;
-            }
+  const joinLiveKitCall = useCallback(async (roomName: string, callType: 'audio' | 'video') => {
+    if (isJoiningRoomRef.current) return;
+    if (roomRef.current && roomRef.current.name === roomName) return;
 
-            // Register on-disconnect state fallbacks
-            onDisconnect(ref(rtdb, `calls/${incomingCallId}/participants/${currentUserId}/status`)).set('declined');
-            onDisconnect(ref(rtdb, `user_calls/${currentUserId}/active`)).set(null);
+    isJoiningRoomRef.current = true;
+    try {
+      if (roomRef.current) {
+        try {
+          roomRef.current.removeAllListeners();
+          await roomRef.current.disconnect(true);
+        } catch (_) {}
+        roomRef.current = null;
+      }
 
-            const selfPart = callData.participants?.[currentUserId];
-            if (selfPart) {
-              if (selfPart.status === 'ringing') {
-                setCallStatus('ringing_incoming');
-                synth.startRinging();
-              } else if (selfPart.status === 'accepted') {
-                setCallStatus('connected');
-                synth.stopRinging();
-              } else if (selfPart.status === 'declined') {
-                handleLocalHangup();
-              }
-            }
-          } else {
+      const myName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
+      const { token, wsUrl } = await getLiveKitCallToken(roomName, myName);
+
+      const room = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+        audioCaptureDefaults: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        videoCaptureDefaults: {
+          resolution: VideoPresets.h540.resolution,
+          facingMode: 'user',
+        },
+      });
+
+      roomRef.current = room;
+
+      const handleUpdate = () => syncMediaFromRoom(room);
+
+      room
+        .on(RoomEvent.TrackSubscribed, handleUpdate)
+        .on(RoomEvent.TrackUnsubscribed, handleUpdate)
+        .on(RoomEvent.TrackMuted, handleUpdate)
+        .on(RoomEvent.TrackUnmuted, handleUpdate)
+        .on(RoomEvent.LocalTrackPublished, handleUpdate)
+        .on(RoomEvent.LocalTrackUnpublished, handleUpdate)
+        .on(RoomEvent.ParticipantConnected, handleUpdate)
+        .on(RoomEvent.ParticipantDisconnected, handleUpdate)
+        .on(RoomEvent.AudioPlaybackStatusChanged, () => {
+          setCanPlaybackAudio(room.canPlaybackAudio);
+        })
+        .on(RoomEvent.Disconnected, () => {
+          if (callStatusRef.current === 'connected') {
             handleLocalHangup(true);
           }
         });
+
+      await room.connect(wsUrl, token);
+
+      // Unlock WebAudio / HTMLAudioElement playback inside current user gesture if possible
+      room.startAudio().catch(() => {
+        setCanPlaybackAudio(room.canPlaybackAudio);
+      });
+
+      await room.localParticipant.setMicrophoneEnabled(true);
+      if (callType === 'video') {
+        await room.localParticipant.setCameraEnabled(true);
+      }
+
+      initiatedAtRef.current = new Date().toISOString();
+      syncMediaFromRoom(room);
+    } catch (err) {
+      console.error('LiveKit room join failed:', err);
+      throw err;
+    } finally {
+      isJoiningRoomRef.current = false;
+    }
+  }, [currentProfile, handleLocalHangup, syncMediaFromRoom]);
+
+  const acceptIncomingCall = useCallback(async (targetCallId: string, targetCall: CallNode) => {
+    if (!currentUserId || !rtdb) return;
+
+    synth.playAnswer();
+    setIsMuted(false);
+    setIsVideoDisabled(false);
+
+    try {
+      const roomName = targetCall.meetingId || targetCallId;
+      await set(ref(rtdb, `calls/${targetCallId}/participants/${currentUserId}/status`), 'accepted');
+      await set(ref(rtdb, `calls/${targetCallId}/status`), 'accepted');
+
+      await joinLiveKitCall(roomName, targetCall.meta.type);
+      setCallStatus('connected');
+      synth.stopRinging();
+    } catch (err) {
+      console.error('Failed to accept LiveKit call:', err);
+      handleLocalHangup();
+    }
+  }, [currentUserId, handleLocalHangup, joinLiveKitCall]);
+
+  const declineCallById = useCallback(async (targetCallId: string, targetCall: CallNode | null) => {
+    if (!currentUserId || !rtdb) return;
+
+    try {
+      await set(ref(rtdb, `calls/${targetCallId}/participants/${currentUserId}/status`), 'declined');
+      await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
+
+      let meta = targetCall?.meta;
+      if (!meta) {
+        const snap = await get(ref(rtdb, `calls/${targetCallId}/meta`));
+        meta = snap.val();
+      }
+
+      if (meta && !meta.is_group) {
+        await set(ref(rtdb, `calls/${targetCallId}/status`), 'ended');
+        await set(ref(rtdb, `user_calls/${meta.caller_id}/active`), null);
+        setTimeout(() => {
+          remove(ref(rtdb, `calls/${targetCallId}`)).catch(() => {});
+        }, 600);
+      }
+    } catch (err) {
+      console.warn('Error updating declined call state:', err);
+    }
+
+    handleLocalHangup();
+  }, [currentUserId, handleLocalHangup]);
+
+  // Core RTDB Orchestration + Window Call Event Listeners
+  useEffect(() => {
+    if (!currentUserId || !rtdb) return;
+
+    const subscribeToCallNode = (targetCallId: string) => {
+      if (activeCallUnsubRef.current) {
+        activeCallUnsubRef.current();
+        activeCallUnsubRef.current = null;
+      }
+
+      const callNodeRef = ref(rtdb, `calls/${targetCallId}`);
+      const unsub = onValue(callNodeRef, (callSnap) => {
+        const callData = callSnap.val() as CallNode | null;
+        if (!callData || !callData.meta) {
+          handleLocalHangup(true);
+          return;
+        }
+
+        setActiveCall(callData);
+
+        if (callData.status === 'ended') {
+          handleLocalHangup(callStatusRef.current === 'idle');
+          return;
+        }
+
+        const isCaller = callData.meta.caller_id === currentUserId;
+
+        if (isCaller) {
+          const recipientUids = Object.keys(callData.participants || {});
+          const hasAnyPendingOrActive = recipientUids.some((uid) => {
+            const st = callData.participants[uid]?.status;
+            return st === 'ringing' || st === 'accepted';
+          });
+
+          if (recipientUids.length > 0 && !hasAnyPendingOrActive) {
+            set(ref(rtdb, `calls/${targetCallId}/status`), 'ended').catch(() => {});
+            set(ref(rtdb, `user_calls/${currentUserId}/active`), null).catch(() => {});
+            setTimeout(() => remove(ref(rtdb, `calls/${targetCallId}`)).catch(() => {}), 600);
+            handleLocalHangup();
+            return;
+          }
+
+          if (!callData.meta.is_group) {
+            const peerUid = recipientUids[0];
+            if (peerUid && callData.participants[peerUid]?.status === 'declined') {
+              set(ref(rtdb, `calls/${targetCallId}/status`), 'ended').catch(() => {});
+              set(ref(rtdb, `user_calls/${currentUserId}/active`), null).catch(() => {});
+              setTimeout(() => remove(ref(rtdb, `calls/${targetCallId}`)).catch(() => {}), 600);
+              handleLocalHangup();
+              return;
+            }
+          }
+
+          const acceptedUser = recipientUids.find((uid) => callData.participants[uid]?.status === 'accepted');
+          if (acceptedUser && callStatusRef.current !== 'connected') {
+            if (ringTimeoutRef.current) {
+              clearTimeout(ringTimeoutRef.current);
+              ringTimeoutRef.current = null;
+            }
+            setCallStatus('connected');
+            synth.stopRinging();
+          }
+        } else {
+          // Receiver branch
+          onDisconnect(ref(rtdb, `calls/${targetCallId}/participants/${currentUserId}/status`)).set('declined');
+          onDisconnect(ref(rtdb, `user_calls/${currentUserId}/active`)).set(null);
+
+          const selfPart = callData.participants?.[currentUserId];
+          if (!selfPart) return;
+
+          if (selfPart.status === 'ringing') {
+            if (autoAnswerCallIdRef.current === targetCallId) {
+              autoAnswerCallIdRef.current = null;
+              acceptIncomingCall(targetCallId, callData);
+            } else if (callStatusRef.current !== 'ringing_incoming' && callStatusRef.current !== 'connected') {
+              setCallStatus('ringing_incoming');
+              synth.startRinging();
+            }
+          } else if (selfPart.status === 'accepted') {
+            synth.stopRinging();
+            if (callStatusRef.current !== 'connected') {
+              setCallStatus('connected');
+            }
+            if (!roomRef.current && !isJoiningRoomRef.current) {
+              joinLiveKitCall(callData.meetingId || targetCallId, callData.meta.type).catch(() => handleLocalHangup());
+            }
+          } else if (selfPart.status === 'declined') {
+            handleLocalHangup();
+          }
+        }
+      });
+
+      activeCallUnsubRef.current = unsub;
+    };
+
+    const userCallActiveRef = ref(rtdb, `user_calls/${currentUserId}/active`);
+    const unsubUserCall = onValue(userCallActiveRef, (snapshot) => {
+      const incomingCallId = snapshot.val() as string | null;
+      if (incomingCallId) {
+        if (callIdRef.current !== incomingCallId || !activeCallUnsubRef.current) {
+          setCallId(incomingCallId);
+          callIdRef.current = incomingCallId;
+          subscribeToCallNode(incomingCallId);
+        }
       } else {
         handleLocalHangup(true);
       }
     });
 
     const handleInitiateCallEvent = async (e: any) => {
-      const { chat, type } = e.detail;
+      const { chat, type } = e.detail || {};
       if (!chat) return;
+      if (callStatusRef.current !== 'idle') return; // Prevent double-taps
 
       setIsMuted(false);
       setIsVideoDisabled(false);
+
       const newCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       setCallId(newCallId);
+      callIdRef.current = newCallId;
       setCallStatus('ringing_outgoing');
+      callStatusRef.current = 'ringing_outgoing';
       synth.startRinging();
 
       const callerName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
       const callerAvatar = currentProfile?.avatar_url || null;
-
       const roomName = chat.isGroup ? chat.name : (chat.name || 'Socium Chat');
       const roomAvatar = chat.avatar_url || null;
 
@@ -268,32 +505,20 @@ export function CallsManager() {
         caller_name: callerName,
         caller_avatar: callerAvatar,
         chat_room_id: chat.id,
-        is_group: chat.isGroup,
+        is_group: Boolean(chat.isGroup),
         type: type as 'audio' | 'video',
         room_name: roomName,
         room_avatar: roomAvatar
       };
 
-      try {
-        await supabase.from('messages').insert({
-          sender_id: currentUserId,
-          receiver_id: chat.isGroup ? null : chat.id,
-          group_chat_id: chat.isGroup ? chat.id : null,
-          content: type === 'audio' ? '📞 Audio Call' : '🎥 Video Call',
-          media_type: type === 'audio' ? 'call_audio' : 'call_video'
-        });
-      } catch (insertErr) {
-        console.error("Failed to insert native call message bubble to Supabase:", insertErr);
-      }
-
       const recipients: string[] = chat.isGroup
-        ? (chat.participants || []).map((p: any) => p.id || p.user_id).filter((uid: string) => uid !== currentUserId)
+        ? (chat.participants || []).map((p: any) => p.id || p.user_id).filter((uid: string) => uid && uid !== currentUserId)
         : [chat.id];
 
       const participants: Record<string, Participant> = {};
       for (const rid of recipients) {
         let pName = 'User';
-        let pAvatar = null;
+        let pAvatar: string | null = null;
         if (chat.isGroup && chat.participants) {
           const matched = chat.participants.find((p: any) => (p.id || p.user_id) === rid);
           if (matched) {
@@ -312,18 +537,19 @@ export function CallsManager() {
         };
       }
 
+      const freshCallNode: CallNode = {
+        status: 'dialing',
+        meetingId: newCallId,
+        meta,
+        participants,
+        timestamp: Date.now()
+      };
+
+      setActiveCall(freshCallNode);
+      activeCallRef.current = freshCallNode;
+
       try {
-        const mid = await createRealtimeKitRoom();
-        const token = await getRealtimeKitToken(mid, currentUserId!, `${currentUserId}||${callerName}`);
-
-        const freshCallNode: any = {
-          status: "dialing",
-          meetingId: mid,
-          meta,
-          participants,
-          timestamp: Date.now()
-        };
-
+        // 1. Create RTDB signaling nodes FIRST so Edge Function & receivers see them immediately
         const callRefNode = ref(rtdb, `calls/${newCallId}`);
         await set(callRefNode, freshCallNode);
         onDisconnect(callRefNode).remove();
@@ -337,233 +563,161 @@ export function CallsManager() {
           onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
         }
 
-        await joinRealtimeKitCall(newCallId, mid, token);
+        subscribeToCallNode(newCallId);
 
-        for (const rid of recipients) {
-          await delegateCallRinger(newCallId, rid, callerName);
-        }
+        // 2. Connect caller to LiveKit room immediately inside user gesture
+        await joinLiveKitCall(newCallId, type as 'audio' | 'video');
 
-      } catch (sessErr) {
-        console.error("Establishing initial caller session failed:", sessErr);
-        handleLocalHangup();
-        return;
-      }
+        // 3. Log call bubble in Supabase messages
+        supabase.from('messages').insert({
+          sender_id: currentUserId,
+          receiver_id: chat.isGroup ? null : chat.id,
+          group_chat_id: chat.isGroup ? chat.id : null,
+          content: type === 'audio' ? '📞 Audio Call' : '🎥 Video Call',
+          media_type: type === 'audio' ? 'call_audio' : 'call_video'
+        }).then(({ error }) => {
+          if (error) console.warn('Failed to insert call bubble:', error.message);
+        });
 
-      const callRef = ref(rtdb, `calls/${newCallId}`);
-      registerDbListener(callRef, (snap) => {
-        const val = snap.val() as CallNode | null;
-        if (val && val.meta) {
-          setActiveCall(val);
+        // 4. Fire single-invocation background push ring loop (no await blocking UI)
+        startCallRinger({
+          callId: newCallId,
+          recipientIds: recipients,
+          callerName,
+          callType: type as 'audio' | 'video',
+          isGroup: Boolean(chat.isGroup),
+        });
 
-          if (val.meta.caller_id === currentUserId) {
-            const recipientsList = Object.keys(val.participants || {});
-            if (recipientsList.length > 0) {
-              const hasActiveRecipient = recipientsList.some(uid =>
-                val.participants[uid]?.status === 'ringing' || val.participants[uid]?.status === 'accepted'
-              );
-              if (!hasActiveRecipient) {
-                handleLocalHangup();
-                return;
+        // 5. Auto-end unanswered outgoing calls after 32 seconds
+        ringTimeoutRef.current = setTimeout(async () => {
+          if (callIdRef.current === newCallId && callStatusRef.current === 'ringing_outgoing') {
+            try {
+              await set(ref(rtdb, `calls/${newCallId}/status`), 'ended');
+              await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
+              for (const rid of recipients) {
+                await set(ref(rtdb, `user_calls/${rid}/active`), null);
               }
-            }
-          }
-
-          const acceptedUser = Object.keys(val.participants || {}).find(uid => val.participants[uid]?.status === 'accepted');
-          if (acceptedUser) {
-            setCallStatus('connected');
-            synth.stopRinging();
-          }
-
-          if (!chat.isGroup && val.participants?.[chat.id]?.status === 'declined') {
+              setTimeout(() => remove(ref(rtdb, `calls/${newCallId}`)).catch(() => {}), 500);
+            } catch (_) {}
             handleLocalHangup();
           }
-        } else {
-          handleLocalHangup(true);
-        }
-      });
-
-      // FCM Web Push fallbacks for ringing signaling triggers
-      if (recipients.length > 0) {
+        }, 32000);
+      } catch (err) {
+        console.error('Failed to establish outgoing LiveKit call:', err);
         try {
-          const { data: pushRecs } = await supabase
-            .from('push_subscriptions')
-            .select('user_id, endpoint')
-            .in('user_id', recipients);
-
-          if (pushRecs && pushRecs.length > 0) {
-            const tokenGroups: Record<string, string[]> = {};
-            pushRecs.forEach(r => {
-              if (!tokenGroups[r.user_id]) tokenGroups[r.user_id] = [];
-              tokenGroups[r.user_id].push(r.endpoint);
-            });
-
-            const recipientTokens = Object.keys(tokenGroups).map(uid => ({
-              userId: uid,
-              tokens: tokenGroups[uid]
-            }));
-
-            const callsWorkerUrl = 'https://socium-call-notifications.brare-black.workers.dev/';
-
-            let triggerCount = 0;
-            const runPushTrigger = () => {
-              if (callStatusRef.current !== 'ringing_outgoing' || triggerCount >= 3) return;
-              triggerCount++;
-
-              fetch(callsWorkerUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  call_id: newCallId,
-                  caller_id: currentUserId,
-                  caller_name: callerName,
-                  caller_avatar: callerAvatar,
-                  chat_room_id: chat.id,
-                  type: type,
-                  is_group: chat.isGroup,
-                  recipient_tokens: recipientTokens
-                })
-              }).catch(e => console.error("Cloudflare calls worker notifications post error:", e));
-
-              if (triggerCount < 3) {
-                setTimeout(runPushTrigger, 3500);
-              }
-            };
-
-            runPushTrigger();
+          await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
+          for (const rid of recipients) {
+            await set(ref(rtdb, `user_calls/${rid}/active`), null);
           }
-        } catch (supabaseErr) {
-          console.error("Supabase notification query failed:", supabaseErr);
-        }
+          await remove(ref(rtdb, `calls/${newCallId}`));
+        } catch (_) {}
+        handleLocalHangup();
       }
+    };
+
+    const handleOpenIncomingCallEvent = async (e: any) => {
+      const { callId: targetCallId, autoAnswer } = e.detail || {};
+      if (!targetCallId) return;
+
+      if (autoAnswer) {
+        autoAnswerCallIdRef.current = targetCallId;
+      }
+
+      try {
+        const snap = await get(ref(rtdb, `calls/${targetCallId}`));
+        const callData = snap.val() as CallNode | null;
+        if (!callData || callData.status === 'ended') {
+          autoAnswerCallIdRef.current = null;
+          return;
+        }
+
+        const selfStatus = callData.participants?.[currentUserId]?.status;
+        if (selfStatus === 'declined') {
+          autoAnswerCallIdRef.current = null;
+          return;
+        }
+
+        setCallId(targetCallId);
+        callIdRef.current = targetCallId;
+        setActiveCall(callData);
+        activeCallRef.current = callData;
+        subscribeToCallNode(targetCallId);
+
+        if (autoAnswer && selfStatus === 'ringing') {
+          autoAnswerCallIdRef.current = null;
+          await acceptIncomingCall(targetCallId, callData);
+        }
+      } catch (err) {
+        console.warn('Error hydrating incoming call from push:', err);
+      }
+    };
+
+    const handleDeclineIncomingCallEvent = async (e: any) => {
+      const targetCallId = e.detail?.callId || callIdRef.current;
+      if (!targetCallId) return;
+      await declineCallById(targetCallId, activeCallRef.current);
     };
 
     window.addEventListener('initiateCall', handleInitiateCallEvent);
+    window.addEventListener('openIncomingCall', handleOpenIncomingCallEvent);
+    window.addEventListener('declineIncomingCall', handleDeclineIncomingCallEvent);
+
+    // Replay any intent captured during cold-boot before profile finished loading
+    if (pendingIntentRef.current) {
+      const intent = pendingIntentRef.current;
+      pendingIntentRef.current = null;
+      if (intent.type === 'open') {
+        handleOpenIncomingCallEvent({ detail: { callId: intent.callId, autoAnswer: intent.autoAnswer } });
+      } else {
+        handleDeclineIncomingCallEvent({ detail: { callId: intent.callId } });
+      }
+    }
 
     return () => {
-      clearAllDbListeners();
-      window.removeEventListener('initiateCall', handleInitiateCallEvent);
-    };
-  }, [currentUserId, currentProfile]);
-
-  // Join RealtimeKit Room helper
-  const joinRealtimeKitCall = async (cid: string, meetingId: string, token: string) => {
-    if (rtkRoomRef.current) {
-      try { await rtkRoomRef.current.leave(); } catch (e) {}
-      rtkRoomRef.current = null;
-    }
-
-    try {
-      const client = await RealtimeKitClient.init({
-        authToken: token
-      });
-      rtkRoomRef.current = client;
-
-      await client.join();
-
-      // Configure video and audio publishing cleanly
-      await client.self.enableAudio();
-      const withVideo = activeCallRef.current?.meta?.type === 'video' || activeCall?.meta?.type === 'video';
-      if (withVideo) {
-        await client.self.enableVideo();
+      unsubUserCall();
+      if (activeCallUnsubRef.current) {
+        activeCallUnsubRef.current();
+        activeCallUnsubRef.current = null;
       }
+      window.removeEventListener('initiateCall', handleInitiateCallEvent);
+      window.removeEventListener('openIncomingCall', handleOpenIncomingCallEvent);
+      window.removeEventListener('declineIncomingCall', handleDeclineIncomingCallEvent);
+    };
+  }, [currentUserId, currentProfile, acceptIncomingCall, declineCallById, handleLocalHangup, joinLiveKitCall]);
 
-      // Track current local media stream to show locally
-      const localS = new MediaStream();
-      if (client.self.audioTrack) localS.addTrack(client.self.audioTrack);
-      if (client.self.videoTrack) localS.addTrack(client.self.videoTrack);
-
-      setLocalStream(localS);
-      localStreamRef.current = localS;
-      initiatedAtRef.current = new Date().toISOString();
-
-      const rebuildRemoteStreams = () => {
-        const streamMap: Record<string, MediaStream> = {};
-
-        client.participants.joined.forEach((p: any) => {
-          const pUserId = getUserIdFromParticipant(p);
-          if (pUserId === currentUserId) return; // Ignore self
-
-          const remoteStream = new MediaStream();
-          let hasTracks = false;
-
-          if (p.audioEnabled && p.audioTrack) {
-            remoteStream.addTrack(p.audioTrack);
-            hasTracks = true;
-          }
-          if (p.videoEnabled && p.videoTrack) {
-            remoteStream.addTrack(p.videoTrack);
-            hasTracks = true;
-          }
-
-          if (hasTracks) {
-            streamMap[pUserId] = remoteStream;
-          }
-        });
-
-        setRemoteStreams(streamMap);
-      };
-
-      // Subscribe to joining updates
-      client.participants.joined.on('participantJoined', (p: any) => {
-        rebuildRemoteStreams();
-        p.on('videoUpdate', () => rebuildRemoteStreams());
-        p.on('audioUpdate', () => rebuildRemoteStreams());
-      });
-
-      client.participants.joined.on('participantLeft', () => {
-        rebuildRemoteStreams();
-      });
-
-      // Bind to initial participants
-      client.participants.joined.forEach((p: any) => {
-        p.on('videoUpdate', () => rebuildRemoteStreams());
-        p.on('audioUpdate', () => rebuildRemoteStreams());
-      });
-
-      rebuildRemoteStreams();
-
-    } catch (realtimeKitErr) {
-      console.error("RealtimeKit engine join failed:", realtimeKitErr);
-      throw realtimeKitErr;
-    }
-  };
+  // Capture cold-start push deep-link events even before currentProfile/currentUserId finish loading
+  useEffect(() => {
+    if (currentUserId) return;
+    const captureOpen = (e: any) => {
+      if (e.detail?.callId) {
+        pendingIntentRef.current = {
+          type: 'open',
+          callId: e.detail.callId,
+          autoAnswer: Boolean(e.detail.autoAnswer),
+        };
+      }
+    };
+    const captureDecline = (e: any) => {
+      if (e.detail?.callId) {
+        pendingIntentRef.current = { type: 'decline', callId: e.detail.callId };
+      }
+    };
+    window.addEventListener('openIncomingCall', captureOpen);
+    window.addEventListener('declineIncomingCall', captureDecline);
+    return () => {
+      window.removeEventListener('openIncomingCall', captureOpen);
+      window.removeEventListener('declineIncomingCall', captureDecline);
+    };
+  }, [currentUserId]);
 
   const handleAcceptCall = async () => {
     if (!callId || !activeCall) return;
-    synth.playAnswer();
-    setIsMuted(false);
-    setIsVideoDisabled(false);
-
-    try {
-      const mid = activeCall.meetingId;
-      if (!mid) throw new Error("No meetingId associated with this call.");
-
-      const myName = currentProfile?.full_name || currentProfile?.username || 'Socium User';
-      const myToken = await getRealtimeKitToken(mid, currentUserId!, `${currentUserId}||${myName}`);
-
-      await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'accepted');
-      await set(ref(rtdb, `calls/${callId}/status`), 'accepted');
-
-      await joinRealtimeKitCall(callId, mid, myToken);
-      setCallStatus('connected');
-    } catch (acceptErr) {
-      console.error("Failed to establish receiver side RealtimeKit session:", acceptErr);
-      handleLocalHangup();
-    }
+    await acceptIncomingCall(callId, activeCall);
   };
 
   const handleDeclineCall = async () => {
-    if (!callId || !activeCall) return;
-
-    await set(ref(rtdb, `calls/${callId}/participants/${currentUserId}/status`), 'declined');
-    await set(ref(rtdb, `user_calls/${currentUserId}/active`), null);
-
-    if (!activeCall.meta.is_group) {
-      await remove(ref(rtdb, `calls/${callId}`));
-      await set(ref(rtdb, `user_calls/${activeCall.meta.caller_id}/active`), null);
-    }
-
-    handleLocalHangup();
+    if (!callId) return;
+    await declineCallById(callId, activeCall);
   };
 
   const handleHangupCall = async () => {
@@ -586,58 +740,66 @@ export function CallsManager() {
             for (const pk of pKeys) {
               await set(ref(rtdb, `user_calls/${pk}/active`), null);
             }
-          } catch (e) {}
-        }, 800);
+          } catch (_) {}
+        }, 600);
       } else {
         await set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/status`), 'declined');
+        if (!callObj.meta.is_group) {
+          await set(ref(rtdb, `calls/${cid}/status`), 'ended');
+          await set(ref(rtdb, `user_calls/${callObj.meta.caller_id}/active`), null);
+          setTimeout(() => remove(ref(rtdb, `calls/${cid}`)).catch(() => {}), 600);
+        }
       }
     } catch (e) {
-      console.warn("Hangup DB updates error:", e);
+      console.warn('Hangup DB update error:', e);
     }
 
     handleLocalHangup();
   };
 
   const toggleMute = async () => {
-    if (rtkRoomRef.current) {
-      try {
-        if (isMuted) {
-          await rtkRoomRef.current.self.enableAudio();
-          setIsMuted(false);
-        } else {
-          await rtkRoomRef.current.self.disableAudio();
-          setIsMuted(true);
-        }
-      } catch (e) {
-        console.warn("Mute toggle failed:", e);
-      }
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      const nextMuted = !isMuted;
+      await room.localParticipant.setMicrophoneEnabled(!nextMuted);
+      setIsMuted(nextMuted);
+    } catch (e) {
+      console.warn('Mute toggle failed:', e);
     }
   };
 
   const toggleVideo = async () => {
-    if (rtkRoomRef.current) {
-      try {
-        if (isVideoDisabled) {
-          await rtkRoomRef.current.self.enableVideo();
-          setIsVideoDisabled(false);
-        } else {
-          await rtkRoomRef.current.self.disableVideo();
-          setIsVideoDisabled(true);
-        }
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      const nextDisabled = !isVideoDisabled;
+      await room.localParticipant.setCameraEnabled(!nextDisabled);
+      setIsVideoDisabled(nextDisabled);
+      syncMediaFromRoom(room);
 
-        const cid = callIdRef.current || callId;
-        if (cid) {
-          const isCaller = activeCallRef.current?.meta?.caller_id === currentUserId;
-          if (isCaller) {
-            set(ref(rtdb, `calls/${cid}/caller_video_disabled`), !isVideoDisabled);
-          } else {
-            set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/video_disabled`), !isVideoDisabled);
-          }
+      const cid = callIdRef.current || callId;
+      if (cid) {
+        const isCaller = activeCallRef.current?.meta?.caller_id === currentUserId;
+        if (isCaller) {
+          set(ref(rtdb, `calls/${cid}/caller_video_disabled`), nextDisabled).catch(() => {});
+        } else {
+          set(ref(rtdb, `calls/${cid}/participants/${currentUserId}/video_disabled`), nextDisabled).catch(() => {});
         }
-      } catch (e) {
-        console.warn("Video toggle failed:", e);
       }
+    } catch (e) {
+      console.warn('Video toggle failed:', e);
     }
+  };
+
+  const handleEnableAudioPlayback = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      await room.startAudio();
+      setCanPlaybackAudio(room.canPlaybackAudio);
+    } catch (_) {}
   };
 
   const formatTime = (secs: number) => {
@@ -654,7 +816,7 @@ export function CallsManager() {
 
   const isCaller = activeCall.meta.caller_id === currentUserId;
   let displayName = '';
-  let avatarUrl = null;
+  let avatarUrl: string | null = null;
 
   if (activeCall.meta.is_group) {
     displayName = activeCall.meta.room_name || 'Group Call';
@@ -670,17 +832,24 @@ export function CallsManager() {
   }
 
   const handleScreenTap = () => {
+    if (roomRef.current && !roomRef.current.canPlaybackAudio) {
+      roomRef.current.startAudio().then(() => {
+        if (roomRef.current) setCanPlaybackAudio(roomRef.current.canPlaybackAudio);
+      }).catch(() => {});
+    }
     if (callStatus === 'connected' && activeCall?.meta?.type === 'video') {
       setShowControls(prev => !prev);
     }
   };
 
   const isGroupCall = activeCall.meta.is_group;
-
   const otherPartyId = isCaller
     ? Object.keys(activeCall.participants || {})[0]
     : activeCall.meta.caller_id;
-  const remoteStream1on1 = remoteStreams[otherPartyId] || null;
+  const remoteVideo1on1 = remoteVideoStreams[otherPartyId] || null;
+  const isPeerVideoDisabled1on1 = isCaller
+    ? activeCall.participants?.[otherPartyId]?.video_disabled === true
+    : activeCall.caller_video_disabled === true;
 
   return createPortal(
     <AnimatePresence>
@@ -691,53 +860,48 @@ export function CallsManager() {
         onClick={handleScreenTap}
         className="fixed inset-0 z-[99999] bg-black text-white flex flex-col justify-between overflow-hidden select-none max-w-lg mx-auto md:border-x md:border-white/15 font-sans cursor-pointer"
       >
-        {/* Play 1-on-1 background audio stream */}
-        {isConnected && activeCall?.meta?.type === 'audio' && !isGroupCall && remoteStream1on1 && (
-          <audio
-            ref={el => {
-              if (el && remoteStream1on1) el.srcObject = remoteStream1on1;
-            }}
-            autoPlay
-            playsInline
-            style={{ display: 'none' }}
-          />
+        {/* Dedicated Remote Audio Renderer for both Audio and Video Calls */}
+        {isConnected && remoteAudioTracks.map(item => (
+          <RemoteAudioElement key={item.key} track={item.track} />
+        ))}
+
+        {/* iOS Safari Cold-Start Audio Unlock Pill (only visible if browser blocked autoplay) */}
+        {isConnected && !canPlaybackAudio && (
+          <div className="fixed top-[calc(5.5rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+            <button
+              onClick={handleEnableAudioPlayback}
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500 text-black font-semibold text-xs shadow-xl animate-pulse"
+            >
+              <Volume2 size={15} />
+              Tap to turn on call audio
+            </button>
+          </div>
         )}
 
-        {/* Play group/mesh audio streams in background */}
-        {isConnected && isGroupCall && Object.keys(remoteStreams).map(uid => {
-          const stream = remoteStreams[uid];
-          return (
-            <audio
-              key={`audio-group-${uid}`}
-              ref={el => {
-                if (el && stream) el.srcObject = stream;
-              }}
-              autoPlay
-              playsInline
-              style={{ display: 'none' }}
-            />
-          );
-        })}
-
-        {/* Connect Active Video overlay panels */}
+        {/* Active Video overlay panels */}
         {isConnected && activeCall?.meta?.type === 'video' && (
           <div className="absolute inset-0 bg-zinc-950 z-0 flex flex-col items-center justify-center pointer-events-none">
             {isGroupCall ? (
               <GroupVideoGrid
-                remoteStreams={remoteStreams}
-                localStream={localStream}
+                remoteStreams={remoteVideoStreams}
+                localStream={localVideoStream}
                 currentUserId={currentUserId!}
                 isVideoDisabled={isVideoDisabled}
                 activeCall={activeCall}
                 currentProfile={currentProfile}
               />
             ) : (
-              // Enhanced 1-on-1 full screen absolute video matching user requests
               <div className="absolute inset-0 w-full h-full object-cover">
-                {remoteStream1on1 || (localStream && !isVideoDisabled) ? (
+                {remoteVideo1on1 && !isPeerVideoDisabled1on1 ? (
                   <VideoPlayer
-                    stream={remoteStream1on1 || localStream}
-                    muted={!remoteStream1on1}
+                    stream={remoteVideo1on1}
+                    muted={true}
+                    className="absolute inset-0 w-full h-full object-cover rounded-none"
+                  />
+                ) : (localVideoStream && !isVideoDisabled && !isPeerVideoDisabled1on1) ? (
+                  <VideoPlayer
+                    stream={localVideoStream}
+                    muted={true}
                     className="absolute inset-0 w-full h-full object-cover rounded-none"
                   />
                 ) : (
@@ -749,15 +913,17 @@ export function CallsManager() {
                         <Users className="w-10 h-10 text-white/50" />
                       )}
                     </div>
-                    <p className="text-white/40 text-xs font-mono tracking-widest uppercase animate-pulse">CONNECTING MEDIA...</p>
+                    <p className="text-white/40 text-xs font-mono tracking-widest uppercase animate-pulse">
+                      {isPeerVideoDisabled1on1 ? 'CAMERA OFF' : 'CONNECTING VIDEO...'}
+                    </p>
                   </div>
                 )}
 
-                {/* Picture in picture local user feeds layout overlay */}
-                {remoteStream1on1 && localStream && !isVideoDisabled && (
+                {/* Picture-in-picture local feed */}
+                {remoteVideo1on1 && !isPeerVideoDisabled1on1 && localVideoStream && !isVideoDisabled && (
                   <div className="absolute top-20 right-4 w-28 h-40 rounded-2xl overflow-hidden border border-white/20 shadow-2xl z-10 bg-black/50 pointer-events-auto">
                     <VideoPlayer
-                      stream={localStream}
+                      stream={localVideoStream}
                       muted={true}
                       className="w-full h-full object-cover"
                     />
@@ -803,8 +969,8 @@ export function CallsManager() {
               </p>
 
               <p className="text-[#a0a0a0] text-sm mt-3.5 tracking-wider font-medium">
-                {isRingingIncoming && "INCOMING CALL..."}
-                {isRingingOutgoing && "RINGING..."}
+                {isRingingIncoming && 'INCOMING CALL...'}
+                {isRingingOutgoing && 'RINGING...'}
                 {isConnected && `ACTIVE — ${formatTime(callDuration)}`}
               </p>
 
@@ -814,7 +980,7 @@ export function CallsManager() {
                     const p = activeCall.participants[uid];
                     return (
                       <div key={uid} className="flex items-center gap-1.5 px-3 py-1 bg-white/[0.04] border border-white/5 rounded-full">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.status === 'accepted' ? 'bg-green-500' : p.status === 'declined' ? 'bg-red-500' : 'bg-amber-400'}`} />
                         <span className="text-[10px] font-medium text-white/60 truncate max-w-[80px]">
                           {(uid === currentUserId) ? 'Me' : p.name || `User (${uid.slice(0, 4)})`} — <span className="text-[9px] uppercase tracking-wider font-mono text-white/40">{p.status}</span>
                         </span>
@@ -873,7 +1039,7 @@ export function CallsManager() {
           </div>
         )}
 
-        {/* sliding video overlay controls */}
+        {/* Sliding video overlay controls */}
         <AnimatePresence>
           {isConnected && activeCall?.meta?.type === 'video' && showControls && (
             <motion.div
