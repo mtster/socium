@@ -72,6 +72,7 @@ export default function App() {
   const {
     notifPermission,
     hasPushSubscription,
+    isRefreshingPush,
     registerPush
   } = usePushNotifications(session?.user?.id);
 
@@ -301,20 +302,23 @@ export default function App() {
             )}
             {activeTab === 'chat' && !initialActiveChat && (
               <button 
+                disabled={isRefreshingPush}
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowNotifPromoPopup(false);
-                  if (typeof window !== 'undefined' && 'Notification' in window) {
+                  if (typeof window !== 'undefined' && 'Notification' in window && !isRefreshingPush) {
                     const shouldForceRefresh = notifPermission === 'granted' && hasPushSubscription === true;
                     registerPush(session.user.id, true, shouldForceRefresh);
                   }
                 }}
-                className="text-white hover:text-white/80 transition-colors relative"
+                className="text-white hover:text-white/80 transition-colors relative disabled:opacity-80"
               >
                 <Bell size={24} />
-                {notifPermission === 'granted' && hasPushSubscription === true && (
+                {isRefreshingPush ? (
+                  <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-amber-500 rounded-full border border-black shadow-[0_0_8px_rgba(245,158,11,0.85)] animate-pulse" />
+                ) : notifPermission === 'granted' && hasPushSubscription === true ? (
                   <div className="absolute flex top-0 right-[-2px] w-2.5 h-2.5 bg-green-500 rounded-full border border-black shadow" />
-                )}
+                ) : null}
               </button>
             )}
           </div>

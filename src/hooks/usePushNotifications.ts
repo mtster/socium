@@ -32,6 +32,7 @@ export function usePushNotifications(userId: string | undefined) {
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
   );
   const [hasPushSubscription, setHasPushSubscription] = useState<boolean | null>(null);
+  const [isRefreshingPush, setIsRefreshingPush] = useState(false);
   const dbVerifiedTokenRef = useRef<{ userId: string; token: string } | null>(null);
 
   useEffect(() => {
@@ -102,6 +103,11 @@ export function usePushNotifications(userId: string | undefined) {
     if (existing) {
       if (!isUserAction && !forceRefresh) return existing;
       await existing.catch(() => {});
+    }
+
+    const showProgress = isUserAction || forceRefresh;
+    if (showProgress) {
+      setIsRefreshingPush(true);
     }
 
     const task = (async () => {
@@ -179,6 +185,9 @@ export function usePushNotifications(userId: string | undefined) {
         if (isUserAction) toast.error(`Push registration failed: ${e.message}`);
       } finally {
         inFlightPushReg.delete(targetUserId);
+        if (showProgress) {
+          setIsRefreshingPush(false);
+        }
       }
     })();
 
@@ -189,6 +198,7 @@ export function usePushNotifications(userId: string | undefined) {
   return {
     notifPermission,
     hasPushSubscription,
+    isRefreshingPush,
     registerPush
   };
 }
