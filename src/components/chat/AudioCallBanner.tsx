@@ -1,5 +1,5 @@
 import React from 'react';
-import { Phone, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { useStore } from '@/src/store/useStore';
 
 interface AudioCallBannerProps {
@@ -26,7 +26,7 @@ export function AudioCallBanner({ withSafeArea = false }: AudioCallBannerProps) 
       role="button"
       tabIndex={0}
       aria-label={`Return to call with ${banner.displayName}`}
-      className={`shrink-0 w-full bg-emerald-950/95 border-b border-emerald-500/25 backdrop-blur-md z-50 cursor-pointer select-none active:bg-emerald-900/95 transition-colors ${
+      className={`shrink-0 w-full bg-emerald-950/95 backdrop-blur-md z-50 cursor-pointer select-none active:bg-emerald-900/95 transition-colors ${
         withSafeArea ? 'pt-[env(safe-area-inset-top)]' : ''
       }`}
     >
@@ -48,7 +48,6 @@ export function AudioCallBanner({ withSafeArea = false }: AudioCallBannerProps) 
               </span>
             )}
           </div>
-          <Phone size={13} className="text-emerald-400 shrink-0" />
           <span className="text-xs font-semibold text-white truncate">
             {banner.displayName}
           </span>

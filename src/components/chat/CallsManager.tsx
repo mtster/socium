@@ -24,9 +24,10 @@ interface AttachedAudioProps {
   track: RemoteAudioTrack;
   sinkId: string;
   volume: number;
+  routeNonce: number;
 }
 
-const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volume }) => {
+const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volume, routeNonce }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -46,10 +47,21 @@ const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volum
     const el = audioRef.current as any;
     if (!el) return;
     el.volume = volume;
-    if (sinkId && typeof el.setSinkId === 'function') {
-      el.setSinkId(sinkId).catch(() => {});
-    }
-  }, [sinkId, volume]);
+    const updateRoute = async () => {
+      if (sinkId && typeof el.setSinkId === 'function') {
+        try {
+          await el.setSinkId(sinkId);
+        } catch (_) {}
+      }
+      if (routeNonce > 0) {
+        try {
+          el.pause();
+          await el.play();
+        } catch (_) {}
+      }
+    };
+    updateRoute();
+  }, [sinkId, volume, routeNonce]);
 
   return <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />;
 };
@@ -75,6 +87,7 @@ export function CallsManager() {
   const [isVideoDisabled, setIsVideoDisabled] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [audioSinkId, setAudioSinkId] = useState('');
+  const [audioRouteNonce, setAudioRouteNonce] = useState(0);
   const [callDuration, setCallDuration] = useState(0);
 
   // Refs for clean async closures & teardown
@@ -113,11 +126,13 @@ export function CallsManager() {
   const applyAudioOutputRoute = useCallback(async (speakerEnabled: boolean, roomInstance?: Room | null) => {
     setIsSpeakerOn(speakerEnabled);
 
-    // Hint iOS Safari WebKit AudioSession
+    // Hint iOS Safari WebKit AudioSession:
+    // - 'auto' lets WebRTC getUserMedia stay in natural voice handset/earpiece mode (respecting ear proximity)
+    // - 'play-and-record' biases iOS AVAudioSession toward hands-free speaker output
     try {
       const navAny = navigator as any;
       if (navAny?.audioSession) {
-        navAny.audioSession.type = 'play-and-record';
+        navAny.audioSession.type = speakerEnabled ? 'play-and-record' : 'auto';
       }
     } catch (_) {}
 
@@ -129,7 +144,8 @@ export function CallsManager() {
         if (outputs.length > 0) {
           let chosen: MediaDeviceInfo | undefined;
           if (speakerEnabled) {
-            chosen = outputs.find(d => /speaker|loud|built-in/i.test(d.label));
+            chosen = outputs.find(d => /speaker|loud|built-in/i.test(d.label))
+              || outputs.find(d => d.deviceId !== 'default' && d.deviceId !== 'communications');
           } else {
             chosen = outputs.find(d => /earpiece|receiver|handset|communications/i.test(d.label))
               || outputs.find(d => d.deviceId === 'default');
@@ -144,6 +160,8 @@ export function CallsManager() {
         }
       }
     } catch (_) {}
+
+    setAudioRouteNonce(n => n + 1);
   }, []);
 
   // Call duration timer
@@ -426,7 +444,7 @@ export function CallsManager() {
       try {
         const navAny = navigator as any;
         if (navAny?.audioSession) {
-          navAny.audioSession.type = 'play-and-record';
+          navAny.audioSession.type = callType === 'video' ? 'play-and-record' : 'auto';
         }
       } catch (_) {}
 
@@ -499,7 +517,7 @@ export function CallsManager() {
   const acceptIncomingCall = useCallback(async (targetCallId: string, targetCall: CallNode) => {
     if (!currentUserId || !rtdb) return;
 
-    synth.playAnswer();
+    synth.releaseAudioContext();
     setIsMuted(false);
     const liveMode = targetCall.mode || targetCall.meta.type;
     setIsVideoDisabled(liveMode !== 'video');
@@ -512,7 +530,6 @@ export function CallsManager() {
 
       await joinLiveKitCall(roomName, liveMode);
       setCallStatus('connected');
-      synth.releaseAudioContext();
     } catch (err) {
       console.error('Failed to accept LiveKit call:', err);
       handleLocalHangup();
@@ -1056,7 +1073,8 @@ export function CallsManager() {
           key={item.key}
           track={item.track}
           sinkId={audioSinkId}
-          volume={isSpeakerOn ? 1.0 : 0.9}
+          volume={isSpeakerOn ? 1.0 : 0.78}
+          routeNonce={audioRouteNonce}
         />
       ))}
 
@@ -1211,14 +1229,16 @@ export function CallsManager() {
                     {displayName}
                   </h1>
 
-                  {/* Sleek clean unboxed call type subtitle */}
-                  <div className="flex items-center gap-1.5 mt-2.5 text-xs font-medium text-white/55 tracking-wide pointer-events-none">
-                    {activeMode === 'video' ? <Video size={13} className="text-emerald-400" /> : <Phone size={13} className="text-emerald-400" />}
-                    <span>{activeMode === 'video' ? 'Video Call' : 'Audio Call'}</span>
-                  </div>
+                  {/* Show subtitle only for ringing/video state; omit "Audio Call" text during audio calls */}
+                  {activeMode === 'video' && (
+                    <div className="flex items-center gap-1.5 mt-2.5 text-xs font-medium text-white/55 tracking-wide pointer-events-none">
+                      <Video size={13} className="text-emerald-400" />
+                      <span>Video Call</span>
+                    </div>
+                  )}
 
                   {/* Clean duration (without "ACTIVE — ") */}
-                  <p className="text-white/75 text-sm mt-2 tracking-wider font-medium tabular-nums pointer-events-none">
+                  <p className="text-white/75 text-sm mt-2.5 tracking-wider font-medium tabular-nums pointer-events-none">
                     {isRingingIncoming && 'Incoming call'}
                     {isRingingOutgoing && 'Ringing...'}
                     {isConnected && formatTime(callDuration)}
