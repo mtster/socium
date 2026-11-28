@@ -2,9 +2,9 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Plus, SendHorizonal, Camera, Image as ImageIcon, Mic, MapPin, X, Download, Copy, Trash2, Phone, Video, ShieldX, ShieldPlus } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { MessageBubble } from './MessageBubble';
 import { AudioPlayer } from './AudioPlayer';
+import { FullscreenImageViewer } from './FullscreenImageViewer';
 import { FullscreenVideoPlayer } from './FullscreenVideoPlayer';
 import { useChatRoom } from './useChatRoom';
 import { usePeerPresence } from './usePeerPresence';
@@ -1076,11 +1076,11 @@ export function ChatRoom({ currentUserId, activeChat, onClose, onOpenProfile, op
 
       <AnimatePresence>
         {viewingImage && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[600] bg-black">
-            <button onClick={() => saveToDevice(viewingImage, 'socium')} className="absolute z-[610] top-safe left-4 mt-4 p-3 bg-white/10 text-white rounded-full"><Download size={24} /></button>
-            <button onClick={() => setViewingImage(null)} className="absolute z-[610] top-safe right-4 mt-4 p-3 bg-white/10 text-white rounded-full"><X size={24} /></button>
-            <div className="w-full h-full"><TransformWrapper centerOnInit><TransformComponent wrapperStyle={{ width: "100%", height: "100%" }} contentStyle={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><img src={viewingImage} className="max-w-full max-h-screen object-contain" /></TransformComponent></TransformWrapper></div>
-          </motion.div>
+          <FullscreenImageViewer
+            src={viewingImage}
+            onClose={() => setViewingImage(null)}
+            onSave={() => saveToDevice(viewingImage, 'socium')}
+          />
         )}
       </AnimatePresence>
 

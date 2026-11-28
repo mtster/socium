@@ -38,18 +38,24 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [dragY, setDragY] = useState(0);
+  const [isSwipingDown, setIsSwipingDown] = useState(false);
   const hideControlsTimerRef = useRef<any>(null);
+
+  const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const isVerticalSwipeRef = useRef(false);
+  const suppressNextClickRef = useRef(false);
 
   const resetHideTimer = useCallback(() => {
     if (hideControlsTimerRef.current) {
       clearTimeout(hideControlsTimerRef.current);
     }
-    if (isPlaying && !isDragging) {
+    if (isPlaying && !isDragging && !isSwipingDown) {
       hideControlsTimerRef.current = setTimeout(() => {
         setShowControls(false);
       }, 3500);
     }
-  }, [isPlaying, isDragging]);
+  }, [isPlaying, isDragging, isSwipingDown]);
 
   useEffect(() => {
     resetHideTimer();
@@ -77,8 +83,11 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
   };
 
   // When the screen is clicked, toggle controls visibility while video continues playing
-  const handleScreenClick = (e: React.MouseEvent) => {
-    // Avoid triggering when clicking controls bar or top buttons
+  const handleScreenClick = () => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
     setShowControls(prev => {
       const next = !prev;
       if (next) {
@@ -86,6 +95,67 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
       }
       return next;
     });
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (isDragging || e.touches.length !== 1) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('[data-video-controls="true"]')) {
+      swipeStartRef.current = null;
+      return;
+    }
+
+    const touch = e.touches[0];
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+    isVerticalSwipeRef.current = false;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!swipeStartRef.current || isDragging || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - swipeStartRef.current.x;
+    const dy = touch.clientY - swipeStartRef.current.y;
+
+    if (!isVerticalSwipeRef.current) {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absY > 10 && absY > absX * 1.15) {
+        isVerticalSwipeRef.current = true;
+        suppressNextClickRef.current = true;
+        setIsSwipingDown(true);
+        if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
+      }
+    }
+
+    if (isVerticalSwipeRef.current) {
+      const trackedY = dy >= 0 ? dy : dy * 0.22;
+      setDragY(trackedY);
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!swipeStartRef.current) return;
+    const changedTouch = e.changedTouches[0];
+    const dy = changedTouch ? changedTouch.clientY - swipeStartRef.current.y : 0;
+    const elapsed = Math.max(Date.now() - swipeStartRef.current.time, 1);
+    swipeStartRef.current = null;
+
+    if (isVerticalSwipeRef.current) {
+      const effectiveDrag = dy >= 0 ? dy : 0;
+      const velocityY = effectiveDrag / elapsed;
+
+      if (effectiveDrag > 95 || (effectiveDrag > 36 && velocityY > 0.42)) {
+        isVerticalSwipeRef.current = false;
+        setIsSwipingDown(false);
+        onClose();
+        return;
+      }
+
+      isVerticalSwipeRef.current = false;
+      setIsSwipingDown(false);
+      setDragY(0);
+      resetHideTimer();
+    }
   };
 
   const handleTimeUpdate = () => {
@@ -147,6 +217,10 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
   };
 
   const progressPercent = duration > 0 ? Math.min(Math.max((currentTime / duration) * 100, 0), 100) : 0;
+  const positiveDrag = Math.max(0, dragY);
+  const backdropAlpha = Math.max(0.15, 1 - positiveDrag / 400);
+  const dragScale = 1 - Math.min(0.16, positiveDrag / 1400);
+  const controlsVisible = showControls && !isSwipingDown;
 
   return (
     <motion.div
@@ -154,13 +228,18 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="fixed inset-0 z-[700] bg-black flex flex-col justify-between select-none overflow-hidden touch-none"
+      style={{ backgroundColor: `rgba(0, 0, 0, ${backdropAlpha})` }}
+      className="fixed inset-0 z-[700] flex flex-col justify-between select-none overflow-hidden touch-none"
       onClick={handleScreenClick}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
     >
       {/* Top Action Buttons */}
       <div 
         className="absolute top-0 left-0 right-0 z-[710] p-4 pt-safe flex items-center justify-between pointer-events-none transition-opacity duration-300"
-        style={{ opacity: showControls ? 1 : 0 }}
+        style={{ opacity: controlsVisible ? 1 : 0 }}
       >
         <button
           onClick={(e) => {
@@ -186,7 +265,13 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
       </div>
 
       {/* Main Video Area */}
-      <div className="flex-1 w-full h-full flex items-center justify-center relative min-h-0">
+      <div
+        className="flex-1 w-full h-full flex items-center justify-center relative min-h-0"
+        style={{
+          transform: `translate3d(0, ${dragY}px, 0) scale(${dragScale})`,
+          transition: isSwipingDown ? 'none' : 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+        }}
+      >
         <video
           ref={videoRef}
           src={src}
@@ -199,7 +284,7 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
 
         {/* Big Center Play Button Overlay when paused and controls visible */}
         <AnimatePresence>
-          {!isPlaying && showControls && (
+          {!isPlaying && controlsVisible && (
             <motion.button
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -215,12 +300,13 @@ export function FullscreenVideoPlayer({ src, onClose, onSave }: FullscreenVideoP
 
       {/* Bottom Player Bar */}
       <AnimatePresence>
-        {showControls && (
+        {controlsVisible && (
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 30 }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            data-video-controls="true"
             onClick={(e) => e.stopPropagation()}
             className="absolute bottom-6 left-4 right-4 z-[710] pb-safe"
           >

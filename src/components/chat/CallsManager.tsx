@@ -6,8 +6,11 @@ import {
   Room,
   RoomEvent,
   Track,
+  AudioPresets,
   VideoPresets,
   RemoteAudioTrack,
+  RemoteTrack,
+  supportsAudioOutputSelection,
 } from 'livekit-client';
 import { supabase } from '@/src/lib/supabase';
 import { rtdb } from '@/src/lib/firebase';
@@ -24,10 +27,9 @@ interface AttachedAudioProps {
   track: RemoteAudioTrack;
   sinkId: string;
   volume: number;
-  routeNonce: number;
 }
 
-const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volume, routeNonce }) => {
+const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volume }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -47,21 +49,10 @@ const RemoteAudioElement: React.FC<AttachedAudioProps> = ({ track, sinkId, volum
     const el = audioRef.current as any;
     if (!el) return;
     el.volume = volume;
-    const updateRoute = async () => {
-      if (sinkId && typeof el.setSinkId === 'function') {
-        try {
-          await el.setSinkId(sinkId);
-        } catch (_) {}
-      }
-      if (routeNonce > 0) {
-        try {
-          el.pause();
-          await el.play();
-        } catch (_) {}
-      }
-    };
-    updateRoute();
-  }, [sinkId, volume, routeNonce]);
+    if (sinkId && supportsAudioOutputSelection() && typeof el.setSinkId === 'function') {
+      el.setSinkId(sinkId).catch(() => {});
+    }
+  }, [sinkId, volume]);
 
   return <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />;
 };
@@ -87,7 +78,6 @@ export function CallsManager() {
   const [isVideoDisabled, setIsVideoDisabled] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [audioSinkId, setAudioSinkId] = useState('');
-  const [audioRouteNonce, setAudioRouteNonce] = useState(0);
   const [callDuration, setCallDuration] = useState(0);
 
   // Refs for clean async closures & teardown
@@ -128,7 +118,7 @@ export function CallsManager() {
 
     // Hint iOS Safari WebKit AudioSession:
     // - 'auto' lets WebRTC getUserMedia stay in natural voice handset/earpiece mode (respecting ear proximity)
-    // - 'play-and-record' biases iOS AVAudioSession toward hands-free speaker output
+    // - 'play-and-record' biases iOS AVAudioSession toward speaker/communication output
     try {
       const navAny = navigator as any;
       if (navAny?.audioSession) {
@@ -136,11 +126,10 @@ export function CallsManager() {
       }
     } catch (_) {}
 
-    // Select hardware audio output device where supported (Android Chrome / Desktop)
-    try {
-      if (navigator.mediaDevices?.enumerateDevices) {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const outputs = devices.filter(d => d.kind === 'audiooutput' && d.deviceId);
+    // Select hardware audio output device using LiveKit standard device API where setSinkId is supported
+    if (supportsAudioOutputSelection()) {
+      try {
+        const outputs = await Room.getLocalDevices('audiooutput');
         if (outputs.length > 0) {
           let chosen: MediaDeviceInfo | undefined;
           if (speakerEnabled) {
@@ -158,10 +147,8 @@ export function CallsManager() {
             await targetRoom.switchActiveDevice('audiooutput', nextSinkId).catch(() => {});
           }
         }
-      }
-    } catch (_) {}
-
-    setAudioRouteNonce(n => n + 1);
+      } catch (_) {}
+    }
   }, []);
 
   // Call duration timer
@@ -185,17 +172,17 @@ export function CallsManager() {
     };
   }, [callStatus]);
 
-  // Release ringing AudioContext on connect so iOS WebRTC uses earpiece cleanly by default
+  // Release ringing AudioContext immediately on connect so iOS WebRTC uses earpiece cleanly by default
   useEffect(() => {
     if (callStatus === 'connected' && activeCall) {
       const initialMode = activeCall.mode || activeCall.meta.type;
+      synth.releaseAudioContext();
       const t = setTimeout(() => {
-        synth.releaseAudioContext();
         applyAudioOutputRoute(initialMode === 'video');
-      }, 380);
+      }, 150);
       return () => clearTimeout(t);
     }
-  }, [callStatus, applyAudioOutputRoute]);
+  }, [callStatus, activeCall, applyAudioOutputRoute]);
 
   // Sync minimized audio call top banner across the whole app
   const activeMode: 'audio' | 'video' = activeCall ? (activeCall.mode || activeCall.meta.type) : 'audio';
@@ -427,7 +414,7 @@ export function CallsManager() {
     await applyLocalMediaForMode(targetMode);
   };
 
-  const joinLiveKitCall = useCallback(async (roomName: string, callType: 'audio' | 'video') => {
+  const joinLiveKitCall = useCallback(async (roomName: string, callType: 'audio' | 'video', isGroup = false) => {
     if (isJoiningRoomRef.current) return;
     if (roomRef.current && roomRef.current.name === roomName) return;
 
@@ -452,25 +439,49 @@ export function CallsManager() {
       const { token, wsUrl } = await getLiveKitCallToken(roomName, myName);
 
       const room = new Room({
-        adaptiveStream: true,
+        // Disable adaptiveStream on 1:1/small calls to prevent ResizeObserver downshift & keyframe warmup delays
+        adaptiveStream: false,
         dynacast: true,
         audioCaptureDefaults: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          channelCount: 1,
+          latency: 0.01,
         },
         videoCaptureDefaults: {
           resolution: VideoPresets.h540.resolution,
           facingMode: 'user',
+        },
+        publishDefaults: {
+          audioPreset: AudioPresets.speech,
+          dtx: false,
+          red: true,
+          simulcast: isGroup,
+          videoEncoding: {
+            maxBitrate: 900_000,
+            maxFramerate: 30,
+            priority: 'high',
+          },
+          degradationPreference: 'maintain-framerate',
         },
       });
 
       roomRef.current = room;
 
       const handleUpdate = () => syncMediaFromRoom(room);
+      const handleTrackSubscribed = (track: RemoteTrack) => {
+        // Minimize browser WebRTC NetEQ jitter-buffer delay (20ms audio, 30ms video)
+        try {
+          if (typeof track.setPlayoutDelay === 'function') {
+            track.setPlayoutDelay(track.kind === Track.Kind.Audio ? 0.02 : 0.03);
+          }
+        } catch (_) {}
+        syncMediaFromRoom(room);
+      };
 
       room
-        .on(RoomEvent.TrackSubscribed, handleUpdate)
+        .on(RoomEvent.TrackSubscribed, handleTrackSubscribed)
         .on(RoomEvent.TrackUnsubscribed, handleUpdate)
         .on(RoomEvent.TrackMuted, handleUpdate)
         .on(RoomEvent.TrackUnmuted, handleUpdate)
@@ -525,10 +536,11 @@ export function CallsManager() {
 
     try {
       const roomName = targetCall.meetingId || targetCallId;
-      await set(ref(rtdb, `calls/${targetCallId}/participants/${currentUserId}/status`), 'accepted');
-      await set(ref(rtdb, `calls/${targetCallId}/status`), 'accepted');
-
-      await joinLiveKitCall(roomName, liveMode);
+      await Promise.all([
+        set(ref(rtdb, `calls/${targetCallId}/participants/${currentUserId}/status`), 'accepted'),
+        set(ref(rtdb, `calls/${targetCallId}/status`), 'accepted'),
+        joinLiveKitCall(roomName, liveMode, Boolean(targetCall.meta?.is_group)),
+      ]);
       setCallStatus('connected');
     } catch (err) {
       console.error('Failed to accept LiveKit call:', err);
@@ -658,7 +670,7 @@ export function CallsManager() {
               setCallStatus('connected');
             }
             if (!roomRef.current && !isJoiningRoomRef.current) {
-              joinLiveKitCall(callData.meetingId || targetCallId, nextMode).catch(() => handleLocalHangup());
+              joinLiveKitCall(callData.meetingId || targetCallId, nextMode, Boolean(callData.meta?.is_group)).catch(() => handleLocalHangup());
             }
           } else if (selfPart.status === 'declined') {
             handleLocalHangup();
@@ -758,21 +770,26 @@ export function CallsManager() {
 
       try {
         const callRefNode = ref(rtdb, `calls/${newCallId}`);
-        await set(callRefNode, freshCallNode);
-        onDisconnect(callRefNode).remove();
-
         const selfActiveCallRef = ref(rtdb, `user_calls/${currentUserId}/active`);
-        await set(selfActiveCallRef, newCallId);
-        onDisconnect(selfActiveCallRef).set(null);
 
-        for (const rid of recipients) {
-          await set(ref(rtdb, `user_calls/${rid}/active`), newCallId);
-          onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
-        }
+        const rtdbWritePromise = (async () => {
+          await Promise.all([
+            set(callRefNode, freshCallNode),
+            set(selfActiveCallRef, newCallId),
+            ...recipients.map((rid) => set(ref(rtdb, `user_calls/${rid}/active`), newCallId)),
+          ]);
+          onDisconnect(callRefNode).remove();
+          onDisconnect(selfActiveCallRef).set(null);
+          for (const rid of recipients) {
+            onDisconnect(ref(rtdb, `user_calls/${rid}/active`)).set(null);
+          }
+          subscribeToCallNode(newCallId);
+        })();
 
-        subscribeToCallNode(newCallId);
-
-        await joinLiveKitCall(newCallId, type as 'audio' | 'video');
+        await Promise.all([
+          rtdbWritePromise,
+          joinLiveKitCall(newCallId, type as 'audio' | 'video', Boolean(chat.isGroup)),
+        ]);
 
         // Insert initial call bubble in chat ONCE (preserves initial call type regardless of later switches)
         supabase.from('messages').insert({
@@ -1073,8 +1090,7 @@ export function CallsManager() {
           key={item.key}
           track={item.track}
           sinkId={audioSinkId}
-          volume={isSpeakerOn ? 1.0 : 0.78}
-          routeNonce={audioRouteNonce}
+          volume={1.0}
         />
       ))}
 

@@ -146,9 +146,6 @@ export function usePushNotifications(userId: string | undefined) {
           setSavedDeviceToken(targetUserId, token);
           attemptedPushInSession.add(targetUserId);
           setHasPushSubscription(true);
-          if (isUserAction) {
-            toast.success('Notifications are active on this device.');
-          }
           return;
         }
 
@@ -176,9 +173,6 @@ export function usePushNotifications(userId: string | undefined) {
           dbVerifiedTokenRef.current = { userId: targetUserId, token };
           attemptedPushInSession.add(targetUserId);
           setHasPushSubscription(true);
-          if (isUserAction) {
-            toast.success(forceRefresh ? 'Notification token refreshed!' : 'Notifications enabled!');
-          }
         }
       } catch (e: any) {
         console.error('Push registration failed:', e.name, e.message);
